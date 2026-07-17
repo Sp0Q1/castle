@@ -1,0 +1,89 @@
+# Loco configuration file documentation
+
+# Application logging configuration
+logger:
+  enable: true
+  pretty_backtrace: false
+  # Log level, options: trace, debug, info, warn or error.
+  level: info
+  # Structured JSON logs are easier to ship in production.
+  format: json
+
+# Web server configuration
+server:
+  port: {{ get_env(name="PORT", default="5150") }}
+  # Bind to all interfaces so the service is reachable inside a container.
+  binding: 0.0.0.0
+  # The public URL mailers and links should point to.
+  host: {{ get_env(name="HOST", default="http://localhost") }}
+  middlewares:
+    # Serve the built React SPA (run `npm --prefix frontend run build` first).
+    # API routes under /api take precedence; the fallback serves index.html so
+    # client-side routes like /projects/1 resolve to the SPA.
+    static:
+      enable: true
+      must_exist: true
+      precompressed: false
+      folder:
+        uri: "/"
+        path: "frontend/dist"
+      fallback: "frontend/dist/index.html"
+
+# Worker Configuration
+workers:
+  mode: BackgroundAsync
+
+# Mailer Configuration.
+mailer:
+  smtp:
+    enable: true
+    host: {{ get_env(name="MAILER_HOST", default="localhost") }}
+    port: {{ get_env(name="MAILER_PORT", default="1025") }}
+    secure: {{ get_env(name="MAILER_SECURE", default="false") }}
+
+# Database Configuration
+database:
+  # The connection URI should be supplied via the environment in production.
+  uri: {{ get_env(name="DATABASE_URL", default="sqlite://castle_production.sqlite?mode=rwc") }}
+  enable_logging: false
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
+  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
+  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
+  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
+  # Run pending migrations on boot.
+  auto_migrate: true
+  dangerously_truncate: false
+  dangerously_recreate: false
+
+# Authentication Configuration
+auth:
+  # JWT authentication
+  jwt:
+    # loco base64-decodes this secret, so JWT_SECRET must be a valid base64
+    # string — generate one with `openssl rand -base64 48`. Always override the
+    # placeholder default below in production.
+    secret: {{ get_env(name="JWT_SECRET", default="b3ZlcnJpZGUtd2l0aC1hLWJhc2U2NC1lbmNvZGVkLUpXVF9TRUNSRVQtZW52LWluLXByb2R1Y3Rpb24=") }}
+    # Token expiration time in seconds
+    expiration: 604800 # 7 days
+
+# App-specific settings (parsed by src/security.rs).
+settings:
+  # "proxy" = run behind oauth2-proxy + Keycloak (this app trusts the proxy's
+  # identity headers and manages no passwords). "jwt" = built-in login/register.
+  auth_mode: proxy
+  proxy:
+    # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
+    # x-forwarded-* variants; an nginx/ingress auth_request setup with
+    # --set-xauthrequest sets x-auth-request-* instead.
+    email_header: x-forwarded-email
+    name_header: x-forwarded-preferred-username
+    groups_header: x-forwarded-groups
+    # Defense-in-depth: a secret only the proxy injects (leave empty to rely on
+    # network isolation alone). Set both the header name and the value.
+    shared_secret_header: x-castle-proxy-secret
+    shared_secret: {{ get_env(name="CASTLE_PROXY_SECRET", default="") }}
+    # Keycloak groups (leaf names) that grant each platform role; unmapped users
+    # default to least privilege (client).
+    manager_group: castle-managers
+    staff_group: castle-staff
+    client_group: castle-clients
