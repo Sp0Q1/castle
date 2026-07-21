@@ -23,9 +23,13 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   `deploy/k8s/secrets/` (`seal-tenant.sh` + README). Validated on kind end to
   end: a tenant ran from a sealed secret with zero plaintext in Helm. (Backup the
   controller's sealing key; ESO is a drop-in alternative via the same contract.)
-- ⬜ **Database durability + backups.** Per-tenant Postgres is a single pod with
-  no backups/HA/PITR. Add CloudNativePG (or scheduled `pg_dump` + WAL) and back
-  up the uploads PVC. Restore drills.
+- 🔶 **Database durability + backups.** Scheduled `pg_dump` (+ uploads) → S3
+  CronJob (`backup.enabled`), with a backup-egress NetworkPolicy. Validated on
+  kind end to end: hourly dump → MinIO → restore into a fresh DB recovered the
+  data. Fixed two bugs found here: `connect_timeout` 500ms→5000ms (Postgres
+  tenants were crash-looping) and mc config leaking S3 creds into the bucket.
+  Still open: **HA** (single Postgres pod) and **PITR** — documented CloudNativePG
+  as the upgrade when RPO/uptime demand it. Retention = bucket lifecycle policy.
 - ⬜ **App security pass.** It's a security product: review the upload handler
   (type/size/anti-virus, path traversal), authz edges, rate limiting, security
   headers/CSP, injection, dependency audit.

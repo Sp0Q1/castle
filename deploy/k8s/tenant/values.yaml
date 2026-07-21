@@ -73,6 +73,28 @@ database:
   name: castle
   user: castle
 
+# Scheduled logical backup (pg_dump + uploads) -> S3-compatible object storage.
+# Runs only when database.internal=true. RPO = schedule interval (no PITR — see
+# the CloudNativePG upgrade note in the README). Retention via a bucket lifecycle
+# policy. The credentialsSecret + backup bucket are provided by the operator.
+backup:
+  enabled: false
+  schedule: "0 * * * *"                  # hourly
+  includeUploads: true
+  s3:
+    endpoint: ""                         # e.g. https://s3.us-east-1.amazonaws.com or http://minio.castle-system:9000
+    bucket: castle-backups
+    prefix: ""                           # defaults to the release name
+    credentialsSecret: castle-backup-s3  # Secret w/ AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    mcImage: minio/mc:latest
+  # NetworkPolicy egress rule(s) letting the backup pod reach the object store
+  # (default-deny blocks it otherwise). In-cluster MinIO example:
+  #   egress:
+  #     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: castle-system } } }]
+  #       ports: [{ protocol: TCP, port: 9000 }]
+  # External S3: allow TCP 443 to a non-RFC1918 ipBlock.
+  egress: []
+
 # Secrets.
 #   external: false -> chart templates the Secrets from the values below (dev).
 #   external: true  -> chart creates NO Secret; you provide <release>-app and

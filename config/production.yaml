@@ -46,8 +46,10 @@ database:
   # The connection URI should be supplied via the environment in production.
   uri: {{ get_env(name="DATABASE_URL", default="sqlite://castle_production.sqlite?mode=rwc") }}
   enable_logging: false
-  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="500") }}
-  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="500") }}
+  # Milliseconds. 500ms is fine for local sqlite but too tight for a networked
+  # Postgres first-connect (pool times out -> crashloop); use realistic values.
+  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="5000") }}
+  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="30000") }}
   min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
   max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
   # Run pending migrations on boot.

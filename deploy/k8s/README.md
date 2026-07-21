@@ -206,6 +206,45 @@ prod it would additionally create the per-tenant Keycloak realm and record the
 codename↔client mapping in the control plane's secret store (never on disk here).
 It's `helm upgrade --install` under the hood, so it composes with everything else.
 
+## Backups & restore
+
+Each tenant with an internal Postgres can run a scheduled logical backup
+(`backup.enabled: true`): a CronJob does `pg_dump --format=custom` **and** tars
+the uploads volume into a scratch dir, then a second step pushes it to
+S3-compatible object storage (`minio/mc`). Enable per tenant:
+
+```bash
+helm ... --set backup.enabled=true \
+  --set backup.s3.endpoint=https://s3... --set backup.s3.bucket=castle-backups \
+  --set backup.s3.credentialsSecret=castle-backup-s3 \
+  --set-json 'backup.egress=[{"to":[{"ipBlock":{"cidr":"0.0.0.0/0","except":["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"]}}],"ports":[{"protocol":"TCP","port":443}]}]'
+```
+
+Notes:
+- **RPO = `backup.schedule`** (default hourly); no PITR — see the CloudNativePG
+  upgrade below.
+- **Egress:** the tenant's default-deny egress blocks the object store, so
+  `backup.egress` opens the store target for the backup pod (external HTTPS, or
+  an in-cluster MinIO namespace:port).
+- **Retention** = a **bucket lifecycle policy** (e.g. expire after N days) — not
+  done by the CronJob.
+- **Uploads:** backed up in the same job; mounting the RWO uploads PVC works when
+  the backup pod lands on the app's node — use RWX or object-storage-backed
+  uploads on multi-node clusters.
+
+**Restore** (validated on kind): pull the latest dump from the bucket and
+`pg_restore` it into a fresh database:
+```bash
+mc cp s/castle-backups/<release>/db-<ts>.dump ./db.dump
+createdb castle_restore && pg_restore -d castle_restore ./db.dump
+```
+Test restores regularly — an untested backup isn't one.
+
+**Upgrade path — CloudNativePG** for **point-in-time recovery** (WAL archiving →
+restore to any second) + HA replicas, when RPO/uptime requirements outgrow
+scheduled logical dumps. It replaces the raw Postgres StatefulSet with a managed
+`Cluster` and is the recommended prod DB when "can't lose the last hour" is real.
+
 ## Certificates & the 50-cert initial phase
 
 - **One single-host cert per subdomain** (real and decoy) — no wildcard, no

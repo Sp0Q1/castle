@@ -1,0 +1,136 @@
+{{- if and .Values.backup.enabled .Values.database.internal }}
+# Per-tenant logical backup: pg_dump (+ the uploads volume) -> gzip -> S3-compatible
+# object storage, on a schedule. RPO = schedule interval; no PITR (see the CNPG
+# upgrade note in deploy/k8s/README.md). Retention is handled by a bucket
+# lifecycle policy, not here.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+  labels:
+    app: {{ .Release.Name }}
+    castle.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: {{ .Release.Name }}
+            castle.io/component: backup
+        spec:
+          restartPolicy: Never
+          {{- with .Values.runtimeClassName }}
+          {{- if . }}
+          runtimeClassName: {{ . }}
+          {{- end }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: work
+              emptyDir: {}
+            - name: mc-config
+              emptyDir: {}
+            {{- if .Values.backup.includeUploads }}
+            - name: uploads
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-uploads
+            {{- end }}
+          # 1) dump the DB (and uploads) into a scratch volume
+          initContainers:
+            - name: dump
+              image: postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ceu"]
+              args:
+                - |
+                  ts=$(date +%Y%m%d-%H%M%S)
+                  pg_dump --format=custom "$DATABASE_URL" > "/work/db-$ts.dump"
+                  {{- if .Values.backup.includeUploads }}
+                  tar czf "/work/uploads-$ts.tgz" -C /app/uploads . 2>/dev/null || true
+                  {{- end }}
+                  ls -l /work
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-app
+                      key: DATABASE_URL
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                {{- if .Values.backup.includeUploads }}
+                - { name: uploads, mountPath: /app/uploads, readOnly: true }
+                {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+          # 2) push the scratch volume to object storage
+          containers:
+            - name: upload
+              image: {{ .Values.backup.s3.mcImage | default "minio/mc:latest" | quote }}
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ceu"]
+              args:
+                - |
+                  # config dir OUTSIDE /work so the S3 creds never get uploaded
+                  export MC_CONFIG_DIR=/mc
+                  mc alias set store "$S3_ENDPOINT" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
+                  mc cp --recursive /work/ "store/{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.prefix | default .Release.Name }}/"
+              env:
+                - name: S3_ENDPOINT
+                  value: {{ .Values.backup.s3.endpoint | quote }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.credentialsSecret }}
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.credentialsSecret }}
+                      key: AWS_SECRET_ACCESS_KEY
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: mc-config, mountPath: /mc }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+---
+# The backup pod needs egress to the object store, which the tenant's default-deny
+# egress otherwise blocks. DNS + Postgres are already allowed (it shares the app
+# label); this adds the store target from .Values.backup.egress (operator sets it
+# to the in-cluster MinIO namespace:port, or external HTTPS for real S3).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-backup-egress
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      castle.io/component: backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- with .Values.backup.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
