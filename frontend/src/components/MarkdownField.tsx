@@ -1,7 +1,7 @@
 import MDEditor from "@uiw/react-md-editor";
 import { type ClipboardEvent, type DragEvent, useState } from "react";
 import { api } from "../api/client";
-import { markdownComponents } from "./Markdown";
+import { markdownComponents, safeRehypePlugins } from "./Markdown";
 
 interface Props {
   value: string;
@@ -81,7 +81,7 @@ export function MarkdownField({ value, onChange, height = 240, placeholder }: Pr
         height={height}
         preview="edit"
         onChange={(v) => onChange(v ?? "")}
-        previewOptions={{ components: markdownComponents }}
+        previewOptions={{ components: markdownComponents, rehypePlugins: safeRehypePlugins }}
         textareaProps={{
           placeholder: placeholder ?? "Markdown supported — drag or paste an image to upload",
         }}

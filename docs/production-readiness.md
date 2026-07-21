@@ -30,9 +30,20 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   tenants were crash-looping) and mc config leaking S3 creds into the bucket.
   Still open: **HA** (single Postgres pod) and **PITR** — documented CloudNativePG
   as the upgrade when RPO/uptime demand it. Retention = bucket lifecycle policy.
-- ⬜ **App security pass.** It's a security product: review the upload handler
-  (type/size/anti-virus, path traversal), authz edges, rate limiting, security
-  headers/CSP, injection, dependency audit.
+- ✅ **App security pass.** Adversarial multi-agent review (6 dimensions, 20 raw
+  findings → 9 confirmed). **All 9 fixed:**
+  - Uploads: type now from **magic bytes** (SVG rejected outright — it could carry
+    script); serving is auth-gated and sends `nosniff` + CSP + `Content-Disposition`.
+  - Frontend: mermaid `securityLevel: strict`; **rehype-sanitize** appended after
+    `rehype-raw` (raw-HTML stored XSS in findings/comments); token moved to
+    per-tab `sessionStorage`.
+  - Config: `secure_headers` enabled with a CSP (script-src without
+    `unsafe-inline`); JWT secret has **no default** (fails closed).
+  - Authz: SSO demotion now downgrades stale `project_members` rows.
+  Runtime-verified: upload validation (incl. SVG renamed `.png` → rejected), the
+  401 auth gate, response headers, and fail-closed startup. The three frontend
+  fixes + membership downgrade are compile-verified; confirm in a browser on the
+  next lab run. Still open: rate limiting, and a periodic dependency audit.
 - ⬜ **One real-cluster end-to-end run.** Everything so far is kind + sqlite +
   self-signed. Run on a real cluster with real Postgres, real Keycloak (prod
   mode + TLS), issued certs, and Kata/gVisor.

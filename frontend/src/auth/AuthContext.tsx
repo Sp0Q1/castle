@@ -18,11 +18,16 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+// jwt (dev) mode only — production runs proxy mode, where the session is an
+// httpOnly oauth2-proxy cookie and no token is ever exposed to JavaScript.
+// sessionStorage (per-tab, cleared on close) rather than localStorage narrows the
+// window if script ever runs in this origin; the real defences are the markdown/
+// upload sanitization and the CSP.
 const TOKEN_KEY = "castle.token";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(TOKEN_KEY),
+    sessionStorage.getItem(TOKEN_KEY),
   );
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -63,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         // A stale JWT — drop it. (In proxy mode there is no token to clear.)
         if (token) {
-          localStorage.removeItem(TOKEN_KEY);
+          sessionStorage.removeItem(TOKEN_KEY);
           setAuthToken(null);
           setToken(null);
         }
@@ -77,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const res = await api.login(email, password);
-    localStorage.setItem(TOKEN_KEY, res.token);
+    sessionStorage.setItem(TOKEN_KEY, res.token);
     setAuthToken(res.token);
     setToken(res.token);
   };
@@ -89,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     if (token) {
       // JWT mode: drop the local token.
-      localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
       setAuthToken(null);
       setToken(null);
       setUser(null);

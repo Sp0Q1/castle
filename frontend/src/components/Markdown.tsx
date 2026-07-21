@@ -1,5 +1,15 @@
 import MDEditor from "@uiw/react-md-editor";
+import rehypeSanitize from "rehype-sanitize";
 import { Mermaid } from "./Mermaid";
+
+// The preview pipeline enables rehype-raw (raw HTML in markdown becomes real
+// elements), and findings/comments are untrusted user content — in a tool whose
+// whole job is storing attack payloads. Appending rehype-sanitize runs an
+// allowlist AFTER rehype-raw, stripping <script>/<iframe>/on* handlers and
+// javascript: URLs. It is appended before rehype-prism-plus, so syntax
+// highlighting still applies, and the default schema keeps `language-*` class
+// names, so ```mermaid detection below still works.
+export const safeRehypePlugins = [rehypeSanitize];
 
 // Recursively reconstruct the raw source text of a code block from its hast
 // node — needed because syntax highlighting turns `children` into token spans.
@@ -38,7 +48,11 @@ export const markdownComponents = {
 export function Markdown({ source }: { source: string }) {
   return (
     <div data-color-mode="dark" className="md-render">
-      <MDEditor.Markdown source={source || "_(empty)_"} components={markdownComponents} />
+      <MDEditor.Markdown
+        source={source || "_(empty)_"}
+        components={markdownComponents}
+        rehypePlugins={safeRehypePlugins}
+      />
     </div>
   );
 }

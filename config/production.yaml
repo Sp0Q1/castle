@@ -17,6 +17,19 @@ server:
   # The public URL mailers and links should point to.
   host: {{ get_env(name="HOST", default="http://localhost") }}
   middlewares:
+    # Security headers. Without this block loco defaults to enable:false, leaving
+    # the SPA and all user-generated content with no CSP/nosniff/frame policy.
+    # The CSP deliberately omits 'unsafe-inline' for scripts: the SPA loads only
+    # external bundles, so injected inline script cannot run. Inline STYLES are
+    # allowed because the markdown editor and mermaid inject them.
+    # NOTE: verify diagrams/editor still render after changing this.
+    secure_headers:
+      enable: true
+      preset: github
+      overrides:
+        Content-Security-Policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        X-Content-Type-Options: "nosniff"
+        Referrer-Policy: "no-referrer"
     # Serve the built React SPA (run `npm --prefix frontend run build` first).
     # API routes under /api take precedence; the fallback serves index.html so
     # client-side routes like /projects/1 resolve to the SPA.
@@ -62,9 +75,11 @@ auth:
   # JWT authentication
   jwt:
     # loco base64-decodes this secret, so JWT_SECRET must be a valid base64
-    # string — generate one with `openssl rand -base64 48`. Always override the
-    # placeholder default below in production.
-    secret: {{ get_env(name="JWT_SECRET", default="b3ZlcnJpZGUtd2l0aC1hLWJhc2U2NC1lbmNvZGVkLUpXVF9TRUNSRVQtZW52LWluLXByb2R1Y3Rpb24=") }}
+    # string — generate one with `openssl rand -base64 48`.
+    # NO DEFAULT ON PURPOSE: a committed placeholder would become a live signing
+    # key for anyone who forgets to set it (forgeable tokens for any user). With
+    # no default the config fails to render and the app refuses to start.
+    secret: {{ get_env(name="JWT_SECRET") }}
     # Token expiration time in seconds
     expiration: 604800 # 7 days
 

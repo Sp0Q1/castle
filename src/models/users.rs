@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
+use super::_entities::project_members;
+
 pub const MAGIC_LINK_LENGTH: i8 = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
 
@@ -451,13 +453,47 @@ impl Model {
                 if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
                     active.name = ActiveValue::set(n.to_string());
                 }
-                active.update(db).await.map_err(ModelError::from)
+                let updated = active.update(db).await.map_err(ModelError::from)?;
+                // The IdP is authoritative for role. Authorization on findings keys
+                // off `project_members.role`, so a demotion here must also drop any
+                // membership that would still grant a higher capacity — otherwise a
+                // user removed from the staff group keeps write access via the
+                // stale membership row.
+                Self::demote_stale_memberships(db, &updated).await?;
+                Ok(updated)
             }
             Err(ModelError::EntityNotFound) => {
                 Self::insert_shadow(db, email, name, role, "active").await
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Prevents a per-project membership from outranking the platform role.
+    ///
+    /// Called after an SSO reconciliation changes the role: when the IdP demotes
+    /// someone to `client`, any `project_members` row still recording a higher
+    /// capacity (e.g. `staff`) is downgraded, so findings authorization — which
+    /// keys off the membership role — cannot be bypassed by a stale row.
+    ///
+    /// # Errors
+    /// When the DB query/update fails.
+    async fn demote_stale_memberships(db: &DatabaseConnection, user: &Self) -> ModelResult<()> {
+        if user.role.as_str() != UserRole::Client.as_str() {
+            return Ok(());
+        }
+        let stale = project_members::Entity::find()
+            .filter(project_members::Column::UserId.eq(user.id))
+            .filter(project_members::Column::Role.ne(UserRole::Client.as_str()))
+            .all(db)
+            .await
+            .map_err(ModelError::from)?;
+        for membership in stale {
+            let mut active = membership.into_active_model();
+            active.role = ActiveValue::set(UserRole::Client.as_str().to_string());
+            active.update(db).await.map_err(ModelError::from)?;
+        }
+        Ok(())
     }
 
     /// Finds a user by email, or creates an "invited" placeholder so a manager

@@ -8,7 +8,10 @@ let mermaidPromise: Promise<MermaidApi> | null = null;
 function getMermaid(): Promise<MermaidApi> {
   if (!mermaidPromise) {
     mermaidPromise = import("mermaid").then(({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+      // securityLevel MUST stay "strict": diagram source comes from user-authored
+      // finding fields and comments. "loose" would let a `click` directive run a
+      // javascript: URL (stored XSS) and would stop sanitizing generated markup.
+      mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
       return mermaid;
     });
   }
@@ -44,7 +47,8 @@ export function Mermaid({ code }: { code: string }) {
   if (error) {
     return <pre className="mermaid-error">{error}</pre>;
   }
-  // The SVG is produced by mermaid from our own content, so it is safe to inline.
-  // biome-ignore lint/security/noDangerouslySetInnerHtml: trusted, self-generated SVG
+  // The diagram source is USER content, so we rely on mermaid's strict mode
+  // (set above) to sanitize the markup it generates before we inline it.
+  // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid strict-mode output
   return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
