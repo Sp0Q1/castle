@@ -32,7 +32,16 @@ port is reachable without going through oauth2-proxy, anyone can send
 
 1. Realm `castle` (or reuse an existing one).
 2. Client `castle` — type **confidential** (client authentication on), standard
-   flow enabled, redirect URI `https://castle.example.com/oauth2/callback`.
+   flow enabled, redirect URI `https://castle.example.com/oauth2/callback`, and a
+   **valid post-logout redirect URI** of `https://castle.example.com/*` (or the
+   app root). Sign-out sends `post_logout_redirect_uri=<app root>`; Keycloak
+   rejects it — breaking logout with a "We are sorry…" error — unless it's
+   registered here. Also ensure oauth2-proxy is started with
+   `--whitelist-domain=<keycloak host[:port]>` so it will redirect to the IdP's
+   end-session endpoint on sign-out (include the port if non-standard).
+   Note: without an `id_token_hint`, Keycloak shows a "Do you want to log out?"
+   confirmation page before completing — expected; seamless logout needs the
+   hint, which oauth2-proxy's `sign_out` does not add.
 3. Groups: create `castle-managers`, `castle-staff`, `castle-clients` and assign
    users. (Unmapped users get least privilege = `client`.)
 4. Add a **Group Membership** mapper to the `castle` client (or a client scope it

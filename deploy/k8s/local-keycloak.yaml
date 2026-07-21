@@ -19,7 +19,7 @@
 #     --set runtimeClassName="" --set oauth2Proxy.enabled=true \
 #     --set database.internal=false --set database.externalUrl='sqlite:///app/uploads/castle.sqlite?mode=rwc' \
 #     --set keycloak.issuerUrl=https://keycloak.127.0.0.1.nip.io:8443/realms/castle-citadel \
-#     --set keycloak.whitelistDomain=keycloak.127.0.0.1.nip.io \
+#     --set keycloak.whitelistDomain=keycloak.127.0.0.1.nip.io:8443 \  # MUST include the port
 #     --set secrets.jwtSecret="$(openssl rand -base64 48|tr -d '\n')" \
 #     --set secrets.oauth2ClientSecret=citadel-client-secret \
 #     --set secrets.oauth2CookieSecret="$(openssl rand -hex 16)" \
@@ -73,7 +73,7 @@ data:
           "implicitFlowEnabled": false,
           "redirectUris": ["https://citadel.127.0.0.1.nip.io:8443/oauth2/callback"],
           "webOrigins": ["+"],
-          "attributes": {"post.logout.redirect.uris": "+"},
+          "attributes": {"post.logout.redirect.uris": "https://citadel.127.0.0.1.nip.io:8443/*"},
           "protocolMappers": [
             {
               "name": "groups",
