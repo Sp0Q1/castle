@@ -70,7 +70,9 @@ auth:
 settings:
   # "proxy" = run behind oauth2-proxy + Keycloak (this app trusts the proxy's
   # identity headers and manages no passwords). "jwt" = built-in login/register.
-  auth_mode: proxy
+  # Env-overridable so one image can run either mode (the chart sets it from
+  # oauth2Proxy.enabled).
+  auth_mode: {{ get_env(name="CASTLE_AUTH_MODE", default="proxy") }}
   proxy:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
     # x-forwarded-* variants; an nginx/ingress auth_request setup with

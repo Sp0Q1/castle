@@ -3,6 +3,8 @@
 {{- /* When the oauth2-proxy sidecar is present, castle binds to loopback so only
        the sidecar can reach it. Without it, castle must listen on 0.0.0.0. */ -}}
 {{- $binding := ternary "127.0.0.1" "0.0.0.0" .Values.oauth2Proxy.enabled -}}
+{{- /* With the sidecar: proxy auth (headers). Without it: built-in login. */ -}}
+{{- $authMode := ternary "proxy" "jwt" .Values.oauth2Proxy.enabled -}}
 {{- /* Build the RP-initiated logout target: oauth2-proxy sign_out -> Keycloak
        end-session -> back to the app. urlquery escapes each nested layer. */ -}}
 {{- $kcLogout := printf "%s/protocol/openid-connect/logout?post_logout_redirect_uri=%s&client_id=%s" .Values.keycloak.issuerUrl (urlquery $appUrl) .Values.keycloak.clientId -}}
@@ -46,6 +48,8 @@ spec:
           env:
             - name: HOST
               value: {{ $appUrl | quote }}
+            - name: CASTLE_AUTH_MODE
+              value: {{ $authMode | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

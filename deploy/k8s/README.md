@@ -178,6 +178,24 @@ in production:
 > In a network-restricted environment where the kind node can't reach registries,
 > pre-pull the Calico/ingress/castle images on the host and `kind load` them.
 
+## Managing instances (`castlectl`)
+
+`deploy/k8s/castlectl.sh` is a minimal provisioner — the seed of the control
+plane — so managing instances is one command instead of hand-run `helm`:
+
+```bash
+castlectl provision ironclad            # stamp out a tenant
+castlectl provision nightfall --decoy   # stamp out a decoy
+castlectl list                          # table of all managed instances
+castlectl deprovision ironclad          # remove one   (or: deprovision --all)
+```
+
+Defaults are local (built-in login + sqlite + no Kata, via `MODE=local`); env
+vars (`IMG_REPO`, `BASE_DOMAIN`, `MODE`) point it at a real image/domain, and in
+prod it would additionally create the per-tenant Keycloak realm and record the
+codename↔client mapping in the control plane's secret store (never on disk here).
+It's `helm upgrade --install` under the hood, so it composes with everything else.
+
 ## Certificates & the 50-cert initial phase
 
 - **One single-host cert per subdomain** (real and decoy) — no wildcard, no
