@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use loco_rs::{
-    app::{AppContext, Hooks, Initializer},
+    app::{AppContext, Hooks},
     bgworker::{BackgroundWorker, Queue},
     boot::{create_app, BootResult, StartMode},
     config::Config,
@@ -14,7 +14,7 @@ use migration::Migrator;
 use std::path::Path;
 
 use crate::{
-    controllers, initializers,
+    controllers,
     models::_entities::{comments, findings, project_members, projects, users},
     tasks,
     workers::downloader::DownloadWorker,
@@ -43,12 +43,6 @@ impl Hooks for App {
         config: Config,
     ) -> Result<BootResult> {
         create_app::<Self, Migrator>(mode, environment, config).await
-    }
-
-    async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
-        Ok(vec![Box::new(
-            initializers::view_engine::ViewEngineInitializer,
-        )])
     }
 
     fn routes(ctx: &AppContext) -> AppRoutes {

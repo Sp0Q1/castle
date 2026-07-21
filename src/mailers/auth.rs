@@ -1,8 +1,9 @@
 // auth mailer
 //
-// The lowercase statics below name template *directories* on disk
-// (`assets/mailers/auth/<name>`), so the names are not free to change; the lint
-// is waived rather than the convention broken.
+// The lowercase statics below are template directories embedded at compile time
+// from `src/mailers/auth/<name>/` (subject.t / html.t / text.t), so the names
+// track directories on disk; the lint is waived rather than the convention
+// broken.
 #![allow(non_upper_case_globals)]
 
 use loco_rs::prelude::*;
