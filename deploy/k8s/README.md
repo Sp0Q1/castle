@@ -277,12 +277,13 @@ opportunistic and not enforced — see project history).
 
 ## Known limitations & follow-ups
 
-1. **Honeypot fidelity.** The initial phase reliably captures recon, probing, and
-   credential-stuffing. Deeper deception is a follow-up: per-host OIDC callback
-   for the whole decoy set (the sample uses a relative `--redirect-url` +
-   wildcard-redirect canary realm — **verify this against your oauth2-proxy
-   version**), seeded believable fake findings, and a purpose-built honeypot mode
-   that logs submitted passwords and tarpits.
+1. **Honeypot fidelity.** Decoys run **honeypot mode** (`CASTLE_HONEYPOT=true`):
+   the auth surface captures every submitted credential + attacker metadata
+   (email, password, User-Agent, source IP) to the `castle::honeypot` log target,
+   returns believable responses, and persists nothing. Remaining follow-ups: a
+   *tarpit* (deliberately slow responses), realistic seeded fake findings, and
+   closing the last tell — a decoy serves the built-in login form while real
+   tenants redirect to SSO (a fake SSO-redirect page on decoys would close it).
 2. **Canary realm naming.** A real tenant's SSO redirect exposes its realm name.
    Use realistic per-decoy realm names (or a shared realm with per-tenant clients)
    so the redirect doesn't betray decoys.

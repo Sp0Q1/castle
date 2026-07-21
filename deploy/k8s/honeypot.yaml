@@ -50,20 +50,28 @@ spec:
       containers:
         - name: castle
           image: ghcr.io/your-org/castle:0.1.0
-          # Throwaway sqlite on an emptyDir: no real data, wiped on restart.
-          args: ["start", "--environment", "production", "--binding", "127.0.0.1", "--port", "5150"]
+          # Honeypot mode (CASTLE_HONEYPOT=true): serve the normal login surface
+          # but CAPTURE every submitted credential + attacker metadata to the
+          # `castle::honeypot` log target, return believable responses, and
+          # persist NOTHING. Throwaway sqlite on emptyDir; no real accounts.
+          args: ["start", "--environment", "production", "--binding", "0.0.0.0", "--port", "5150"]
           env:
+            - name: CASTLE_HONEYPOT
+              value: "true"
+            - name: CASTLE_AUTH_MODE
+              value: "jwt"          # present a login form (captured, not real)
             - name: DATABASE_URL
               value: "sqlite:///data/canary.sqlite?mode=rwc"
             - name: JWT_SECRET
               value: "Y2FuYXJ5LWR1bW15LWp3dC1zZWNyZXQtbm90LXVzZWQtaW4tcHJveHktbW9kZQ=="
-            - name: CASTLE_PROXY_SECRET
-              value: ""
           volumeMounts:
             - name: scratch
               mountPath: /data
             - name: uploads
               mountPath: /app/uploads
+          ports:
+            - containerPort: 5150
+              name: http
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -71,50 +79,6 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 96Mi }
             limits:   { cpu: 500m, memory: 256Mi }
-        - name: oauth2-proxy
-          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
-          # Points at a dedicated CANARY realm so credential-stuffing lands in a
-          # realm we watch — never near a real tenant's identities. The canary
-          # realm's client uses a wildcard redirect URI so one proxy fronts the
-          # whole decoy set; --reverse-proxy honours the forwarded host.
-          args:
-            - --provider=keycloak-oidc
-            - --oidc-issuer-url=https://sso.example.com/realms/canary
-            - --client-id=castle
-            - --redirect-url=/oauth2/callback
-            - --upstream=http://127.0.0.1:5150
-            - --http-address=0.0.0.0:4180
-            - --email-domain=*
-            - --scope=openid email profile
-            - --skip-provider-button=true
-            - --reverse-proxy=true
-            - --cookie-secure=true
-            - --code-challenge-method=S256
-            - --whitelist-domain=.tenants.example.com
-          env:
-            - name: OAUTH2_PROXY_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: honeypot-oauth2
-                  key: client-secret
-            - name: OAUTH2_PROXY_COOKIE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: honeypot-oauth2
-                  key: cookie-secret
-          ports:
-            - containerPort: 4180
-              name: http
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 2000
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-          resources:
-            requests: { cpu: 25m, memory: 32Mi }
-            limits:   { cpu: 200m, memory: 128Mi }
       volumes:
         - name: scratch
           emptyDir: {}
@@ -134,7 +98,7 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: 4180
+      targetPort: 5150
 ---
 # ---- Hardest lockdown in the cluster: this pod is the deliberate target. ----
 apiVersion: networking.k8s.io/v1
@@ -163,11 +127,12 @@ spec:
               kubernetes.io/metadata.name: ingress-nginx
       ports:
         - protocol: TCP
-          port: 4180
+          port: 5150
 ---
-# Egress: DNS + the external canary IdP only. Explicitly NO route to any tenant
-# namespace, any in-cluster service, or the wider internal network — a fully
-# compromised honeypot gains the attacker nothing.
+# Egress: DNS only. Honeypot mode captures locally (no IdP backchannel), so the
+# decoy needs no outbound at all beyond name resolution — NO tenant namespace,
+# no in-cluster service, no wider network. A fully compromised honeypot reaches
+# nothing.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -188,17 +153,6 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 169.254.0.0/16
-      ports:
-        - protocol: TCP
-          port: 443
 ---
 # ---- SAMPLE decoy route (the control plane stamps one per codename) ----
 # Identical in shape to a real tenant's Ingress — same annotations, same cert

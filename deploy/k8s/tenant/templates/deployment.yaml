@@ -50,6 +50,8 @@ spec:
               value: {{ $appUrl | quote }}
             - name: CASTLE_AUTH_MODE
               value: {{ $authMode | quote }}
+            - name: CASTLE_HONEYPOT
+              value: {{ .Values.honeypot | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

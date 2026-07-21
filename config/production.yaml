@@ -73,6 +73,10 @@ settings:
   # Env-overridable so one image can run either mode (the chart sets it from
   # oauth2Proxy.enabled).
   auth_mode: {{ get_env(name="CASTLE_AUTH_MODE", default="proxy") }}
+  # Decoy mode: capture submitted credentials + attacker metadata to the
+  # `castle::honeypot` log target and return believable responses (no real DB).
+  # Set only on canary instances (the chart sets it from .Values.honeypot).
+  honeypot: {{ get_env(name="CASTLE_HONEYPOT", default="false") }}
   proxy:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
     # x-forwarded-* variants; an nginx/ingress auth_request setup with

@@ -49,11 +49,17 @@ impl Hooks for App {
     }
 
     fn routes(ctx: &AppContext) -> AppRoutes {
-        // In proxy mode the credential endpoints are omitted — oauth2-proxy is
-        // the authenticator and the app manages no passwords.
-        let auth_routes = match crate::security::Settings::from_ctx(ctx).auth_mode {
-            crate::security::AuthMode::Jwt => controllers::auth::routes(),
-            crate::security::AuthMode::Proxy => controllers::auth::proxy_routes(),
+        // Honeypot instances present the same auth surface but capture what's
+        // submitted instead of authenticating. Otherwise: proxy mode omits the
+        // credential endpoints (oauth2-proxy authenticates); jwt mode keeps them.
+        let settings = crate::security::Settings::from_ctx(ctx);
+        let auth_routes = if settings.honeypot {
+            controllers::auth::honeypot_routes()
+        } else {
+            match settings.auth_mode {
+                crate::security::AuthMode::Jwt => controllers::auth::routes(),
+                crate::security::AuthMode::Proxy => controllers::auth::proxy_routes(),
+            }
         };
         AppRoutes::with_default_routes()
             .add_route(auth_routes)

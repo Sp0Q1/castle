@@ -28,6 +28,11 @@ runtimeClassName: kata
 oauth2Proxy:
   enabled: true
 
+# Decoy/honeypot instance: presents the normal auth surface but captures
+# submitted credentials + attacker metadata (never a real account). Set true
+# only for canary instances.
+honeypot: false
+
 resources:
   castle:
     requests: { cpu: 100m, memory: 128Mi }

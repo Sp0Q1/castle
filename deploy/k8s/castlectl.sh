@@ -47,6 +47,7 @@ provision(){
            --set database.externalUrl='sqlite:///app/uploads/castle.sqlite?mode=rwc'
            --set keycloak.issuerUrl=http://unused/realms/x)
   fi
+  [[ "$role" == decoy ]] && args+=(--set honeypot=true)   # decoys capture, not authenticate
   helm upgrade --install "castle-$codename" "$CHART" "${args[@]}" >/dev/null || die "helm failed for $codename"
   kubectl label ns "$ns" "$LABEL" "castle.io/codename=$codename" "castle.io/role=$role" --overwrite >/dev/null
   echo "  ok"

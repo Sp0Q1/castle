@@ -73,6 +73,10 @@ impl Default for ProxySettings {
 pub struct Settings {
     pub auth_mode: AuthMode,
     pub proxy: ProxySettings,
+    /// Decoy mode: the auth endpoints capture submitted credentials + attacker
+    /// metadata and return believable responses, without ever touching a real
+    /// DB. Set on canary/honeypot instances only.
+    pub honeypot: bool,
 }
 
 impl Settings {

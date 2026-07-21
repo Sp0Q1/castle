@@ -7,6 +7,7 @@ use crate::{
     views::auth::{CurrentResponse, LoginResponse},
 };
 use crate::security::CurrentUser;
+use axum::http::HeaderMap;
 use loco_rs::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -283,4 +284,121 @@ pub fn routes() -> Routes {
 /// because oauth2-proxy handles authentication and the app manages no passwords.
 pub fn proxy_routes() -> Routes {
     Routes::new().prefix("/api/auth").add("/current", get(current))
+}
+
+// ---------------------------------------------------------------------------
+// Honeypot mode. Decoy instances present the SAME auth surface as `routes()`,
+// but every handler captures the submitted credentials + attacker metadata to
+// the `castle::honeypot` log target (shipped to the deception pipeline) and
+// returns a believable response — no DB writes, no real accounts.
+// ---------------------------------------------------------------------------
+
+fn honeypot_capture(event: &str, headers: &HeaderMap, submitted: &str) {
+    let h = |k: &str| {
+        headers
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-")
+    };
+    tracing::warn!(
+        target: "castle::honeypot",
+        signal = "deception",
+        event = event,
+        submitted = submitted,
+        source_ip = h("x-forwarded-for"),
+        real_ip = h("x-real-ip"),
+        user_agent = h("user-agent"),
+        referer = h("referer"),
+        "honeypot credential capture"
+    );
+}
+
+#[debug_handler]
+async fn hp_register(headers: HeaderMap, Json(params): Json<RegisterParams>) -> Result<Response> {
+    honeypot_capture(
+        "register",
+        &headers,
+        &format!(
+            "email={} password={} name={}",
+            params.email, params.password, params.name
+        ),
+    );
+    // Believable success — but no account is created.
+    format::json(())
+}
+
+#[debug_handler]
+async fn hp_login(headers: HeaderMap, Json(params): Json<LoginParams>) -> Result<Response> {
+    honeypot_capture(
+        "login",
+        &headers,
+        &format!("email={} password={}", params.email, params.password),
+    );
+    unauthorized("Invalid credentials!")
+}
+
+#[debug_handler]
+async fn hp_forgot(headers: HeaderMap, Json(params): Json<ForgotParams>) -> Result<Response> {
+    honeypot_capture("forgot", &headers, &format!("email={}", params.email));
+    format::json(())
+}
+
+#[debug_handler]
+async fn hp_reset(headers: HeaderMap, Json(params): Json<ResetParams>) -> Result<Response> {
+    honeypot_capture(
+        "reset",
+        &headers,
+        &format!("token={} password={}", params.token, params.password),
+    );
+    format::json(())
+}
+
+#[debug_handler]
+async fn hp_magic_link(
+    headers: HeaderMap,
+    Json(params): Json<MagicLinkParams>,
+) -> Result<Response> {
+    honeypot_capture("magic_link", &headers, &format!("email={}", params.email));
+    format::empty_json()
+}
+
+#[debug_handler]
+async fn hp_token_path(headers: HeaderMap, Path(token): Path<String>) -> Result<Response> {
+    honeypot_capture("token_path", &headers, &format!("token={token}"));
+    unauthorized("unauthorized!")
+}
+
+#[debug_handler]
+async fn hp_resend(
+    headers: HeaderMap,
+    Json(params): Json<ResendVerificationParams>,
+) -> Result<Response> {
+    honeypot_capture(
+        "resend_verification",
+        &headers,
+        &format!("email={}", params.email),
+    );
+    format::json(())
+}
+
+#[debug_handler]
+async fn hp_current(headers: HeaderMap) -> Result<Response> {
+    honeypot_capture("current", &headers, "-");
+    unauthorized("unauthorized!")
+}
+
+/// Routes for honeypot/decoy instances — identical paths to `routes()`, but each
+/// handler captures instead of authenticating.
+pub fn honeypot_routes() -> Routes {
+    Routes::new()
+        .prefix("/api/auth")
+        .add("/register", post(hp_register))
+        .add("/verify/{token}", get(hp_token_path))
+        .add("/login", post(hp_login))
+        .add("/forgot", post(hp_forgot))
+        .add("/reset", post(hp_reset))
+        .add("/current", get(hp_current))
+        .add("/magic-link", post(hp_magic_link))
+        .add("/magic-link/{token}", get(hp_token_path))
+        .add("/resend-verification-mail", post(hp_resend))
 }
