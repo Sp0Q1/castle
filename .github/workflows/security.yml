@@ -168,6 +168,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Proves the image actually works before anything else looks at it.
+      #
+      # This exists because the dependency-caching layout in the Dockerfile has
+      # a silent failure mode: the dependency layer is built against stub
+      # sources, and if cargo ever decides the real sources are not newer (it
+      # compares mtimes, and COPY preserves them), the build "succeeds" and
+      # ships a binary that does nothing. Trivy would not notice — it scans
+      # layers for CVEs, it never runs the program. Nor would any other job
+      # here. A stub binary would have been published green.
+      - name: Smoke-test the image
+        run: |
+          set -euo pipefail
+          # A stub binary prints nothing; the real CLI lists its subcommands.
+          docker run --rm castle:ci --help | grep -q '^  start' \
+            || { echo "::error::image binary does not behave like castle-cli"; exit 1; }
+          # The SPA is served from disk at runtime, so an image without it is
+          # broken in a way no Rust check can see.
+          docker run --rm --entrypoint sh castle:ci -c 'test -s frontend/dist/index.html' \
+            || { echo "::error::built SPA missing from the image"; exit 1; }
+
       # Blocking: known CVEs in what we actually ship.
       - name: Scan image for HIGH/CRITICAL vulnerabilities
         run: |
