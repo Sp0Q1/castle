@@ -3,12 +3,20 @@ version: 2
 # Updates are grouped so a week of patch bumps arrives as one reviewable PR
 # rather than twenty. Security updates are deliberately left ungrouped by
 # GitHub, so they still land immediately and on their own.
+#
+# Every ecosystem sets a `cooldown`: the most common supply-chain attack on a
+# dependency is a *freshly published* malicious version of a legitimate package,
+# and it is usually yanked within days. Waiting a week before proposing a bump
+# costs nothing here and removes that window. Cooldown does not apply to
+# security updates, so a real CVE fix still arrives immediately.
 updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       rust-minor-patch:
         update-types: [minor, patch]
@@ -18,17 +26,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       frontend-minor-patch:
         update-types: [minor, patch]
 
   # Actions are the supply chain of the pipeline itself: a compromised action
-  # runs with the workflow's token. Keeping them current is part of the reason
-  # the workflows pin by tag rather than floating on @main.
+  # runs with the workflow's token, which is why every `uses:` is pinned to a
+  # full commit SHA. Dependabot understands SHA pins and rewrites both the SHA
+  # and its trailing version comment — pinning does not mean going stale.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         update-types: [major, minor, patch]
@@ -37,3 +50,5 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

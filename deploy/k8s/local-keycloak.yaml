@@ -173,6 +173,17 @@ spec:
           resources:
             requests: { cpu: 200m, memory: 512Mi }
             limits:   { cpu: "2",  memory: 1200Mi }
+          # This is a local lab, but it runs with the same container hardening
+          # as the tenant chart so the lab cannot pass what production would
+          # reject. The Keycloak image already runs as uid 1000.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: realm
           configMap: { name: keycloak-realm }

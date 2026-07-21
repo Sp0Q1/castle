@@ -1,0 +1,51 @@
+# cargo-audit configuration.
+#
+# Every entry below is a *documented risk acceptance*, not a way to silence the
+# scanner. The rule for adding one: the advisory must be unfixable from this
+# repository (no dependency of ours can be bumped to resolve it) AND the
+# vulnerable code path must be unreachable in how we build and run. Anything
+# fixable gets fixed instead. Each entry says what would remove it, so the list
+# can be re-checked rather than inherited on faith.
+#
+# Re-verify with:
+#   cargo tree -i <crate>        # is it actually in the build graph?
+#   cargo audit                  # does it still appear after a dependency bump?
+
+[advisories]
+ignore = [
+  # quick-xml <0.41 — unbounded namespace allocation and quadratic attribute
+  # checking, both remote DoS (7.5 high).
+  #
+  # Reached only through opendal, which loco-rs depends on unconditionally.
+  # opendal parses XML exclusively in its S3/Azure/GCS service backends, and
+  # none of loco's `storage_*` features are enabled here — castle writes uploads
+  # to a local volume. No attacker-controlled XML reaches this crate.
+  #
+  # Not fixable here: opendal 0.54 requires quick-xml ^0.38, so the version is
+  # pinned by a transitive dependency two levels up. REMOVE when loco-rs ships a
+  # release with a newer opendal — Dependabot will open that PR.
+  "RUSTSEC-2026-0195",
+  "RUSTSEC-2026-0194",
+
+  # rsa 0.9 — Marvin timing sidechannel, no fixed version exists upstream.
+  #
+  # Not compiled at all: `cargo tree -i rsa` is empty. It appears in Cargo.lock
+  # only because sqlx declares sqlx-mysql as an optional dependency, and the
+  # lockfile records the union of all optional features. Castle builds sea-orm
+  # with sqlx-postgres and sqlx-sqlite only, so no MySQL driver — and no RSA
+  # implementation — is in the binary.
+  #
+  # REMOVE if a MySQL backend is ever enabled, at which point this becomes a
+  # real finding that needs a real answer.
+  "RUSTSEC-2023-0071",
+
+  # fxhash — unmaintained (no known vulnerability).
+  # Pulled in by scraper, which loco-rs uses for HTML assertions in tests.
+  # REMOVE when loco-rs migrates scraper/selectors to rustc-hash.
+  "RUSTSEC-2025-0057",
+
+  # proc-macro-error2 — unmaintained (no known vulnerability).
+  # A build-time proc macro behind sea-orm-macros; it never ships in the binary.
+  # REMOVE when sea-orm updates sea-bae.
+  "RUSTSEC-2026-0173",
+]
