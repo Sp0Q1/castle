@@ -1,0 +1,182 @@
+# =============================================================================
+# LOCAL SSO TEST — a shared Keycloak (realm-per-tenant) for exercising the real
+# proxy/OIDC auth path on kind. TEST ONLY: dev mode (start-dev), admin/admin,
+# self-signed ingress cert. Never prod.
+#
+# Usage (after ./local-test.sh has a cluster with ingress + Calico up, and the
+# castle image is loaded; also `kind load` the keycloak + oauth2-proxy images):
+#
+#   kubectl apply -f deploy/k8s/local-keycloak.yaml
+#   kubectl -n castle-system rollout status deploy/keycloak
+#
+#   # A proxy-mode tenant wired to its realm via SPLIT-HORIZON oauth2-proxy
+#   # (browser hits Keycloak through the ingress; the pod reaches it in-cluster):
+#   KC=keycloak.castle-system.svc.cluster.local:8080/realms/castle-citadel/protocol/openid-connect
+#   helm upgrade --install castle-citadel deploy/k8s/tenant \
+#     --namespace tenant-citadel --create-namespace \
+#     --set codename=citadel --set baseDomain=127.0.0.1.nip.io --set externalPort=8443 \
+#     --set image.repository=localhost/castle --set image.tag=local --set image.pullPolicy=IfNotPresent \
+#     --set runtimeClassName="" --set oauth2Proxy.enabled=true \
+#     --set database.internal=false --set database.externalUrl='sqlite:///app/uploads/castle.sqlite?mode=rwc' \
+#     --set keycloak.issuerUrl=https://keycloak.127.0.0.1.nip.io:8443/realms/castle-citadel \
+#     --set keycloak.whitelistDomain=keycloak.127.0.0.1.nip.io \
+#     --set secrets.jwtSecret="$(openssl rand -base64 48|tr -d '\n')" \
+#     --set secrets.oauth2ClientSecret=citadel-client-secret \
+#     --set secrets.oauth2CookieSecret="$(openssl rand -hex 16)" \
+#     --set-json "oauth2Proxy.extraArgs=[\"--skip-oidc-discovery=true\",\"--login-url=https://keycloak.127.0.0.1.nip.io:8443/realms/castle-citadel/protocol/openid-connect/auth\",\"--redeem-url=http://$KC/token\",\"--oidc-jwks-url=http://$KC/certs\",\"--profile-url=http://$KC/userinfo\"]"
+#   kubectl label ns tenant-citadel castle.io/managed=true --overwrite
+#   # let the pod reach the in-cluster IdP (chart egress only allows external :443):
+#   kubectl apply -n tenant-citadel -f - <<'NP'
+#   apiVersion: networking.k8s.io/v1
+#   kind: NetworkPolicy
+#   metadata: { name: allow-idp-egress }
+#   spec:
+#     podSelector: { matchLabels: { app: castle-citadel } }
+#     policyTypes: [Egress]
+#     egress:
+#       - to: [ { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: castle-system } } } ]
+#         ports: [ { protocol: TCP, port: 8080 } ]
+#   NP
+#
+# Then in a browser (tunnel :8443): https://citadel.127.0.0.1.nip.io:8443 ->
+# redirected to Keycloak -> log in as alice/alicepw (manager), sam/sampw (staff),
+# or bob/bobpw (client). Accept the self-signed cert for both hosts.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata: { name: castle-system }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: castle-system
+data:
+  castle-citadel-realm.json: |
+    {
+      "realm": "castle-citadel",
+      "enabled": true,
+      "sslRequired": "none",
+      "groups": [
+        {"name": "castle-managers"},
+        {"name": "castle-staff"},
+        {"name": "castle-clients"}
+      ],
+      "clients": [
+        {
+          "clientId": "castle",
+          "enabled": true,
+          "publicClient": false,
+          "secret": "citadel-client-secret",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "implicitFlowEnabled": false,
+          "redirectUris": ["https://citadel.127.0.0.1.nip.io:8443/oauth2/callback"],
+          "webOrigins": ["+"],
+          "attributes": {"post.logout.redirect.uris": "+"},
+          "protocolMappers": [
+            {
+              "name": "groups",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-group-membership-mapper",
+              "config": {
+                "full.path": "false",
+                "claim.name": "groups",
+                "access.token.claim": "true",
+                "id.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ],
+      "users": [
+        {"username":"alice","enabled":true,"emailVerified":true,"email":"alice@corp.test","firstName":"Alice","lastName":"Manager","credentials":[{"type":"password","value":"alicepw","temporary":false}],"groups":["/castle-managers"]},
+        {"username":"sam","enabled":true,"emailVerified":true,"email":"sam@corp.test","firstName":"Sam","lastName":"Staff","credentials":[{"type":"password","value":"sampw","temporary":false}],"groups":["/castle-staff"]},
+        {"username":"bob","enabled":true,"emailVerified":true,"email":"bob@corp.test","firstName":"Bob","lastName":"Client","credentials":[{"type":"password","value":"bobpw","temporary":false}],"groups":["/castle-clients"]}
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: castle-system
+  labels: { app: keycloak }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: keycloak } }
+  template:
+    metadata: { labels: { app: keycloak } }
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.0
+          imagePullPolicy: IfNotPresent
+          args: ["start-dev", "--import-realm"]
+          env:
+            - { name: KEYCLOAK_ADMIN, value: admin }
+            - { name: KEYCLOAK_ADMIN_PASSWORD, value: admin }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            # Frontend URL the browser uses (also the token issuer). Backchannel
+            # dynamic lets in-cluster pods reach it by the service host too.
+            - { name: KC_HOSTNAME, value: "https://keycloak.127.0.0.1.nip.io:8443" }
+            - { name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true" }
+            - { name: KC_PROXY_HEADERS, value: "xforwarded" }
+          ports: [ { containerPort: 8080 } ]
+          volumeMounts:
+            - { name: realm, mountPath: /opt/keycloak/data/import }
+          readinessProbe:
+            httpGet: { path: /realms/master, port: 8080 }
+            initialDelaySeconds: 25
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: "2",  memory: 1200Mi }
+      volumes:
+        - name: realm
+          configMap: { name: keycloak-realm }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: castle-system
+  labels: { app: keycloak }
+spec:
+  selector: { app: keycloak }
+  ports: [ { name: http, port: 8080, targetPort: 8080 } ]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak
+  namespace: castle-system
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["keycloak.127.0.0.1.nip.io"]
+      secretName: keycloak-tls   # absent -> ingress-nginx serves its default cert
+  rules:
+    - host: keycloak.127.0.0.1.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: keycloak, port: { number: 8080 } } }
+---
+# Keycloak accepts inbound from the ingress and from managed tenant namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: keycloak-allow-ingress, namespace: castle-system }
+spec:
+  podSelector: { matchLabels: { app: keycloak } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+        - namespaceSelector: { matchLabels: { castle.io/managed: "true" } }
+      ports: [ { protocol: TCP, port: 8080 } ]

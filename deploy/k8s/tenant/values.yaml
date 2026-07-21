@@ -10,6 +10,10 @@
 
 codename: changeme                       # -> {codename}.{baseDomain}
 baseDomain: tenants.example.com
+# Port clients reach the app on via the ingress/LB. 443 in prod (omitted from
+# URLs); set e.g. 8443 for local kind host-port mappings so the OIDC redirect
+# URI carries the port.
+externalPort: 443
 
 image:
   repository: ghcr.io/your-org/castle
@@ -27,6 +31,11 @@ runtimeClassName: kata
 # Service/NetworkPolicy target its port directly.
 oauth2Proxy:
   enabled: true
+  # Extra oauth2-proxy args appended verbatim. Needed for an in-cluster IdP
+  # behind an ingress (split-horizon): --skip-oidc-discovery, --login-url (the
+  # browser-facing authorize URL), --redeem-url + --oidc-jwks-url (the in-cluster
+  # backchannel), plus --ssl-insecure-skip-verify if the ingress cert is self-signed.
+  extraArgs: []
 
 # Decoy/honeypot instance: presents the normal auth surface but captures
 # submitted credentials + attacker metadata (never a real account). Set true

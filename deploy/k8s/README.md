@@ -178,6 +178,16 @@ in production:
 > In a network-restricted environment where the kind node can't reach registries,
 > pre-pull the Calico/ingress/castle images on the host and `kind load` them.
 
+**Testing the real SSO path** (Keycloak + oauth2-proxy, not just built-in login):
+`deploy/k8s/local-keycloak.yaml` stands up a shared Keycloak with a per-tenant
+realm and documents the exact `helm` command to deploy a proxy-mode tenant wired
+to it. Because the IdP is in-cluster behind the ingress, the tenant uses the
+chart's `externalPort` (so redirect URIs carry `:8443`) and `oauth2Proxy.extraArgs`
+for split-horizon (browser hits Keycloak via the ingress; the pod reaches it via
+the in-cluster service). Verified end to end: login through Keycloak →
+group→role (`castle-managers`→manager, `-staff`→staff, `-clients`→client) →
+provisioned into the tenant. This exercises the actual production auth path.
+
 ## Managing instances (`castlectl`)
 
 `deploy/k8s/castlectl.sh` is a minimal provisioner — the seed of the control

@@ -1,5 +1,8 @@
 {{- $host := printf "%s.%s" .Values.codename .Values.baseDomain -}}
-{{- $appUrl := printf "https://%s/" $host -}}
+{{- /* External URL may carry a non-standard port (e.g. :8443 in local kind). */ -}}
+{{- $hostPort := $host -}}
+{{- if ne (toString .Values.externalPort) "443" }}{{- $hostPort = printf "%s:%v" $host .Values.externalPort -}}{{- end -}}
+{{- $appUrl := printf "https://%s/" $hostPort -}}
 {{- /* When the oauth2-proxy sidecar is present, castle binds to loopback so only
        the sidecar can reach it. Without it, castle must listen on 0.0.0.0. */ -}}
 {{- $binding := ternary "127.0.0.1" "0.0.0.0" .Values.oauth2Proxy.enabled -}}
@@ -86,7 +89,7 @@ spec:
             - --provider=keycloak-oidc
             - --oidc-issuer-url={{ .Values.keycloak.issuerUrl }}
             - --client-id={{ .Values.keycloak.clientId }}
-            - --redirect-url={{ printf "https://%s/oauth2/callback" $host }}
+            - --redirect-url={{ printf "https://%s/oauth2/callback" $hostPort }}
             - --upstream=http://127.0.0.1:5150
             - --http-address=0.0.0.0:4180
             - --email-domain=*
@@ -100,6 +103,9 @@ spec:
             - --cookie-csrf-per-request=true
             - --cookie-csrf-expire=5m
             - --whitelist-domain={{ .Values.keycloak.whitelistDomain }}
+            {{- range .Values.oauth2Proxy.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
           env:
             - name: OAUTH2_PROXY_CLIENT_SECRET
               valueFrom:
