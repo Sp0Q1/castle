@@ -152,8 +152,21 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # The image build, not the scan, is what made this job slow: 305s of a
+      # 333s job, because a from-scratch dependency compile ran every time.
+      # The Dockerfile now isolates dependencies in their own layer, and this
+      # cache carries that layer between runs — so a source-only change reuses
+      # it and only recompiles castle itself.
       - name: Build the application image
-        run: docker build -t castle:ci .
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          tags: castle:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # Blocking: known CVEs in what we actually ship.
       - name: Scan image for HIGH/CRITICAL vulnerabilities
