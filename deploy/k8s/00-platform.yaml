@@ -1,0 +1,64 @@
+# =============================================================================
+# Castle multi-tenant platform — shared cluster-level resources.
+#
+# Apply once, before provisioning any tenants:
+#   kubectl apply -f deploy/k8s/00-platform.yaml
+#
+# Prerequisites (install these first, they are NOT in this file):
+#   - ingress-nginx        (the single, hardened TLS-termination point)
+#   - cert-manager         (issues the per-subdomain certs)
+#   - kube-prometheus-stack + loki  (optional, for the monitoring layer)
+#   - a Kata / gVisor RuntimeClass on the nodes (optional, for kernel isolation)
+# See deploy/k8s/README.md for the exact install commands.
+# =============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: castle-system            # control-plane / provisioner lives here
+  labels:
+    castle.io/layer: control-plane
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: castle-honeypot          # the single shared decoy backend for the swarm
+  labels:
+    castle.io/layer: honeypot
+    # This label is how NetworkPolicies elsewhere identify honeypot traffic.
+    castle.io/trust: untrusted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    castle.io/layer: monitoring
+---
+# Per-tenant certificates are issued from Let's Encrypt via HTTP-01, solved
+# through ingress-nginx. HTTP-01 keeps issuance credential-free; the ~50
+# cert/week rate limit is fine for the initial phase (real tenants + canaries).
+# Switch to DNS-01 later if you want to issue without exposing an HTTP path.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: platform@example.com            # <-- your ops contact
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+---
+# Optional: kernel-level isolation for tenant/honeypot pods. Requires the Kata
+# runtime to be installed on the nodes; if it is not, drop `runtimeClassName`
+# from the tenant chart values and this resource.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata
+handler: kata

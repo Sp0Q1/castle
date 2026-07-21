@@ -1,0 +1,101 @@
+# =============================================================================
+# Monitoring & detection — the "intel to harden prod" half.
+#
+# Assumes kube-prometheus-stack (Prometheus Operator + Alertmanager), Loki +
+# Promtail, and Falco are installed (see README). These resources wire castle's
+# canary swarm into them.
+# =============================================================================
+---
+# Any request routed to the honeypot namespace is, by definition, suspicious.
+# ingress-nginx exports per-ingress request counters; we alert on the first hit.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: castle-canary-alerts
+  namespace: monitoring
+  labels:
+    # Match your kube-prometheus-stack release so the operator adopts this rule.
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: castle-canaries
+      rules:
+        - alert: CanaryTouched
+          # Any traffic to a decoy host in the last 2m.
+          expr: sum(increase(nginx_ingress_controller_requests{namespace="castle-honeypot"}[2m])) by (host) > 0
+          for: 0m
+          labels:
+            severity: critical
+            signal: deception
+          annotations:
+            summary: "Canary {{ $labels.host }} was accessed — probable recon/attack"
+            description: "A decoy subdomain received traffic. Nobody legitimate reaches these. Investigate source IPs in Loki (namespace castle-honeypot)."
+        - alert: CanaryCredentialStuffing
+          # Bursts of auth failures against the canary realm's login surface.
+          expr: sum(increase(nginx_ingress_controller_requests{namespace="castle-honeypot",status=~"4.."}[5m])) > 20
+          for: 0m
+          labels:
+            severity: critical
+            signal: deception
+          annotations:
+            summary: "Sustained failed-auth pattern against the canary swarm"
+            description: "Likely credential stuffing / brute force. Capture the attacker's IPs + tried usernames and pre-emptively block them on the real tenant ingresses."
+    - name: castle-tenants
+      rules:
+        - alert: TenantHighErrorRate
+          expr: |
+            sum(rate(nginx_ingress_controller_requests{namespace=~"tenant-.*",status=~"5.."}[5m])) by (namespace)
+            / sum(rate(nginx_ingress_controller_requests{namespace=~"tenant-.*"}[5m])) by (namespace) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Tenant {{ $labels.namespace }} error rate >10%"
+---
+# Promtail: pull honeypot pod logs with a distinct label so Loki queries and
+# alerts can isolate attacker activity. Add this scrape config to your Promtail
+# values (shown here for reference).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-castle-honeypot
+  namespace: monitoring
+data:
+  scrape-snippet.yaml: |
+    # merge into promtail .Values.config.snippets.scrapeConfigs
+    - job_name: castle-honeypot
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace]
+          regex: castle-honeypot
+          action: keep
+        - target_label: signal
+          replacement: deception
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+---
+# Falco: detect the thing a honeypot exists to catch — an attacker who breaks out
+# of the app into a shell inside a canary (or tenant) pod. Load via Falco's
+# helm `customRules`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-castle-rules
+  namespace: monitoring
+data:
+  castle_rules.yaml: |
+    - macro: castle_pods
+      condition: (k8s.ns.name = "castle-honeypot" or k8s.ns.name startswith "tenant-")
+    - rule: Shell in castle pod
+      desc: A shell was spawned inside a castle/honeypot container — likely RCE/breakout.
+      condition: spawned_process and container and castle_pods and proc.name in (sh, bash, dash, ash, zsh, nc, ncat, curl, wget)
+      output: "Shell/tooling spawned in castle pod (ns=%k8s.ns.name pod=%k8s.pod.name proc=%proc.cmdline user=%user.name)"
+      priority: CRITICAL
+      tags: [castle, deception, breakout]
+    - rule: Outbound connection from honeypot
+      desc: The honeypot tried to connect somewhere other than DNS/IdP — possible pivot attempt.
+      condition: outbound and k8s.ns.name = "castle-honeypot" and not fd.sport in (53) and not fd.rport in (53, 443)
+      output: "Honeypot attempted unexpected egress (pod=%k8s.pod.name dest=%fd.rip:%fd.rport)"
+      priority: CRITICAL
+      tags: [castle, deception]

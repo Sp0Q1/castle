@@ -1,0 +1,68 @@
+# Values for one real tenant. The control plane fills these in per client, e.g.
+#   helm install castle-ironclad deploy/k8s/tenant \
+#     --namespace tenant-ironclad --create-namespace \
+#     --set codename=ironclad \
+#     --set-string keycloak.realm=ironclad \
+#     --set-file secrets... (see README)
+#
+# `codename` is the army-style project name; the client's real identity is NEVER
+# encoded here — the codename<->client mapping lives only in the control plane.
+
+codename: changeme                       # -> {codename}.{baseDomain}
+baseDomain: tenants.example.com
+
+image:
+  repository: ghcr.io/your-org/castle
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1                          # keep at 1: single writer, auto-migrate on boot
+
+# Kernel isolation. Set to "" to disable if the nodes have no Kata runtime.
+runtimeClassName: kata
+
+# Front castle with the bundled oauth2-proxy sidecar (OIDC via Keycloak).
+# Set to false to expose castle directly — e.g. behind an external proxy, or
+# for local testing without an IdP. When false, castle binds 0.0.0.0 and the
+# Service/NetworkPolicy target its port directly.
+oauth2Proxy:
+  enabled: true
+
+resources:
+  castle:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: "1",  memory: 512Mi }
+  oauth2Proxy:
+    requests: { cpu: 25m,  memory: 32Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# Keycloak / OIDC. One realm per tenant gives the cleanest identity isolation.
+keycloak:
+  issuerUrl: https://sso.example.com/realms/REALM   # overridden per tenant
+  clientId: castle
+  # oauth2-proxy must be allowed to redirect the browser to this IdP host on
+  # logout (RP-initiated end-session). Host[:port] only.
+  whitelistDomain: sso.example.com
+
+uploadsStorageSize: 1Gi                  # PVC for uploaded finding images
+
+database:
+  # internal: true deploys a per-tenant Postgres StatefulSet in the namespace.
+  # false uses an external database via `externalUrl` (a managed Postgres in
+  # prod, or sqlite for local testing — point it at a mounted path).
+  internal: true
+  externalUrl: ""                        # only when internal=false, e.g. sqlite:///app/uploads/castle.sqlite?mode=rwc
+  storageSize: 5Gi
+  storageClass: ""                       # "" = cluster default
+  # For the initial phase these are templated into a Secret. In production,
+  # supply them via sealed-secrets / external-secrets instead of values.
+  name: castle
+  user: castle
+
+# Secrets. Provide real values at install time (NOT in a committed values file).
+# JWT_SECRET must be valid base64 (openssl rand -base64 48) even in proxy mode.
+secrets:
+  jwtSecret: ""                          # base64
+  dbPassword: ""
+  oauth2ClientSecret: ""                 # Keycloak client secret for this realm
+  oauth2CookieSecret: ""                 # 16/24/32 raw bytes, e.g. openssl rand -hex 16

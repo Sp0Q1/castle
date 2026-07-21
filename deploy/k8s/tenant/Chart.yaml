@@ -1,0 +1,6 @@
+apiVersion: v2
+name: castle-tenant
+description: One isolated castle instance for a single client (real tenant).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
