@@ -20,6 +20,20 @@ updates:
     groups:
       rust-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # sea-orm's major version is not ours to choose: loco-rs 0.16.4 pins
+      # sea-orm 1.1, so taking 2.x here puts two incompatible copies in the
+      # tree and the entities stop satisfying loco's traits —
+      # "the trait bound users::ActiveModel: ActiveModelBehavior is not
+      # satisfied", ten times over. Verified by trying it (PRs #10/#11).
+      #
+      # Minor and patch updates still come through; only the major is held.
+      # REMOVE this once loco-rs releases against sea-orm 2, at which point the
+      # loco bump and this one have to land together.
+      - dependency-name: sea-orm
+        update-types: ["version-update:semver-major"]
+      - dependency-name: sea-orm-migration
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/frontend"
