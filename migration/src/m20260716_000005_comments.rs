@@ -11,10 +11,7 @@ impl MigrationTrait for Migration {
         create_table(
             m,
             "comments",
-            &[
-                ("id", ColType::PkAuto),
-                ("body", ColType::Text),
-            ],
+            &[("id", ColType::PkAuto), ("body", ColType::Text)],
             &[
                 ("findings", ""), // finding_id INTEGER NOT NULL, FK -> findings(id)
                 ("users", ""),    // user_id    INTEGER NOT NULL, FK -> users(id)

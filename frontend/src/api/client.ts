@@ -44,7 +44,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const message =
-      (data && (data.description || data.error)) || res.statusText || "Request failed";
+      (data && (data.description || data.error)) ||
+      res.statusText ||
+      "Request failed";
     throw new ApiError(res.status, message);
   }
   return data as T;
@@ -63,14 +65,17 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
-  currentUser: (): Promise<CurrentUser> => request<CurrentUser>("/auth/current"),
+  currentUser: (): Promise<CurrentUser> =>
+    request<CurrentUser>("/auth/current"),
 
   // Public: "jwt" (show the built-in login form) or "proxy" (hand off to the IdP).
-  authMode: (): Promise<{ mode: string }> => request<{ mode: string }>("/auth/mode"),
+  authMode: (): Promise<{ mode: string }> =>
+    request<{ mode: string }>("/auth/mode"),
 
   listProjects: (): Promise<Project[]> => request<Project[]>("/projects"),
 
-  getProject: (id: number): Promise<Project> => request<Project>(`/projects/${id}`),
+  getProject: (id: number): Promise<Project> =>
+    request<Project>(`/projects/${id}`),
 
   createProject: (name: string, description: string | null): Promise<Project> =>
     request<Project>("/projects", {
@@ -81,7 +86,11 @@ export const api = {
   listMembers: (projectId: number): Promise<Member[]> =>
     request<Member[]>(`/projects/${projectId}/members`),
 
-  onboard: (projectId: number, userEmail: string, role: string): Promise<Member> =>
+  onboard: (
+    projectId: number,
+    userEmail: string,
+    role: string,
+  ): Promise<Member> =>
     request<Member>(`/projects/${projectId}/members`, {
       method: "POST",
       body: JSON.stringify({ user_email: userEmail, role }),
@@ -90,7 +99,10 @@ export const api = {
   listFindings: (projectId: number): Promise<Finding[]> =>
     request<Finding[]>(`/projects/${projectId}/findings`),
 
-  createFinding: (projectId: number, params: CreateFindingParams): Promise<Finding> =>
+  createFinding: (
+    projectId: number,
+    params: CreateFindingParams,
+  ): Promise<Finding> =>
     request<Finding>(`/projects/${projectId}/findings`, {
       method: "POST",
       body: JSON.stringify(params),
@@ -132,7 +144,11 @@ export const api = {
     if (authToken) {
       headers.authorization = `Bearer ${authToken}`;
     }
-    const res = await fetch(`${BASE}/uploads`, { method: "POST", headers, body: form });
+    const res = await fetch(`${BASE}/uploads`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {

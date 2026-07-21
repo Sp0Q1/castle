@@ -15,11 +15,19 @@ interface Props {
  * dragging or pasting images: each image is uploaded and its markdown
  * `![](url)` is inserted at the caret.
  */
-export function MarkdownField({ value, onChange, height = 240, placeholder }: Props) {
+export function MarkdownField({
+  value,
+  onChange,
+  height = 240,
+  placeholder,
+}: Props) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const insertAtCaret = (textarea: HTMLTextAreaElement | null, snippet: string) => {
+  const insertAtCaret = (
+    textarea: HTMLTextAreaElement | null,
+    snippet: string,
+  ) => {
     if (!textarea) {
       onChange(`${value}${snippet}`);
       return;
@@ -29,7 +37,10 @@ export function MarkdownField({ value, onChange, height = 240, placeholder }: Pr
     onChange(value.slice(0, start) + snippet + value.slice(end));
   };
 
-  const uploadImages = async (files: File[], textarea: HTMLTextAreaElement | null) => {
+  const uploadImages = async (
+    files: File[],
+    textarea: HTMLTextAreaElement | null,
+  ) => {
     const images = files.filter((f) => f.type.startsWith("image/"));
     if (images.length === 0) {
       return;
@@ -50,40 +61,44 @@ export function MarkdownField({ value, onChange, height = 240, placeholder }: Pr
     }
   };
 
-  const textareaOf = (el: HTMLElement) => el.querySelector("textarea");
-
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+  // Bound to the textarea itself (via textareaProps) rather than a wrapper div:
+  // drop/paste belong on the real editing control, and `currentTarget` is then
+  // the textarea we insert into. Pasting also keeps image upload reachable
+  // without a mouse.
+  const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.dataTransfer?.files ?? []);
     if (files.some((f) => f.type.startsWith("image/"))) {
       e.preventDefault();
-      void uploadImages(files, textareaOf(e.currentTarget));
+      void uploadImages(files, e.currentTarget);
     }
   };
 
-  const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData?.files ?? []);
     if (files.some((f) => f.type.startsWith("image/"))) {
       e.preventDefault();
-      void uploadImages(files, textareaOf(e.currentTarget));
+      void uploadImages(files, e.currentTarget);
     }
   };
 
   return (
-    <div
-      data-color-mode="dark"
-      className="md-field"
-      onDrop={onDrop}
-      onDragOver={(e) => e.preventDefault()}
-      onPaste={onPaste}
-    >
+    <div data-color-mode="dark" className="md-field">
       <MDEditor
         value={value}
         height={height}
         preview="edit"
         onChange={(v) => onChange(v ?? "")}
-        previewOptions={{ components: markdownComponents, rehypePlugins: safeRehypePlugins }}
+        previewOptions={{
+          components: markdownComponents,
+          rehypePlugins: safeRehypePlugins,
+        }}
         textareaProps={{
-          placeholder: placeholder ?? "Markdown supported — drag or paste an image to upload",
+          placeholder:
+            placeholder ??
+            "Markdown supported — drag or paste an image to upload",
+          onDrop,
+          onDragOver: (e) => e.preventDefault(),
+          onPaste,
         }}
       />
       {uploading && <div className="md-hint">Uploading image…</div>}

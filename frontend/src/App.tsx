@@ -15,10 +15,14 @@ import { RegisterPage } from "./pages/RegisterPage";
 // The project and finding pages pull in the markdown editor (heavy), so load
 // them on demand — login and the projects list stay lightweight.
 const ProjectDetailPage = lazy(() =>
-  import("./pages/ProjectDetailPage").then((m) => ({ default: m.ProjectDetailPage })),
+  import("./pages/ProjectDetailPage").then((m) => ({
+    default: m.ProjectDetailPage,
+  })),
 );
 const FindingDetailPage = lazy(() =>
-  import("./pages/FindingDetailPage").then((m) => ({ default: m.FindingDetailPage })),
+  import("./pages/FindingDetailPage").then((m) => ({
+    default: m.FindingDetailPage,
+  })),
 );
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -75,32 +79,32 @@ export function App() {
         <main className="container page">
           <Suspense fallback={<p className="muted">Loading…</p>}>
             <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <ProjectsPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/projects/:id"
-              element={
-                <ProtectedRoute>
-                  <ProjectDetailPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/findings/:id"
-              element={
-                <ProtectedRoute>
-                  <FindingDetailPage />
-                </ProtectedRoute>
-              }
-            />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <ProjectsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/projects/:id"
+                element={
+                  <ProtectedRoute>
+                    <ProjectDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/findings/:id"
+                element={
+                  <ProtectedRoute>
+                    <FindingDetailPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>

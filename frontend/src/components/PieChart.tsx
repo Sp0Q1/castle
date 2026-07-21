@@ -12,7 +12,13 @@ function point(angle: number): [number, number] {
   return [C + R * Math.cos(angle), C + R * Math.sin(angle)];
 }
 
-export function PieChart({ title, slices }: { title: string; slices: Slice[] }) {
+export function PieChart({
+  title,
+  slices,
+}: {
+  title: string;
+  slices: Slice[];
+}) {
   const data = slices.filter((s) => s.value > 0);
   const total = data.reduce((sum, s) => sum + s.value, 0);
 
@@ -32,10 +38,18 @@ export function PieChart({ title, slices }: { title: string; slices: Slice[] }) 
         <p className="muted">No findings yet.</p>
       ) : (
         <div className="pie-body">
-          <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={SIZE} height={SIZE} role="img" aria-label={title}>
+          <svg
+            viewBox={`0 0 ${SIZE} ${SIZE}`}
+            width={SIZE}
+            height={SIZE}
+            role="img"
+            aria-label={title}
+          >
             {arcs.map((a) => {
               if (a.fraction >= 1) {
-                return <circle key={a.label} cx={C} cy={C} r={R} fill={a.color} />;
+                return (
+                  <circle key={a.label} cx={C} cy={C} r={R} fill={a.color} />
+                );
               }
               const [x1, y1] = point(a.start);
               const [x2, y2] = point(a.end);

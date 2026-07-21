@@ -25,7 +25,7 @@ impl MigrationTrait for Migration {
                 ("status", ColType::StringWithDefault("draft".to_string())),
             ],
             &[
-                ("projects", ""),        // project_id INTEGER NOT NULL, FK -> projects(id)
+                ("projects", ""),       // project_id INTEGER NOT NULL, FK -> projects(id)
                 ("users", "author_id"), // author_id  INTEGER NOT NULL, FK -> users(id)
             ],
         )

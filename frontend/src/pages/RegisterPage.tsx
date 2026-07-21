@@ -34,8 +34,8 @@ export function RegisterPage() {
       <div className="auth-card card">
         <h1>Account created</h1>
         <p className="muted">
-          New accounts start with the <strong>staff</strong> role. A manager (or an
-          administrator) grants management access.
+          New accounts start with the <strong>staff</strong> role. A manager (or
+          an administrator) grants management access.
         </p>
         <Link to="/login" className="btn btn-primary">
           Continue to sign in
@@ -50,7 +50,11 @@ export function RegisterPage() {
       <form onSubmit={onSubmit}>
         <label>
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
         </label>
         <label>
           Email

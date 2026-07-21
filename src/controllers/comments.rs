@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::unused_async)]
 //! Comments let clients discuss findings with the reporting team. A user may
 //! comment on (and read the discussion of) a finding only if they can see that
 //! finding — which for clients means it must be published.
@@ -8,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{comments, findings, project_members, users};
 use crate::security::CurrentUser;
+use crate::validation::{self, MAX_COMMENT};
 use crate::views::comment::CommentResponse;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,9 +74,7 @@ pub async fn create(
 ) -> Result<Response> {
     let finding = load_viewable_finding(&ctx, &user, finding_id).await?;
 
-    if params.body.trim().is_empty() {
-        return bad_request("comment body cannot be empty");
-    }
+    validation::required_text("comment body", &params.body, MAX_COMMENT)?;
 
     let comment = comments::ActiveModel {
         finding_id: Set(finding.id),

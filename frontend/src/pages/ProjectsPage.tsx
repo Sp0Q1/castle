@@ -22,7 +22,9 @@ export function ProjectsPage() {
     api
       .listProjects()
       .then(setProjects)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load"),
+      )
       .finally(() => setLoading(false));
   };
 
@@ -38,7 +40,9 @@ export function ProjectsPage() {
       setDescription("");
       load();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Failed to create project");
+      setFormError(
+        err instanceof Error ? err.message : "Failed to create project",
+      );
     } finally {
       setBusy(false);
     }
@@ -60,7 +64,11 @@ export function ProjectsPage() {
           <h2>New project</h2>
           <label>
             Name
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
           </label>
           <label>
             Description

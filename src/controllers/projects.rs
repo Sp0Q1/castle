@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::unused_async)]
 //! Projects are opened by management and are the container into which staff and
 //! clients are onboarded. Access rules enforced here:
 //!   * create a project ...... management only
@@ -10,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{project_members, projects, users};
 use crate::security::CurrentUser;
+use crate::validation::{self, MAX_DESCRIPTION, MAX_EMAIL, MAX_TITLE};
 use crate::views::member::MemberResponse;
 use crate::views::project::ProjectResponse;
 
@@ -55,6 +54,11 @@ pub async fn create(
         return unauthorized("only management can create projects");
     }
 
+    validation::required_text("name", &params.name, MAX_TITLE)?;
+    if let Some(description) = &params.description {
+        validation::text("description", description, MAX_DESCRIPTION)?;
+    }
+
     let project = projects::ActiveModel {
         name: Set(params.name),
         description: Set(params.description),
@@ -68,7 +72,10 @@ pub async fn create(
 }
 
 #[debug_handler]
-pub async fn list(CurrentUser(user): CurrentUser, State(ctx): State<AppContext>) -> Result<Response> {
+pub async fn list(
+    CurrentUser(user): CurrentUser,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
     let projects = if user.is_manager() {
         projects::Entity::find().all(&ctx.db).await?
     } else {
@@ -115,6 +122,8 @@ pub async fn onboard(
         return unauthorized("only management can onboard members");
     }
     let project = load_project(&ctx, project_id).await?;
+
+    validation::required_text("user_email", &params.user_email, MAX_EMAIL)?;
 
     let role = match params.role.as_str() {
         "staff" | "client" => params.role.clone(),

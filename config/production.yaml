@@ -17,6 +17,13 @@ server:
   # The public URL mailers and links should point to.
   host: {{ get_env(name="HOST", default="http://localhost") }}
   middlewares:
+    # Loco applies a 2MB body limit by default even with no config, which would
+    # reject image uploads well below the 10 MiB cap in `controllers::uploads`.
+    # Raised just above that cap so uploads.rs stays the single source of truth
+    # for image size. JSON endpoints are NOT protected by this number — their
+    # real bound is the per-field limits in `crate::validation`.
+    limit_payload:
+      body_limit: 12mb
     # Security headers. Without this block loco defaults to enable:false, leaving
     # the SPA and all user-generated content with no CSP/nosniff/frame policy.
     # The CSP deliberately omits 'unsafe-inline' for scripts: the SPA loads only

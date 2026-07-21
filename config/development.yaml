@@ -26,6 +26,10 @@ server:
   host: http://localhost
   # Out of the box middleware configuration. to disable middleware you can changed the `enable` field to `false` of comment the middleware block
   middlewares:
+    # Keep in step with production (see the note there): the 2MB default would
+    # reject uploads the 10 MiB cap in `controllers::uploads` allows.
+    limit_payload:
+      body_limit: 12mb
     static:
       enable: true
       must_exist: true

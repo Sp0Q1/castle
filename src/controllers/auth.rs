@@ -1,3 +1,4 @@
+use crate::security::CurrentUser;
 use crate::{
     mailers::auth::AuthMailer,
     models::{
@@ -6,7 +7,6 @@ use crate::{
     },
     views::auth::{CurrentResponse, LoginResponse},
 };
-use crate::security::CurrentUser;
 use axum::http::HeaderMap;
 use loco_rs::prelude::*;
 use regex::Regex;
@@ -161,7 +161,10 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
 }
 
 #[debug_handler]
-async fn current(CurrentUser(user): CurrentUser, State(ctx): State<AppContext>) -> Result<Response> {
+async fn current(
+    CurrentUser(user): CurrentUser,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
     // Surface the sign-out URL only in proxy mode (JWT mode logs out locally).
     let settings = crate::security::Settings::from_ctx(&ctx);
     let logout_url = match settings.auth_mode {
@@ -316,12 +319,7 @@ pub fn proxy_routes() -> Routes {
 // ---------------------------------------------------------------------------
 
 fn honeypot_capture(event: &str, headers: &HeaderMap, submitted: &str) {
-    let h = |k: &str| {
-        headers
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("-")
-    };
+    let h = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("-");
     tracing::warn!(
         target: "castle::honeypot",
         signal = "deception",

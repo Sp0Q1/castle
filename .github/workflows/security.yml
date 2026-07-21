@@ -1,0 +1,167 @@
+name: Security
+
+# Vulnerability, secret and misconfiguration scanning.
+#
+# Two rules of thumb encoded below:
+#   * anything with a *verifiable* answer (a leaked live credential, a known
+#     CVE, a Semgrep rule match) fails the build;
+#   * anything heuristic (Kubernetes/Dockerfile misconfiguration opinions)
+#     reports to the Security tab but does not block, because this repo
+#     deliberately diverges from some defaults and a noisy gate gets ignored.
+#
+# The weekly schedule matters as much as the push trigger: a new CVE lands
+# against unchanged code, and nothing else would notice.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secret scan (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a credential deleted in a later commit is still a
+          # leaked credential, and this repo is public.
+          fetch-depth: 0
+
+      # Run from the published image rather than a floating action ref, so the
+      # scanner itself is not an unpinned dependency of the pipeline.
+      # --only-verified means findings are credentials TruffleHog authenticated
+      # against the live provider — near-zero false positives, so failing is safe.
+      - name: Scan git history for verified secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/trufflesecurity/trufflehog:latest \
+            git file:///repo --only-verified --fail --json
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Semgrep OSS CLI, no account or token needed. If the licensing of the
+      # registry rules ever becomes a problem, OpenGrep (a fork of the OSS
+      # engine) is a drop-in replacement for this step.
+      - run: pip install --disable-pip-version-check semgrep
+
+      - name: Scan
+        run: |
+          semgrep scan \
+            --config p/default \
+            --config p/rust \
+            --config p/typescript \
+            --config p/react \
+            --config p/secrets \
+            --config p/dockerfile \
+            --config p/github-actions \
+            --metrics off \
+            --error \
+            --sarif --output semgrep.sarif \
+            --exclude frontend/dist \
+            --exclude target \
+            --exclude src/models/_entities
+
+      - name: Upload results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  rust-deps:
+    name: Dependencies (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Prebuilt binary — `cargo install cargo-audit` would rebuild it every run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Audit against the RustSec advisory DB
+        run: cargo audit --deny warnings
+
+  npm-deps:
+    name: Dependencies (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # `high` rather than `moderate`: the frontend tree carries a long tail of
+      # low/moderate advisories in build-only packages that cannot reach a user.
+      # Review those from the Dependabot alerts, not from a red build.
+      - run: npm audit --audit-level=high
+
+  containers:
+    name: Image and manifest scan (Trivy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the application image
+        run: docker build -t castle:ci .
+
+      # Blocking: known CVEs in what we actually ship.
+      - name: Scan image for HIGH/CRITICAL vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:latest image \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              castle:ci
+
+      # Non-blocking: Dockerfile and Kubernetes hardening opinions. Reported to
+      # the Security tab for triage; see docs/production-readiness.md for the
+      # divergences that are intentional.
+      - name: Scan Dockerfile and manifests for misconfiguration
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:latest config /src \
+              --exit-code 0 \
+              --format sarif \
+              --output /src/trivy-config.sarif
+
+      - name: Upload results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config

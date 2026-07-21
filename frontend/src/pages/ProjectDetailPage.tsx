@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import {
@@ -61,6 +61,7 @@ export function ProjectDetailPage() {
 
   const [finding, setFinding] = useState<CreateFindingParams>(EMPTY_FINDING);
   const [findingError, setFindingError] = useState<string | null>(null);
+  const typeFieldId = useId();
   const [busy, setBusy] = useState(false);
 
   const myMembership = members.find((m) => m.user.pid === user?.pid);
@@ -79,11 +80,12 @@ export function ProjectDetailPage() {
         setMembers(m);
         setFindings(f);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load"),
+      )
       .finally(() => setLoading(false));
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the route id changes
   useEffect(load, [projectId]);
 
   const onInvite = async (e: FormEvent) => {
@@ -110,7 +112,9 @@ export function ProjectDetailPage() {
       setFinding(EMPTY_FINDING);
       load();
     } catch (err) {
-      setFindingError(err instanceof Error ? err.message : "Failed to create finding");
+      setFindingError(
+        err instanceof Error ? err.message : "Failed to create finding",
+      );
     } finally {
       setBusy(false);
     }
@@ -134,24 +138,33 @@ export function ProjectDetailPage() {
     const key = f.finding_type.trim() || "Unspecified";
     typeCounts.set(key, (typeCounts.get(key) ?? 0) + 1);
   }
-  const typeSlices: Slice[] = [...typeCounts.entries()].map(([label, value], i) => ({
-    label,
-    value,
-    color: TYPE_PALETTE[i % TYPE_PALETTE.length],
-  }));
+  const typeSlices: Slice[] = [...typeCounts.entries()].map(
+    ([label, value], i) => ({
+      label,
+      value,
+      color: TYPE_PALETTE[i % TYPE_PALETTE.length],
+    }),
+  );
 
   const typeSuggestions = [
     ...new Set(
-      findings.map((f) => f.finding_type.trim()).filter((t): t is string => t.length > 0),
+      findings
+        .map((f) => f.finding_type.trim())
+        .filter((t): t is string => t.length > 0),
     ),
   ];
 
   return (
     <div className="stack">
       <div className="page-head">
-        <Breadcrumbs items={[{ label: "Projects", to: "/" }, { label: project.name }]} />
+        <Breadcrumbs
+          items={[{ label: "Projects", to: "/" }, { label: project.name }]}
+        />
         <h1>
-          {project.name} <span className={`badge status-${project.status}`}>{project.status}</span>
+          {project.name}{" "}
+          <span className={`badge status-${project.status}`}>
+            {project.status}
+          </span>
         </h1>
         {project.description && <p className="muted">{project.description}</p>}
       </div>
@@ -166,7 +179,9 @@ export function ProjectDetailPage() {
           <h2>Findings</h2>
           {findings.length === 0 && (
             <p className="muted">
-              {canWriteFindings ? "No findings yet." : "No published findings yet."}
+              {canWriteFindings
+                ? "No findings yet."
+                : "No published findings yet."}
             </p>
           )}
           <ul className="list">
@@ -180,8 +195,12 @@ export function ProjectDetailPage() {
                     {f.finding_type.trim() && (
                       <span className="badge type-badge">{f.finding_type}</span>
                     )}
-                    <span className={`badge sev-${f.severity}`}>{f.severity}</span>
-                    <span className={`badge status-${f.status}`}>{f.status}</span>
+                    <span className={`badge sev-${f.severity}`}>
+                      {f.severity}
+                    </span>
+                    <span className={`badge status-${f.status}`}>
+                      {f.status}
+                    </span>
                   </div>
                 </div>
               </li>
@@ -199,9 +218,10 @@ export function ProjectDetailPage() {
                   required
                 />
               </label>
-              <label>
+              <label htmlFor={typeFieldId}>
                 Type
                 <TypeInput
+                  id={typeFieldId}
                   value={finding.finding_type ?? ""}
                   onChange={(v) => set({ finding_type: v })}
                   suggestions={typeSuggestions}
@@ -236,7 +256,10 @@ export function ProjectDetailPage() {
               </div>
               <div className="field">
                 <span className="field-label">Impact</span>
-                <MarkdownField value={finding.impact} onChange={(v) => set({ impact: v })} />
+                <MarkdownField
+                  value={finding.impact}
+                  onChange={(v) => set({ impact: v })}
+                />
               </div>
               <div className="field">
                 <span className="field-label">Recommendation</span>
@@ -281,7 +304,10 @@ export function ProjectDetailPage() {
               </label>
               <label>
                 Role
-                <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                >
                   <option value="staff">staff</option>
                   <option value="client">client</option>
                 </select>

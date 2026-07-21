@@ -136,9 +136,10 @@ where
             }
             AuthMode::Proxy => {
                 let proxy = &settings.proxy;
-                if let (Some(name), Some(expected)) =
-                    (proxy.shared_secret_header.as_ref(), proxy.shared_secret.as_ref())
-                {
+                if let (Some(name), Some(expected)) = (
+                    proxy.shared_secret_header.as_ref(),
+                    proxy.shared_secret.as_ref(),
+                ) {
                     // An empty configured secret means "not set" — don't enforce.
                     if !expected.is_empty() {
                         let got = parts.headers.get(name).and_then(|v| v.to_str().ok());

@@ -97,5 +97,10 @@ export interface UpdateFindingParams {
   severity?: string;
 }
 
-export const SEVERITIES = ["low", "medium", "elevated", "high", "extreme"] as const;
-
+export const SEVERITIES = [
+  "low",
+  "medium",
+  "elevated",
+  "high",
+  "extreme",
+] as const;

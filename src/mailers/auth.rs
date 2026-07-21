@@ -1,4 +1,8 @@
 // auth mailer
+//
+// The lowercase statics below name template *directories* on disk
+// (`assets/mailers/auth/<name>`), so the names are not free to change; the lint
+// is waived rather than the convention broken.
 #![allow(non_upper_case_globals)]
 
 use loco_rs::prelude::*;
@@ -10,7 +14,6 @@ static welcome: Dir<'_> = include_dir!("src/mailers/auth/welcome");
 static forgot: Dir<'_> = include_dir!("src/mailers/auth/forgot");
 static magic_link: Dir<'_> = include_dir!("src/mailers/auth/magic_link");
 
-#[allow(clippy::module_name_repetitions)]
 pub struct AuthMailer {}
 impl Mailer for AuthMailer {}
 impl AuthMailer {

@@ -1,17 +1,17 @@
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::unused_async)]
 //! Findings are the deliverables of a project. Each one carries the four report
 //! sections (description, technical description, impact, recommendation) plus a
 //! severity and a draft/published status. Access rules enforced here:
-//!   * write / edit / publish ... project staff (a "staff" member, the author,
-//!                                 or management)
-//!   * read ..................... management and staff see everything; clients
-//!                                 see only *published* findings
+//!
+//! * write / edit / publish — project staff (a "staff" member, the author, or
+//!   management)
+//! * read — management and staff see everything; clients see only *published*
+//!   findings
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{comments, findings, project_members, projects, users};
 use crate::security::CurrentUser;
+use crate::validation::{self, MAX_LABEL, MAX_SECTION, MAX_TITLE};
 use crate::views::comment::CommentResponse;
 use crate::views::finding::{FindingDetailResponse, FindingResponse};
 
@@ -51,6 +51,30 @@ fn is_valid_severity(value: &str) -> bool {
     matches!(value, "low" | "medium" | "elevated" | "high" | "extreme")
 }
 
+/// Bounds every user-supplied text field, shared by create and update. Only
+/// fields actually present are checked, so a partial update stays partial.
+///
+/// Report content is *never* rewritten here — a finding may legitimately quote
+/// an exploit payload verbatim. See [`crate::validation`] for why.
+fn validate_finding_text(
+    title: Option<&str>,
+    finding_type: Option<&str>,
+    sections: [(&str, Option<&str>); 4],
+) -> Result<()> {
+    if let Some(title) = title {
+        validation::required_text("title", title, MAX_TITLE)?;
+    }
+    if let Some(finding_type) = finding_type {
+        validation::text("finding_type", finding_type, MAX_LABEL)?;
+    }
+    for (field, value) in sections {
+        if let Some(value) = value {
+            validation::text(field, value, MAX_SECTION)?;
+        }
+    }
+    Ok(())
+}
+
 async fn load_project(ctx: &AppContext, id: i32) -> Result<projects::Model> {
     projects::Entity::find_by_id(id)
         .one(&ctx.db)
@@ -79,8 +103,7 @@ pub async fn create(
     Json(params): Json<CreateFindingParams>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
+    let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
 
     let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
     let is_owner_manager = user.is_manager() && project.created_by == user.id;
@@ -104,6 +127,20 @@ pub async fn create(
             return bad_request("severity must be one of: low, medium, elevated, high, extreme");
         }
     }
+
+    validate_finding_text(
+        Some(&title),
+        finding_type.as_deref(),
+        [
+            ("description", Some(description.as_str())),
+            (
+                "technical_description",
+                Some(technical_description.as_str()),
+            ),
+            ("impact", Some(impact.as_str())),
+            ("recommendation", Some(recommendation.as_str())),
+        ],
+    )?;
 
     let mut item = findings::ActiveModel {
         project_id: Set(project.id),
@@ -133,8 +170,7 @@ pub async fn list(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
+    let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
 
     if !(user.is_manager() || membership.is_some()) {
         return unauthorized("you do not have access to this project");
@@ -183,7 +219,11 @@ pub async fn show(
         }
     }
 
-    format::json(FindingDetailResponse::new(&finding, &author, comment_responses))
+    format::json(FindingDetailResponse::new(
+        &finding,
+        &author,
+        comment_responses,
+    ))
 }
 
 #[debug_handler]
@@ -208,6 +248,20 @@ pub async fn update(
             return bad_request("severity must be one of: low, medium, elevated, high, extreme");
         }
     }
+
+    validate_finding_text(
+        params.title.as_deref(),
+        params.finding_type.as_deref(),
+        [
+            ("description", params.description.as_deref()),
+            (
+                "technical_description",
+                params.technical_description.as_deref(),
+            ),
+            ("impact", params.impact.as_deref()),
+            ("recommendation", params.recommendation.as_deref()),
+        ],
+    )?;
 
     let mut item = finding.into_active_model();
     let UpdateFindingParams {

@@ -1,7 +1,12 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import { type FindingDetail, type Member, type Project, SEVERITIES } from "../api/types";
+import {
+  type FindingDetail,
+  type Member,
+  type Project,
+  SEVERITIES,
+} from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Markdown } from "../components/Markdown";
@@ -45,6 +50,7 @@ export function FindingDetailPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [typeSuggestions, setTypeSuggestions] = useState<string[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
+  const typeFieldId = useId();
 
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -59,7 +65,9 @@ export function FindingDetailPage() {
         setFinding(f);
         setProject(await api.getProject(f.project_id).catch(() => null));
         // Needed to mirror the backend's edit/publish permission (staff member).
-        const m = await api.listMembers(f.project_id).catch(() => [] as Member[]);
+        const m = await api
+          .listMembers(f.project_id)
+          .catch(() => [] as Member[]);
         setMembers(m);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
@@ -69,7 +77,6 @@ export function FindingDetailPage() {
     })();
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the route id changes
   useEffect(load, [findingId]);
 
   const myMembership = members.find((m) => m.user.pid === user?.pid);
@@ -99,12 +106,15 @@ export function FindingDetailPage() {
     const fs = await api.listFindings(finding.project_id).catch(() => []);
     setTypeSuggestions([
       ...new Set(
-        fs.map((f) => f.finding_type.trim()).filter((t): t is string => t.length > 0),
+        fs
+          .map((f) => f.finding_type.trim())
+          .filter((t): t is string => t.length > 0),
       ),
     ]);
   };
 
-  const setD = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
+  const setD = (patch: Partial<Draft>) =>
+    setDraft((d) => (d ? { ...d, ...patch } : d));
 
   const saveEdit = async (e: FormEvent) => {
     e.preventDefault();
@@ -148,7 +158,11 @@ export function FindingDetailPage() {
 
   const onDelete = async () => {
     if (!finding) return;
-    if (!window.confirm("Delete this finding and its comments? This cannot be undone.")) {
+    if (
+      !window.confirm(
+        "Delete this finding and its comments? This cannot be undone.",
+      )
+    ) {
       return;
     }
     setBusy(true);
@@ -190,7 +204,10 @@ export function FindingDetailPage() {
         <Breadcrumbs
           items={[
             { label: "Projects", to: "/" },
-            { label: project?.name ?? "Project", to: `/projects/${finding.project_id}` },
+            {
+              label: project?.name ?? "Project",
+              to: `/projects/${finding.project_id}`,
+            },
             { label: finding.title },
           ]}
         />
@@ -199,14 +216,23 @@ export function FindingDetailPage() {
           {finding.finding_type.trim() && (
             <span className="badge type-badge">{finding.finding_type}</span>
           )}
-          <span className={`badge sev-${finding.severity}`}>{finding.severity}</span>
-          <span className={`badge status-${finding.status}`}>{finding.status}</span>
+          <span className={`badge sev-${finding.severity}`}>
+            {finding.severity}
+          </span>
+          <span className={`badge status-${finding.status}`}>
+            {finding.status}
+          </span>
           <span className="muted">by {finding.author.name}</span>
         </div>
         {!editing && (
           <div className="actions">
             {canModify && (
-              <button type="button" className="btn btn-ghost" onClick={startEdit} disabled={busy}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={startEdit}
+                disabled={busy}
+              >
                 Edit
               </button>
             )}
@@ -231,7 +257,12 @@ export function FindingDetailPage() {
               </button>
             )}
             {canModify && (
-              <button type="button" className="btn btn-danger" onClick={onDelete} disabled={busy}>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={onDelete}
+                disabled={busy}
+              >
                 Delete
               </button>
             )}
@@ -250,9 +281,10 @@ export function FindingDetailPage() {
               required
             />
           </label>
-          <label>
+          <label htmlFor={typeFieldId}>
             Type
             <TypeInput
+              id={typeFieldId}
               value={draft.finding_type}
               onChange={(v) => setD({ finding_type: v })}
               suggestions={typeSuggestions}
@@ -260,7 +292,10 @@ export function FindingDetailPage() {
           </label>
           <label>
             Severity
-            <select value={draft.severity} onChange={(e) => setD({ severity: e.target.value })}>
+            <select
+              value={draft.severity}
+              onChange={(e) => setD({ severity: e.target.value })}
+            >
               {SEVERITIES.map((s) => (
                 <option key={s} value={s}>
                   {cap(s)}
@@ -270,7 +305,10 @@ export function FindingDetailPage() {
           </label>
           <div className="field">
             <span className="field-label">Description</span>
-            <MarkdownField value={draft.description} onChange={(v) => setD({ description: v })} />
+            <MarkdownField
+              value={draft.description}
+              onChange={(v) => setD({ description: v })}
+            />
           </div>
           <div className="field">
             <span className="field-label">Technical description</span>
@@ -281,7 +319,10 @@ export function FindingDetailPage() {
           </div>
           <div className="field">
             <span className="field-label">Impact</span>
-            <MarkdownField value={draft.impact} onChange={(v) => setD({ impact: v })} />
+            <MarkdownField
+              value={draft.impact}
+              onChange={(v) => setD({ impact: v })}
+            />
           </div>
           <div className="field">
             <span className="field-label">Recommendation</span>
@@ -308,7 +349,10 @@ export function FindingDetailPage() {
       ) : (
         <article className="card">
           <Section title="Description" body={finding.description} />
-          <Section title="Technical description" body={finding.technical_description} />
+          <Section
+            title="Technical description"
+            body={finding.technical_description}
+          />
           <Section title="Impact" body={finding.impact} />
           <Section title="Recommendation" body={finding.recommendation} />
         </article>
@@ -321,12 +365,16 @@ export function FindingDetailPage() {
             <li key={c.id} className="card comment">
               <div className="comment-head">
                 <strong>{c.author.name}</strong>
-                <span className={`badge role-${c.author.role}`}>{c.author.role}</span>
+                <span className={`badge role-${c.author.role}`}>
+                  {c.author.role}
+                </span>
               </div>
               <Markdown source={c.body} />
             </li>
           ))}
-          {finding.comments.length === 0 && <p className="muted">No comments yet.</p>}
+          {finding.comments.length === 0 && (
+            <p className="muted">No comments yet.</p>
+          )}
         </ul>
 
         <form className="card" onSubmit={onComment}>

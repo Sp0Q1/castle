@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::unused_async)]
 //! Inline image uploads for the rich-text fields.
 //!
 //! An authenticated user POSTs an image; the **bytes** are validated by magic
@@ -102,7 +100,9 @@ pub async fn upload(
             .await
             .map_err(|e| Error::BadRequest(e.to_string()))?;
         if data.len() > MAX_BYTES {
-            return Err(Error::BadRequest("image too large (max 10 MiB)".to_string()));
+            return Err(Error::BadRequest(
+                "image too large (max 10 MiB)".to_string(),
+            ));
         }
         // The stored type is decided by the bytes, not by anything the client said.
         let Some(ext) = sniff_image(&data) else {

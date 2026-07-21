@@ -1,0 +1,39 @@
+version: 2
+
+# Updates are grouped so a week of patch bumps arrives as one reviewable PR
+# rather than twenty. Security updates are deliberately left ungrouped by
+# GitHub, so they still land immediately and on their own.
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      rust-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        update-types: [minor, patch]
+
+  # Actions are the supply chain of the pipeline itself: a compromised action
+  # runs with the workflow's token. Keeping them current is part of the reason
+  # the workflows pin by tag rather than floating on @main.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [major, minor, patch]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly

@@ -1,0 +1,146 @@
+name: CI
+
+# Correctness and style gates. Anything that can fail a build or ship a
+# regression belongs here; anything that looks for vulnerabilities or secrets
+# lives in security.yml so the two can be read (and required) separately.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI is not a place to spend time on incremental artifacts that are thrown away.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # -D warnings is the point of the job: the tree is at zero warnings and
+      # zero `#[allow]`s outside the loco-generated entities, and should stay
+      # there. If a lint is genuinely wrong, waive it with a comment saying why.
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --all-features
+
+  frontend:
+    name: Frontend (biome, tsc, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      # `biome ci` is the non-interactive form: it never writes fixes, it fails.
+      - name: Lint and format
+        run: npx biome ci src/
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  deploy-manifests:
+    name: Kubernetes manifests (helm, kubeconform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Helm lint (tenant chart)
+        run: helm lint deploy/k8s/tenant
+
+      # Renders the chart in each mode the deployment actually uses, so a
+      # template that only breaks under proxy/honeypot/backup values is caught
+      # here rather than at provisioning time.
+      - name: Render every mode
+        run: |
+          set -euo pipefail
+          # Throwaway placeholders so the chart's `required` guards are
+          # satisfied. Real deployments set secrets.external=true and never
+          # pass secrets through values at all — see deploy/k8s/secrets/.
+          dummy="--set tenant=ci
+                 --set secrets.dbPassword=placeholder
+                 --set secrets.jwtSecret=placeholder
+                 --set secrets.oauth2ClientSecret=placeholder
+                 --set secrets.oauth2CookieSecret=placeholder"
+          for args in \
+            "" \
+            "--set oauth2Proxy.enabled=true" \
+            "--set honeypot=true" \
+            "--set backup.enabled=true --set backup.s3.bucket=ci --set backup.s3.endpoint=https://s3.invalid" \
+            "--set secrets.external=true" \
+            "--set database.internal=false --set database.externalUrl=postgres://u:p@db/castle"
+          do
+            echo "::group::helm template $args"
+            # shellcheck disable=SC2086 # $dummy/$args are intentional arg lists
+            helm template ci deploy/k8s/tenant $dummy $args > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kubeconform
+
+      # Validates rendered objects against the real Kubernetes schemas. Skipped
+      # kinds are CRDs whose schemas are not in the upstream catalogue.
+      - name: Validate rendered manifests
+        run: |
+          set -euo pipefail
+          helm template ci deploy/k8s/tenant \
+              --set tenant=ci \
+              --set secrets.dbPassword=placeholder \
+              --set secrets.jwtSecret=placeholder \
+            | kubeconform -strict -summary \
+                -kubernetes-version 1.31.0 \
+                -skip SealedSecret,PrometheusRule,ServiceMonitor
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Catches the classic mistakes in these files themselves: bad `runs-on`,
+      # untrusted `${{ github.event.* }}` interpolation into `run:`, typo'd
+      # contexts.
+      - uses: raven-actions/actionlint@v2
+        with:
+          shellcheck: true
