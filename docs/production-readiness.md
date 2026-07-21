@@ -17,9 +17,12 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
 ---
 
 ## Tier 1 — blockers before ANY real client data
-- ⬜ **Secrets management.** The chart templates secrets from Helm values
-  (plaintext). Move to sealed-secrets / external-secrets / Vault; real Keycloak
-  client secrets + DB creds + cookie/JWT secrets out of `--set`.
+- ✅ **Secrets management.** Chart gained `secrets.external: true` — in prod it
+  creates no Secret; the `<release>-app`/`-db` Secrets are provided as
+  **SealedSecrets** (encrypted, committable; controller decrypts in-cluster). See
+  `deploy/k8s/secrets/` (`seal-tenant.sh` + README). Validated on kind end to
+  end: a tenant ran from a sealed secret with zero plaintext in Helm. (Backup the
+  controller's sealing key; ESO is a drop-in alternative via the same contract.)
 - ⬜ **Database durability + backups.** Per-tenant Postgres is a single pod with
   no backups/HA/PITR. Add CloudNativePG (or scheduled `pg_dump` + WAL) and back
   up the uploads PVC. Restore drills.

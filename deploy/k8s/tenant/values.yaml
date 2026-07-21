@@ -73,9 +73,13 @@ database:
   name: castle
   user: castle
 
-# Secrets. Provide real values at install time (NOT in a committed values file).
+# Secrets.
+#   external: false -> chart templates the Secrets from the values below (dev).
+#   external: true  -> chart creates NO Secret; you provide <release>-app and
+#     <release>-db out-of-band (SealedSecrets / External Secrets). PRODUCTION.
 # JWT_SECRET must be valid base64 (openssl rand -base64 48) even in proxy mode.
 secrets:
+  external: false
   jwtSecret: ""                          # base64
   dbPassword: ""
   oauth2ClientSecret: ""                 # Keycloak client secret for this realm
