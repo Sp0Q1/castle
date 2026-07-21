@@ -5,7 +5,7 @@
 # fingerprint-identical from the outside.
 
 # 1) Frontend (React SPA) -> frontend/dist, served by loco at runtime.
-FROM node:22-slim AS frontend
+FROM node:26-slim AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
