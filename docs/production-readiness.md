@@ -43,7 +43,17 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   Runtime-verified: upload validation (incl. SVG renamed `.png` → rejected), the
   401 auth gate, response headers, and fail-closed startup. The three frontend
   fixes + membership downgrade are compile-verified; confirm in a browser on the
-  next lab run. Still open: rate limiting, and a periodic dependency audit.
+  next lab run. Still open: **rate limiting**.
+- ✅ **Input validation.** `src/validation.rs` bounds every user-supplied text
+  field and rejects NUL/control characters (which Postgres refuses in `text`
+  columns — a 500, not a 400). Deliberately validation and *not* sanitization:
+  findings legitimately quote exploit payloads, so content round-trips verbatim
+  and XSS defense stays at render time. Anything that renders markdown outside
+  the browser — a future **PDF/HTML export or HTML mail** — must add its own
+  output sanitization (`ammonia`), because the frontend's does not cover it.
+  Also fixed a contradiction: loco's default 2MB body limit would have rejected
+  image uploads under the 10 MiB cap in `uploads.rs`; raised to 12mb.
+  Runtime-verified: 10/10 cases, including a payload stored byte-identical.
 - ⬜ **One real-cluster end-to-end run.** Everything so far is kind + sqlite +
   self-signed. Run on a real cluster with real Postgres, real Keycloak (prod
   mode + TLS), issued certs, and Kata/gVisor.
@@ -65,7 +75,18 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
 - ⬜ **SSL passthrough** (optional): terminate TLS in-pod so no central plaintext
   point (documented; deferred).
 - ⬜ **Kata/gVisor** actually installed on nodes for kernel isolation.
-- ⬜ **CI/CD**: build/test pipeline, image scanning, signed images, SBOM, pinned digests.
+- 🔶 **CI/CD.** Built (`.github/workflows/`): `ci.yml` runs fmt / clippy
+  `-D warnings` / tests, biome + tsc + frontend build, `helm lint` plus a render
+  of every deployment mode validated against real Kubernetes schemas
+  (kubeconform), and actionlint. `security.yml` runs TruffleHog over full git
+  history, Semgrep OSS, `cargo audit`, `npm audit` and Trivy (image CVEs block;
+  k8s/Dockerfile misconfiguration reports to the Security tab without blocking),
+  weekly as well as on push. Dependabot covers cargo/npm/actions/docker with a
+  7-day cooldown; every action is SHA-pinned. Accepted `cargo audit` advisories
+  are documented one-by-one in `.cargo/audit.toml` with the condition that
+  should remove each.
+  Still open: **signed images (cosign), SBOM (syft//attestation), digest-pinned
+  base images**, and pushing the image from CI to a registry at all.
 
 ## Tier 3 — operational / compliance
 - ⬜ Encryption at rest, data retention policy, immutable access audit, log
