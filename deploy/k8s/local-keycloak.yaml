@@ -96,6 +96,45 @@ data:
         {"username":"bob","enabled":true,"emailVerified":true,"email":"bob@corp.test","firstName":"Bob","lastName":"Client","credentials":[{"type":"password","value":"bobpw","temporary":false}],"groups":["/castle-clients"]}
       ]
     }
+  # A CANARY realm: structurally identical to a real tenant's realm (same client,
+  # mapper, groups) but with NO users. It lives on the SAME Keycloak host with an
+  # opaque codename, so a decoy is indistinguishable from a real tenant — same SSO
+  # redirect, same login page. Any authentication attempt here is an attacker
+  # (Keycloak logs it as a LOGIN_ERROR with the tried username + IP).
+  castle-nightfall-realm.json: |
+    {
+      "realm": "castle-nightfall",
+      "enabled": true,
+      "sslRequired": "none",
+      "groups": [
+        {"name": "castle-managers"},
+        {"name": "castle-staff"},
+        {"name": "castle-clients"}
+      ],
+      "clients": [
+        {
+          "clientId": "castle",
+          "enabled": true,
+          "publicClient": false,
+          "secret": "nightfall-client-secret",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "implicitFlowEnabled": false,
+          "redirectUris": ["https://nightfall.127.0.0.1.nip.io:8443/oauth2/callback"],
+          "webOrigins": ["+"],
+          "attributes": {"post.logout.redirect.uris": "https://nightfall.127.0.0.1.nip.io:8443/*"},
+          "protocolMappers": [
+            {
+              "name": "groups",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-group-membership-mapper",
+              "config": {"full.path":"false","claim.name":"groups","access.token.claim":"true","id.token.claim":"true","userinfo.token.claim":"true"}
+            }
+          ]
+        }
+      ],
+      "users": []
+    }
 ---
 apiVersion: apps/v1
 kind: Deployment

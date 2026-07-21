@@ -1,5 +1,13 @@
 # =============================================================================
-# The canary swarm backend.
+# The canary swarm backend — CREDENTIAL-CAPTURING (distinguishable) decoy mode.
+#
+# NOTE: this shared honeypot serves a built-in login form to CAPTURE submitted
+# passwords (honeypot mode). That local form is a tell vs real tenants, which
+# redirect to SSO. For decoys that are INDISTINGUISHABLE from real tenants, run
+# them in proxy mode pointed at a per-decoy canary realm on the shared Keycloak
+# instead (see deploy/k8s/README.md "Decoy fidelity" + local-keycloak.yaml's
+# castle-nightfall realm). Use this shared honeypot when password capture matters
+# more than blending in.
 #
 # ONE shared castle instance serves EVERY decoy subdomain. It runs the real
 # castle image (so its fingerprint is identical to a tenant) but with a throwaway

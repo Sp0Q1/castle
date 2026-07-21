@@ -22,7 +22,7 @@ spec:
       rules:
         - alert: CanaryTouched
           # Any traffic to a decoy host in the last 2m.
-          expr: sum(increase(nginx_ingress_controller_requests{namespace="castle-honeypot"}[2m])) by (host) > 0
+          expr: sum(increase(nginx_ingress_controller_requests{namespace=~"decoy-.*|castle-honeypot"}[2m])) by (host) > 0
           for: 0m
           labels:
             severity: critical
@@ -32,7 +32,7 @@ spec:
             description: "A decoy subdomain received traffic. Nobody legitimate reaches these. Investigate source IPs in Loki (namespace castle-honeypot)."
         - alert: CanaryCredentialStuffing
           # Bursts of auth failures against the canary realm's login surface.
-          expr: sum(increase(nginx_ingress_controller_requests{namespace="castle-honeypot",status=~"4.."}[5m])) > 20
+          expr: sum(increase(nginx_ingress_controller_requests{namespace=~"decoy-.*|castle-honeypot",status=~"4.."}[5m])) > 20
           for: 0m
           labels:
             severity: critical
@@ -68,7 +68,7 @@ data:
         - role: pod
       relabel_configs:
         - source_labels: [__meta_kubernetes_namespace]
-          regex: castle-honeypot
+          regex: (castle-honeypot|decoy-.*)
           action: keep
         - target_label: signal
           replacement: deception
@@ -86,7 +86,7 @@ metadata:
 data:
   castle_rules.yaml: |
     - macro: castle_pods
-      condition: (k8s.ns.name = "castle-honeypot" or k8s.ns.name startswith "tenant-")
+      condition: (k8s.ns.name = "castle-honeypot" or k8s.ns.name startswith "tenant-" or k8s.ns.name startswith "decoy-")
     - rule: Shell in castle pod
       desc: A shell was spawned inside a castle/honeypot container — likely RCE/breakout.
       condition: spawned_process and container and castle_pods and proc.name in (sh, bash, dash, ash, zsh, nc, ncat, curl, wget)

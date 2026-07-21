@@ -287,13 +287,23 @@ opportunistic and not enforced — see project history).
 
 ## Known limitations & follow-ups
 
-1. **Honeypot fidelity.** Decoys run **honeypot mode** (`CASTLE_HONEYPOT=true`):
-   the auth surface captures every submitted credential + attacker metadata
-   (email, password, User-Agent, source IP) to the `castle::honeypot` log target,
-   returns believable responses, and persists nothing. Remaining follow-ups: a
-   *tarpit* (deliberately slow responses), realistic seeded fake findings, and
-   closing the last tell — a decoy serves the built-in login form while real
-   tenants redirect to SSO (a fake SSO-redirect page on decoys would close it).
+1. **Decoy fidelity — two modes:**
+   - **Indistinguishable (recommended for the swarm):** a decoy runs exactly like
+     a real tenant — **proxy mode** pointed at its own **canary realm** on the
+     *same* Keycloak (opaque codename, no users). It presents the identical SSO
+     redirect (same IdP host), so it can't be told apart from a real tenant — no
+     separate IdP subdomain, no local login form. Any auth attempt is an attacker,
+     captured as a Keycloak `LOGIN_ERROR` (tried username + source IP) plus an
+     ingress hit (`CanaryTouched`). Trade-off: **Keycloak never logs the password**.
+     (See `local-keycloak.yaml`'s `castle-nightfall` realm + the proxy-mode decoy.)
+   - **Credential-capturing (distinguishable):** honeypot mode
+     (`CASTLE_HONEYPOT=true`, jwt) serves the built-in login form and logs the
+     submitted **email+password**+metadata to `castle::honeypot`, persisting
+     nothing. Captures the password, but a local form is a tell vs SSO tenants.
+
+   Getting **both** (indistinguishable *and* password capture) needs a custom
+   Keycloak authenticator SPI in the canary realm — a future option. Also pending:
+   a tarpit (deliberately slow responses) and realistic seeded fake findings.
 2. **Canary realm naming.** A real tenant's SSO redirect exposes its realm name.
    Use realistic per-decoy realm names (or a shared realm with per-tenant clients)
    so the redirect doesn't betray decoys.
