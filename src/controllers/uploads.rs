@@ -9,18 +9,17 @@
 //! - Only real raster images (png/jpeg/gif/webp) are accepted. **SVG is
 //!   deliberately rejected**: it is XML that can carry `<script>`/`onload`, and
 //!   served inline it would execute in this origin (stored XSS).
-//! - Responses carry `nosniff`, a `default-src 'none'; sandbox` CSP and
-//!   `Content-Disposition: inline`, so even an unexpected byte sequence cannot
-//!   run script.
-//! - Serving is auth-gated. In proxy mode (production) the browser sends the
-//!   oauth2-proxy session cookie with `<img>` requests, so embedded images load
-//!   normally. In jwt/dev mode an `<img>` cannot send a bearer token, so inline
-//!   images will not load — a dev-mode limitation, not a production one.
+//! - Responses carry `nosniff` and `Content-Disposition: inline`, so an
+//!   unexpected byte sequence cannot be reinterpreted as a scriptable document.
+//! - Serving is auth-gated, which means a plain `<img src>` cannot load an
+//!   upload in jwt mode: the browser sends no Authorization header and the token
+//!   is in sessionStorage. The frontend therefore fetches uploads through
+//!   `api.fetchUpload` and renders them from an object URL (see
+//!   `components/Markdown.tsx`); that path works in proxy mode too, where the
+//!   oauth2-proxy session cookie would have sufficed on its own.
 use std::path::Path as FsPath;
 
-use axum::http::header::{
-    CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS,
-};
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use axum::response::IntoResponse;
 use loco_rs::prelude::*;
 
@@ -138,9 +137,18 @@ pub async fn serve(
     Ok((
         [
             (CONTENT_TYPE, mime_for(&name)),
-            // Defence in depth: never sniff, never script, never navigate.
+            // Defence in depth: never sniff, never offer as a download.
+            //
+            // A stricter per-response `Content-Security-Policy: default-src
+            // 'none'; sandbox` used to be set here, but the global
+            // `secure_headers` middleware calls `headers.insert` on every
+            // response and unconditionally replaced it — the header was dead
+            // code that read as protection. Uploads therefore carry the app-wide
+            // CSP, and the controls that actually constrain them are the auth
+            // gate, the magic-byte check in `sniff_image` (only png/jpeg/gif/
+            // webp are ever written, and SVG is rejected outright) and nosniff,
+            // which stops a browser from reinterpreting those bytes as HTML.
             (X_CONTENT_TYPE_OPTIONS, "nosniff"),
-            (CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox"),
             (CONTENT_DISPOSITION, "inline"),
         ],
         bytes,

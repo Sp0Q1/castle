@@ -1,5 +1,7 @@
 import MDEditor from "@uiw/react-md-editor";
+import { useEffect, useState } from "react";
 import rehypeSanitize from "rehype-sanitize";
+import { api } from "../api/client";
 import { Mermaid } from "./Mermaid";
 
 // The preview pipeline enables rehype-raw (raw HTML in markdown becomes real
@@ -27,8 +29,71 @@ function codeText(
   }, "");
 }
 
+/**
+ * True for a same-origin upload path, which is the only kind of image src we
+ * fetch ourselves. Anything else (an absolute URL a user typed, a data: URI) is
+ * left to the browser, and is constrained by the CSP either way.
+ */
+function isProtectedUpload(src: string): boolean {
+  return src.startsWith("/api/uploads/");
+}
+
+/**
+ * Renders an uploaded image.
+ *
+ * Serving uploads is auth-gated, so the browser cannot load them directly — see
+ * `api.fetchUpload`. This fetches the bytes with credentials attached and hands
+ * the <img> an object URL instead, which the CSP's `img-src blob:` permits.
+ */
+function UploadImage({ src, alt }: { src?: string; alt?: string }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src || !isProtectedUpload(src)) {
+      return;
+    }
+    let active = true;
+    let created: string | null = null;
+    setFailed(false);
+    api
+      .fetchUpload(src)
+      .then((blob) => {
+        if (!active) {
+          return;
+        }
+        created = URL.createObjectURL(blob);
+        setObjectUrl(created);
+      })
+      .catch(() => {
+        if (active) {
+          setFailed(true);
+        }
+      });
+    return () => {
+      active = false;
+      // Object URLs pin the blob in memory until explicitly released.
+      if (created) {
+        URL.revokeObjectURL(created);
+      }
+    };
+  }, [src]);
+
+  if (!src || !isProtectedUpload(src)) {
+    return <img src={src} alt={alt ?? ""} />;
+  }
+  if (failed) {
+    return <span className="md-image-error">{alt || "image unavailable"}</span>;
+  }
+  if (!objectUrl) {
+    return <span className="md-image-loading">{alt || "loading image…"}</span>;
+  }
+  return <img src={objectUrl} alt={alt ?? ""} />;
+}
+
 /** Renderer overrides: ```mermaid blocks become diagrams; other code is default. */
 export const markdownComponents = {
+  img: UploadImage,
   code({
     className,
     children,
