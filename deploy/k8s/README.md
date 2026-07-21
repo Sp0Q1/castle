@@ -259,6 +259,11 @@ the isolation, which is why `CASTLE_PROXY_SECRET` is intentionally empty here.
   request metric) — the core detection.
 - **`CanaryCredentialStuffing`** fires on bursts of auth failures at the decoy
   login (the canary realm keeps those attempts away from real identities).
+- **`CanaryRealmLoginAttempt`** (Loki rule) fires on *any* login attempt in a
+  **canary realm** at Keycloak — the auth-layer counterpart for indistinguishable
+  decoys. Canary realms have zero legitimate users, so every attempt is an
+  attacker; the alert carries the tried username + source IP. The control plane
+  maintains the canary-realm matcher (its secret decoy list).
 - Honeypot logs ship to Loki tagged `signal=deception` for source-IP / payload /
   tried-username analysis; **Falco** catches a shell or unexpected egress inside
   any castle pod (the breakout a honeypot exists to catch).

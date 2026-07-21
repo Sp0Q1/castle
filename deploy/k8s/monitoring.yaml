@@ -99,3 +99,63 @@ data:
       output: "Honeypot attempted unexpected egress (pod=%k8s.pod.name dest=%fd.rip:%fd.rport)"
       priority: CRITICAL
       tags: [castle, deception]
+---
+# Ship Keycloak's event log to Loki so canary-realm login attempts are queryable
+# + alertable (Keycloak logs LOGIN_ERROR with realmName, username, ipAddress,
+# error). Add to your Promtail scrapeConfigs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-castle-keycloak
+  namespace: monitoring
+data:
+  scrape-snippet.yaml: |
+    - job_name: castle-keycloak
+      kubernetes_sd_configs:
+        - role: pod
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_app]
+          regex: castle-system;keycloak
+          action: keep
+        - target_label: signal
+          replacement: deception
+        - target_label: source
+          replacement: idp
+---
+# Loki alerting rule: ANY login attempt in a CANARY realm is an attacker — canary
+# realms have zero legitimate users, so there is no benign login there. This is
+# the auth-layer counterpart to CanaryTouched (which fires on the ingress hit).
+#
+# Canary realms are indistinguishable from real ones to an attacker (opaque
+# codenames), so the alert needs the operator's secret decoy list: the control
+# plane maintains the `realm=~"..."` matcher below from its codename<->client
+# mapping. Load into the Loki ruler (it forwards to the same Alertmanager).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-rules-castle-canary
+  namespace: monitoring
+  labels:
+    loki_rule: "true"
+data:
+  castle-canary.yaml: |
+    groups:
+      - name: castle-canary-idp
+        rules:
+          - alert: CanaryRealmLoginAttempt
+            expr: |
+              sum by (realm, ip, username) (
+                count_over_time(
+                  {source="idp"} |= "LOGIN_ERROR"
+                    | regexp `realmName="(?P<realm>[^"]+)".*ipAddress="(?P<ip>[^"]+)".*username="(?P<username>[^"]*)"`
+                    | realm =~ "castle-(nightfall)"   # <- control-plane-maintained canary realm list
+                  [2m]
+                )
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+              signal: deception
+            annotations:
+              summary: "Login attempt in canary realm {{ $labels.realm }} from {{ $labels.ip }}"
+              description: "Nobody legitimate has an account in a canary realm — this is an attacker. Tried username '{{ $labels.username }}'. Block the source IP on the real tenant ingresses."
