@@ -7,6 +7,8 @@ export interface CurrentUser {
   name: string;
   email: string;
   role: Role;
+  /** Proxy mode only: where to send the browser on sign-out. */
+  logout_url?: string | null;
 }
 
 /** POST /api/auth/login */

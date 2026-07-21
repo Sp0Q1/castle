@@ -45,6 +45,11 @@ pub struct ProxySettings {
     pub manager_group: String,
     pub staff_group: String,
     pub client_group: String,
+    /// Where the SPA sends the browser on sign-out. For a full RP-initiated
+    /// logout point this at oauth2-proxy's sign-out chained to the IdP's
+    /// end-session endpoint, e.g.
+    /// `/oauth2/sign_out?rd=<url-encoded Keycloak .../logout?post_logout_redirect_uri=…&client_id=castle>`.
+    pub logout_url: Option<String>,
 }
 
 impl Default for ProxySettings {
@@ -58,6 +63,7 @@ impl Default for ProxySettings {
             manager_group: "castle-managers".to_string(),
             staff_group: "castle-staff".to_string(),
             client_group: "castle-clients".to_string(),
+            logout_url: None,
         }
     }
 }

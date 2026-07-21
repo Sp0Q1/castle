@@ -78,8 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(null);
       setUser(null);
     } else {
-      // Proxy mode: end the session at oauth2-proxy.
-      window.location.href = "/oauth2/sign_out?rd=/";
+      // Proxy mode: sign out at oauth2-proxy (and, if configured, chain to the
+      // IdP end-session endpoint via user.logout_url for a full RP-initiated logout).
+      window.location.href = user?.logout_url || "/oauth2/sign_out?rd=/";
     }
   };
 

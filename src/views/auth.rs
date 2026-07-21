@@ -29,17 +29,20 @@ pub struct CurrentResponse {
     pub name: String,
     pub email: String,
     pub role: String,
+    /// Where the SPA should send the browser on sign-out (proxy mode only).
+    pub logout_url: Option<String>,
 }
 
 impl CurrentResponse {
     #[must_use]
-    pub fn new(user: &users::Model) -> Self {
+    pub fn new(user: &users::Model, logout_url: Option<String>) -> Self {
         Self {
             id: user.id,
             pid: user.pid.to_string(),
             name: user.name.clone(),
             email: user.email.clone(),
             role: user.role.clone(),
+            logout_url,
         }
     }
 }

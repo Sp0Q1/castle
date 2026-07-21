@@ -160,11 +160,14 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
 }
 
 #[debug_handler]
-async fn current(
-    CurrentUser(user): CurrentUser,
-    State(_ctx): State<AppContext>,
-) -> Result<Response> {
-    format::json(CurrentResponse::new(&user))
+async fn current(CurrentUser(user): CurrentUser, State(ctx): State<AppContext>) -> Result<Response> {
+    // Surface the sign-out URL only in proxy mode (JWT mode logs out locally).
+    let settings = crate::security::Settings::from_ctx(&ctx);
+    let logout_url = match settings.auth_mode {
+        crate::security::AuthMode::Proxy => settings.proxy.logout_url,
+        crate::security::AuthMode::Jwt => None,
+    };
+    format::json(CurrentResponse::new(&user, logout_url))
 }
 
 /// Magic link authentication provides a secure and passwordless way to log in to the application.
