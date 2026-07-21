@@ -159,4 +159,25 @@ export const api = {
     }
     return data as { url: string };
   },
+
+  /**
+   * Fetches an uploaded image as a Blob.
+   *
+   * Uploads are auth-gated server-side, so a plain `<img src="/api/uploads/…">`
+   * fails: the browser issues that request with no Authorization header and the
+   * JWT lives in sessionStorage, not a cookie. Images are therefore fetched
+   * here — with the header in jwt mode, with the session cookie in proxy mode —
+   * and rendered from an object URL (the CSP allows `img-src blob:`).
+   */
+  fetchUpload: async (path: string): Promise<Blob> => {
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers.authorization = `Bearer ${authToken}`;
+    }
+    const res = await fetch(path, { headers, credentials: "same-origin" });
+    if (!res.ok) {
+      throw new ApiError(res.status, res.statusText || "Image request failed");
+    }
+    return res.blob();
+  },
 };

@@ -414,6 +414,18 @@ textarea {
 	color: var(--muted);
 	padding: 4px 0;
 }
+/* Placeholders shown while an auth-gated upload is being fetched, or when it
+   could not be loaded (deleted file, expired session). */
+.md-image-loading,
+.md-image-error {
+	display: inline-block;
+	font-size: 0.85rem;
+	color: var(--muted);
+	font-style: italic;
+}
+.md-image-error {
+	color: var(--danger, #ff6b6b);
+}
 .md-render .wmde-markdown {
 	background: transparent;
 	color: var(--text);
