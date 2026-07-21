@@ -28,13 +28,13 @@ jobs:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Format
         run: cargo fmt --all --check
@@ -55,9 +55,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -79,9 +79,9 @@ jobs:
     name: Kubernetes manifests (helm, kubeconform)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Helm lint (tenant chart)
         run: helm lint deploy/k8s/tenant
@@ -129,6 +129,8 @@ jobs:
               --set tenant=ci \
               --set secrets.dbPassword=placeholder \
               --set secrets.jwtSecret=placeholder \
+              --set secrets.oauth2ClientSecret=placeholder \
+              --set secrets.oauth2CookieSecret=placeholder \
             | kubeconform -strict -summary \
                 -kubernetes-version 1.31.0 \
                 -skip SealedSecret,PrometheusRule,ServiceMonitor
@@ -137,10 +139,10 @@ jobs:
     name: Workflow lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Catches the classic mistakes in these files themselves: bad `runs-on`,
       # untrusted `${{ github.event.* }}` interpolation into `run:`, typo'd
       # contexts.
-      - uses: raven-actions/actionlint@v2
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
         with:
           shellcheck: true

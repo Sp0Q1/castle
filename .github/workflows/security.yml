@@ -32,14 +32,18 @@ jobs:
     name: Secret scan (TruffleHog)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history: a credential deleted in a later commit is still a
           # leaked credential, and this repo is public.
           fetch-depth: 0
 
-      # Run from the published image rather than a floating action ref, so the
-      # scanner itself is not an unpinned dependency of the pipeline.
+      # Actions are SHA-pinned throughout, but the *scanner* images deliberately
+      # float on :latest — a detection engine pinned to last quarter's build
+      # stops finding this quarter's leaked token format. The trade is accepted
+      # knowingly: these containers only read the checkout and cannot write to
+      # the repository.
+      #
       # --only-verified means findings are credentials TruffleHog authenticated
       # against the live provider — near-zero false positives, so failing is safe.
       - name: Scan git history for verified secrets
@@ -55,9 +59,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -66,26 +70,43 @@ jobs:
       # engine) is a drop-in replacement for this step.
       - run: pip install --disable-pip-version-check semgrep
 
+      # Two passes over the same rules: the SARIF file feeds the Security tab,
+      # the text pass is what a human reads in the log. `--sarif --output`
+      # suppresses console findings entirely, so without this a failure shows a
+      # count and nothing else. The rule cache makes the second pass cheap.
       - name: Scan
+        id: scan
         run: |
-          semgrep scan \
-            --config p/default \
-            --config p/rust \
-            --config p/typescript \
-            --config p/react \
-            --config p/secrets \
-            --config p/dockerfile \
-            --config p/github-actions \
-            --metrics off \
-            --error \
-            --sarif --output semgrep.sarif \
-            --exclude frontend/dist \
-            --exclude target \
+          set -o pipefail
+          args=(
+            --config p/default
+            --config p/rust
+            --config p/typescript
+            --config p/react
+            --config p/secrets
+            --config p/dockerfile
+            --config p/github-actions
+            --metrics off
+            --exclude frontend/dist
+            --exclude target
             --exclude src/models/_entities
+          )
+          semgrep scan "${args[@]}" --sarif --output semgrep.sarif
+          semgrep scan "${args[@]}" --error | tee semgrep.txt
+
+      - name: Report findings in the job summary
+        if: failure() && steps.scan.outcome == 'failure'
+        run: |
+          {
+            echo '## Semgrep findings'
+            echo '```'
+            tail -c 60000 semgrep.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@08d09a53f0f5d694f253bd25732e4429c9e9337f # v3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -94,10 +115,10 @@ jobs:
     name: Dependencies (cargo audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       # Prebuilt binary — `cargo install cargo-audit` would rebuild it every run.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2
         with:
           tool: cargo-audit
       - name: Audit against the RustSec advisory DB
@@ -110,8 +131,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -129,7 +150,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Build the application image
         run: docker build -t castle:ci .
@@ -161,7 +182,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@08d09a53f0f5d694f253bd25732e4429c9e9337f # v3
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
