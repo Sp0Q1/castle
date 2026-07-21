@@ -73,6 +73,22 @@ database:
   name: castle
   user: castle
 
+# Ingress-level rate limiting (nginx). This protects *capacity*: it caps what a
+# single source address can push at the pod, before the request costs a database
+# lookup or a password hash. It is the complement to the per-account throttling
+# in `src/rate_limit.rs`, which protects *accounts* and cannot see a distributed
+# flood. Neither replaces the other.
+#
+# nginx counts per client address, so these apply per source IP. Set rps/rpm to
+# 0 to omit that annotation. Defaults are deliberately generous: a report with
+# many inline images issues a burst of authenticated requests on page load, and
+# a limiter that trips on normal reading would be turned off within a week.
+rateLimit:
+  enabled: true
+  rps: 20                                # requests/second per source address
+  burstMultiplier: 5                     # nginx allows rps*multiplier in a burst
+  connections: 20                        # concurrent connections per address
+
 # Scheduled logical backup (pg_dump + uploads) -> S3-compatible object storage.
 # Runs only when database.internal=true. RPO = schedule interval (no PITR — see
 # the CloudNativePG upgrade note in the README). Retention via a bucket lifecycle
