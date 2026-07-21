@@ -25,6 +25,18 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    {{- if .Values.rateLimit.enabled }}
+    # Capacity protection, per source address. The account-level throttling in
+    # src/rate_limit.rs runs inside the pod and cannot see a distributed flood;
+    # this runs in front of it and cannot tell one account from another.
+    {{- if .Values.rateLimit.rps }}
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.rateLimit.rps | quote }}
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: {{ .Values.rateLimit.burstMultiplier | quote }}
+    {{- end }}
+    {{- if .Values.rateLimit.connections }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.rateLimit.connections | quote }}
+    {{- end }}
+    {{- end }}
 spec:
   ingressClassName: nginx
   tls:

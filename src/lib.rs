@@ -3,6 +3,7 @@ pub mod controllers;
 pub mod data;
 pub mod mailers;
 pub mod models;
+pub mod rate_limit;
 pub mod security;
 pub mod tasks;
 pub mod validation;

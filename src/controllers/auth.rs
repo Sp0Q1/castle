@@ -1,3 +1,4 @@
+use crate::rate_limit;
 use crate::security::CurrentUser;
 use crate::{
     mailers::auth::AuthMailer,
@@ -49,6 +50,12 @@ async fn register(
     State(ctx): State<AppContext>,
     Json(params): Json<RegisterParams>,
 ) -> Result<Response> {
+    // Registration and the two recovery flows below all answer 200 regardless
+    // of whether the address exists, so they cannot be used to enumerate
+    // accounts one request at a time — but they can be used to mail-bomb a
+    // known address, and they each cost a database lookup.
+    rate_limit::check_signup(&params.email)?;
+
     let res = users::Model::create_with_password(&ctx.db, &params).await;
 
     let user = match res {
@@ -101,6 +108,8 @@ async fn forgot(
     State(ctx): State<AppContext>,
     Json(params): Json<ForgotParams>,
 ) -> Result<Response> {
+    rate_limit::check_signup(&params.email)?;
+
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
         // we don't want to expose our users email. if the email is invalid we still
         // returning success to the caller
@@ -137,6 +146,11 @@ async fn reset(State(ctx): State<AppContext>, Json(params): Json<ResetParams>) -
 /// Creates a user login and returns a token
 #[debug_handler]
 async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -> Result<Response> {
+    // Checked before the lookup so that throttling costs an attacker a request
+    // regardless of whether the account exists — and so a locked-out account
+    // never reaches password verification.
+    rate_limit::check_login(&params.email)?;
+
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
         tracing::debug!(
             email = params.email,
@@ -156,6 +170,10 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
     let token = user
         .generate_jwt(&jwt_secret.secret, jwt_secret.expiration)
         .or_else(|_| unauthorized("unauthorized!"))?;
+
+    // Authentication succeeded, so the earlier failures were almost certainly
+    // typos, not an attack -- don't leave this user one mistake from a lockout.
+    rate_limit::clear_login(&params.email);
 
     format::json(LoginResponse::new(&user, &token))
 }
@@ -210,6 +228,8 @@ async fn magic_link(
     State(ctx): State<AppContext>,
     Json(params): Json<MagicLinkParams>,
 ) -> Result<Response> {
+    rate_limit::check_signup(&params.email)?;
+
     let email_regex = get_allow_email_domain_re();
     if !email_regex.is_match(&params.email) {
         tracing::debug!(
@@ -259,6 +279,8 @@ async fn resend_verification_email(
     State(ctx): State<AppContext>,
     Json(params): Json<ResendVerificationParams>,
 ) -> Result<Response> {
+    rate_limit::check_signup(&params.email)?;
+
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
         tracing::info!(
             email = params.email,
@@ -333,6 +355,12 @@ fn honeypot_capture(event: &str, headers: &HeaderMap, submitted: &str) {
     );
 }
 
+// The decoys apply exactly the same limits as a real instance, at the same
+// thresholds, returning the same 429 body. A decoy that let an attacker guess
+// forever while production locked out after eight tries would be trivially
+// distinguishable by hammering it — which would undo the whole point of the
+// swarm. Capture happens *before* the limit check, so throttled attempts are
+// still recorded: the attacker sees an ordinary lockout, we keep the intel.
 #[debug_handler]
 async fn hp_register(headers: HeaderMap, Json(params): Json<RegisterParams>) -> Result<Response> {
     honeypot_capture(
@@ -343,6 +371,7 @@ async fn hp_register(headers: HeaderMap, Json(params): Json<RegisterParams>) -> 
             params.email, params.password, params.name
         ),
     );
+    rate_limit::check_signup(&params.email)?;
     // Believable success — but no account is created.
     format::json(())
 }
@@ -354,12 +383,14 @@ async fn hp_login(headers: HeaderMap, Json(params): Json<LoginParams>) -> Result
         &headers,
         &format!("email={} password={}", params.email, params.password),
     );
+    rate_limit::check_login(&params.email)?;
     unauthorized("Invalid credentials!")
 }
 
 #[debug_handler]
 async fn hp_forgot(headers: HeaderMap, Json(params): Json<ForgotParams>) -> Result<Response> {
     honeypot_capture("forgot", &headers, &format!("email={}", params.email));
+    rate_limit::check_signup(&params.email)?;
     format::json(())
 }
 
