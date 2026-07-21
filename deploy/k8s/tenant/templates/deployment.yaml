@@ -97,6 +97,9 @@ spec:
             - --pass-user-headers=true
             - --set-xauthrequest=true
             - --skip-provider-button=true
+            # Let the SPA read the auth mode while unauthenticated so it can
+            # hand off to the IdP instead of showing a dead local login form.
+            - --skip-auth-route=^/api/auth/mode$
             - --reverse-proxy=true
             - --cookie-secure=true
             - --code-challenge-method=S256

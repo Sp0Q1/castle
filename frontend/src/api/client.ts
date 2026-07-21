@@ -65,6 +65,9 @@ export const api = {
 
   currentUser: (): Promise<CurrentUser> => request<CurrentUser>("/auth/current"),
 
+  // Public: "jwt" (show the built-in login form) or "proxy" (hand off to the IdP).
+  authMode: (): Promise<{ mode: string }> => request<{ mode: string }>("/auth/mode"),
+
   listProjects: (): Promise<Project[]> => request<Project[]>("/projects"),
 
   getProject: (id: number): Promise<Project> => request<Project>(`/projects/${id}`),

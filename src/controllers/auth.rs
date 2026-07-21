@@ -171,6 +171,24 @@ async fn current(CurrentUser(user): CurrentUser, State(ctx): State<AppContext>) 
     format::json(CurrentResponse::new(&user, logout_url))
 }
 
+#[derive(Serialize)]
+struct ModeResponse {
+    mode: &'static str,
+}
+
+/// Public (unauthenticated) endpoint reporting the auth mode so the SPA knows
+/// whether to render its own login form (`jwt`) or hand off to the proxy/IdP
+/// (`proxy`) on an unauthenticated request. Exposes nothing sensitive. In proxy
+/// mode oauth2-proxy must be told to skip auth for this path.
+#[debug_handler]
+async fn mode(State(ctx): State<AppContext>) -> Result<Response> {
+    let mode = match crate::security::Settings::from_ctx(&ctx).auth_mode {
+        crate::security::AuthMode::Proxy => "proxy",
+        crate::security::AuthMode::Jwt => "jwt",
+    };
+    format::json(ModeResponse { mode })
+}
+
 /// Magic link authentication provides a secure and passwordless way to log in to the application.
 ///
 /// # Flow
@@ -277,13 +295,17 @@ pub fn routes() -> Routes {
         .add("/magic-link", post(magic_link))
         .add("/magic-link/{token}", get(magic_link_verify))
         .add("/resend-verification-mail", post(resend_verification_email))
+        .add("/mode", get(mode))
 }
 
 /// Routes for `proxy` auth mode: only the current-user endpoint. The credential
 /// endpoints (register/login/forgot/reset/magic-link) are intentionally omitted
 /// because oauth2-proxy handles authentication and the app manages no passwords.
 pub fn proxy_routes() -> Routes {
-    Routes::new().prefix("/api/auth").add("/current", get(current))
+    Routes::new()
+        .prefix("/api/auth")
+        .add("/current", get(current))
+        .add("/mode", get(mode))
 }
 
 // ---------------------------------------------------------------------------
@@ -401,4 +423,5 @@ pub fn honeypot_routes() -> Routes {
         .add("/magic-link", post(hp_magic_link))
         .add("/magic-link/{token}", get(hp_token_path))
         .add("/resend-verification-mail", post(hp_resend))
+        .add("/mode", get(mode))
 }

@@ -35,25 +35,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthToken(token);
     let active = true;
     setLoading(true);
-    api
-      .currentUser()
-      .then((u) => {
-        if (active) setUser(u);
-      })
-      .catch(() => {
+    (async () => {
+      try {
+        const u = await api.currentUser();
         if (active) {
-          setUser(null);
-          // A stale JWT — drop it. (In proxy mode there is no token to clear.)
-          if (token) {
-            localStorage.removeItem(TOKEN_KEY);
-            setAuthToken(null);
-            setToken(null);
-          }
+          setUser(u);
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      } catch {
+        if (!active) return;
+        // Not authenticated. In proxy mode there is no local login form — hand
+        // off to the IdP via oauth2-proxy (so we go to Keycloak, not a dead
+        // form). In jwt mode, fall through to the built-in login page.
+        try {
+          const { mode } = await api.authMode();
+          if (mode === "proxy") {
+            const rd = encodeURIComponent(
+              window.location.pathname + window.location.search,
+            );
+            window.location.href = `/oauth2/sign_in?rd=${rd}`;
+            return; // leaving the page — keep the loading state, no form flash
+          }
+        } catch {
+          // Mode unknown — behave like jwt and show the local form.
+        }
+        if (!active) return;
+        setUser(null);
+        // A stale JWT — drop it. (In proxy mode there is no token to clear.)
+        if (token) {
+          localStorage.removeItem(TOKEN_KEY);
+          setAuthToken(null);
+          setToken(null);
+        }
+        setLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };
