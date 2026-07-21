@@ -43,7 +43,23 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   Runtime-verified: upload validation (incl. SVG renamed `.png` → rejected), the
   401 auth gate, response headers, and fail-closed startup. The three frontend
   fixes + membership downgrade are compile-verified; confirm in a browser on the
-  next lab run. Still open: **rate limiting**.
+  next lab run.
+- ✅ **Rate limiting.** Two layers: per-account throttling in `src/rate_limit.rs`
+  (login 8/15min, register/forgot/magic-link 5/hr, keyed on the submitted email
+  and checked *before* the user lookup so a guess never costs an argon2 hash),
+  and per-source-address `limit-rps`/`limit-connections` at the ingress via the
+  chart's `rateLimit` values. The decoys apply identical limits and return the
+  same 429, so they cannot be told apart from production by hammering them —
+  capture happens before the check, so throttled attempts are still recorded.
+  In-pod state is process-local, which is exact at one replica per tenant and
+  documented as needing a shared store if that ever changes.
+- ✅ **Automated tests.** `tests/requests/authz.rs` covers the access rules over
+  the real HTTP surface — draft invisibility to clients (404, not 401),
+  non-member rejection, client write/publish refusal, the upload auth gate,
+  field limits, payload round-tripping, and login throttling. Verified they can
+  fail by reverting each rule in turn. Plus unit tests for validation and the
+  rate limiter. Still thin on: SSO provisioning/demotion (`provision_from_sso`)
+  and the proxy-mode header trust path, both of which need proxy-mode fixtures.
 - ✅ **Input validation.** `src/validation.rs` bounds every user-supplied text
   field and rejects NUL/control characters (which Postgres refuses in `text`
   columns — a 500, not a 400). Deliberately validation and *not* sanitization:
