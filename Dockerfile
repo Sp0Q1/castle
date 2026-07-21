@@ -37,7 +37,8 @@ COPY --from=backend /app/target/release/castle-cli /usr/local/bin/castle-cli
 COPY config/ config/
 COPY assets/ assets/
 COPY --from=frontend /app/frontend/dist/ frontend/dist/
-USER castle
+# Numeric UID (not the name) so Kubernetes runAsNonRoot can verify it.
+USER 10001
 EXPOSE 5150
 ENTRYPOINT ["castle-cli"]
 # Deployments override the args (binding/port/environment); this is a sane default.

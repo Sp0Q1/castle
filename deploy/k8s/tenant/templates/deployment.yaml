@@ -32,6 +32,9 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
+        # Numeric UID: k8s can't verify a named user (image USER) is non-root.
+        runAsUser: 10001
+        runAsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
