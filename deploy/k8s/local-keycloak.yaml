@@ -57,6 +57,9 @@ data:
       "realm": "castle-citadel",
       "enabled": true,
       "sslRequired": "none",
+      "eventsEnabled": true,
+      "eventsExpiration": 604800,
+      "eventsListeners": ["jboss-logging"],
       "groups": [
         {"name": "castle-managers"},
         {"name": "castle-staff"},
@@ -101,11 +104,20 @@ data:
   # opaque codename, so a decoy is indistinguishable from a real tenant — same SSO
   # redirect, same login page. Any authentication attempt here is an attacker
   # (Keycloak logs it as a LOGIN_ERROR with the tried username + IP).
+  #
+  # eventsEnabled is REQUIRED, not optional: it is the entire point of the
+  # decoy. With it off Keycloak records nothing, the CanaryRealmLoginAttempt
+  # alert has no events to scrape, and an attack on the swarm is silent. (The
+  # realm imported without it once; the lab caught that the comment above was
+  # aspirational rather than true.)
   castle-nightfall-realm.json: |
     {
       "realm": "castle-nightfall",
       "enabled": true,
       "sslRequired": "none",
+      "eventsEnabled": true,
+      "eventsExpiration": 604800,
+      "eventsListeners": ["jboss-logging"],
       "groups": [
         {"name": "castle-managers"},
         {"name": "castle-staff"},
