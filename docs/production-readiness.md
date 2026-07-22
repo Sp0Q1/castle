@@ -70,9 +70,16 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   Also fixed a contradiction: loco's default 2MB body limit would have rejected
   image uploads under the 10 MiB cap in `uploads.rs`; raised to 12mb.
   Runtime-verified: 10/10 cases, including a payload stored byte-identical.
-- ⬜ **One real-cluster end-to-end run.** Everything so far is kind + sqlite +
-  self-signed. Run on a real cluster with real Postgres, real Keycloak (prod
-  mode + TLS), issued certs, and Kata/gVisor.
+- 🔶 **One real-cluster end-to-end run.** Everything validated so far is kind +
+  sqlite + self-signed. The pieces a real run needs are now built:
+  `docs/real-cluster-runbook.md` (step-by-step from bare cluster to first
+  tenant), a **published, signed, SBOM-attested image** (`release.yml` → ghcr +
+  cosign keyless), and a **production Keycloak** manifest (`keycloak-prod.yaml`:
+  start mode, Postgres, bootstrapped admin, TLS, KC 26 health probes). Still
+  needs the actual run: a cluster with a NetworkPolicy-enforcing CNI, real DNS,
+  and issued certs. Two paths remain un-boot-tested for lack of infra —
+  `keycloak-prod.yaml` (schema-valid, derived from the lab-proven realm) and
+  `prod`-mode sealing (needs a SealedSecrets controller).
 - ✅ **Provisioning automation.** `castlectl onboard "<client>"` is one command:
   allocate a random codename from a pre-issued pool, create a hardened
   per-tenant Keycloak realm (`keycloak-realm.sh`), generate one client secret
@@ -91,9 +98,13 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   cert Secrets so restore doesn't re-issue and blow LE rate limits).
 - ⬜ **Deploy the monitoring stack for real** (kube-prometheus-stack + Loki +
   Falco) and fire the alerts in anger; verify the feedback loop.
-- ⬜ **Keycloak hardening.** Prod mode + TLS, `sslRequired`, no
-  directAccessGrants/implicit, exact redirect + post-logout URIs, brute-force
-  detection, verify-email + SMTP, strong admin, admin console not public.
+- 🔶 **Keycloak hardening.** `keycloak-prod.yaml` covers prod mode + TLS +
+  Postgres + bootstrapped admin + health probes, and `keycloak-realm.sh` sets
+  the per-realm hardening (`sslRequired: all`, no directAccessGrants/implicit,
+  exact redirect + post-logout URIs, brute-force detection, verifyEmail). Still
+  open: SMTP for verify-email delivery, replacing the bootstrap admin with an
+  MFA admin, keeping the admin console off the public net, and the optimized
+  Keycloak image (`kc.sh build` → `start --optimized`).
 - ⬜ **Certs at scale.** Past ~50/week move off LE HTTP-01 (commercial ACME or
   DNS-01); pre-issue the codename pool in bulk.
 - ⬜ **SSL passthrough** (optional): terminate TLS in-pod so no central plaintext
@@ -108,9 +119,12 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
   weekly as well as on push. Dependabot covers cargo/npm/actions/docker with a
   7-day cooldown; every action is SHA-pinned. Accepted `cargo audit` advisories
   are documented one-by-one in `.cargo/audit.toml` with the condition that
-  should remove each.
-  Still open: **signed images (cosign), SBOM (syft//attestation), digest-pinned
-  base images**, and pushing the image from CI to a registry at all.
+  should remove each. `release.yml` now **publishes** on push-to-main and
+  version tags: pushes to ghcr, signs keyless with **cosign** (OIDC, no stored
+  key), and attaches **SBOM + provenance** attestations. The dependency layer is
+  cached, so a publish is a fast source-only rebuild.
+  Still open: **digest-pinned base images** in the Dockerfile, and an admission
+  policy that requires the cosign signature at deploy time.
 
 ## Tier 3 — operational / compliance
 - ⬜ Encryption at rest, data retention policy, immutable access audit, log

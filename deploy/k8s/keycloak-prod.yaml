@@ -1,0 +1,225 @@
+# =============================================================================
+# Production Keycloak for castle — the shared IdP the proxy-mode tenants and the
+# canary swarm authenticate against. This is the prod counterpart to
+# local-keycloak.yaml (which is start-dev / H2 / admin-admin / self-signed and
+# for the kind lab ONLY).
+#
+# What makes this "production" and the lab one not:
+#   * `start` (not start-dev): real production mode, hostname enforced, no dev
+#     shortcuts.
+#   * Postgres, not the in-memory H2 start-dev uses — H2 loses every realm on
+#     restart, which for castle means losing every tenant's IdP config.
+#   * Admin + DB credentials come from a Secret you provide out-of-band (a
+#     SealedSecret), never inline. See `keycloak-secrets` below.
+#   * TLS terminates at ingress-nginx with a cert-manager cert; Keycloak trusts
+#     the proxy's X-Forwarded headers.
+#   * KC 26 health probes on the management port (9000), so a half-started or
+#     DB-disconnected pod is never sent traffic.
+#   * No --import-realm: realms are created per-tenant at runtime by
+#     castlectl / keycloak-realm.sh, not baked in at boot.
+#
+# BEFORE APPLYING, set these to real values (search "SET THIS"):
+#   * the hostname (KC_HOSTNAME) and the Ingress host
+#   * provide the `keycloak-secrets` Secret (example at the bottom; seal it)
+#   * decide on the database: the Postgres StatefulSet here is a single-replica
+#     PILOT database. For anything beyond a pilot, point KC_DB_URL at a managed,
+#     backed-up Postgres and delete the StatefulSet.
+#
+#   kubectl apply -f deploy/k8s/00-platform.yaml     # namespaces + ClusterIssuer
+#   kubectl apply -f <your sealed keycloak-secrets>  # admin + db creds
+#   kubectl apply -f deploy/k8s/keycloak-prod.yaml
+#   kubectl -n castle-system rollout status deploy/keycloak
+# =============================================================================
+---
+# --- Pilot database -----------------------------------------------------------
+# A single Postgres for Keycloak's own data (realms, users, sessions). Marked
+# PILOT: one replica, one PVC, no HA, no PITR. Replace with a managed database
+# for production scale — Keycloak only needs KC_DB_URL to point somewhere.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak-db
+  namespace: castle-system
+  labels: { app: keycloak-db }
+spec:
+  serviceName: keycloak-db
+  replicas: 1
+  selector: { matchLabels: { app: keycloak-db } }
+  template:
+    metadata: { labels: { app: keycloak-db } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args: ["-c", "max_connections=200"]
+          env:
+            - { name: POSTGRES_DB, value: keycloak }
+            - { name: POSTGRES_USER, value: keycloak }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_DB_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [ { containerPort: 5432 } ]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "keycloak", "-d", "keycloak"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 512Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70            # postgres user in the alpine image
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-db
+  namespace: castle-system
+  labels: { app: keycloak-db }
+spec:
+  clusterIP: None
+  selector: { app: keycloak-db }
+  ports: [ { port: 5432, targetPort: 5432 } ]
+---
+# --- Keycloak -----------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: castle-system
+  labels: { app: keycloak }
+spec:
+  replicas: 1                        # HA needs a distributed cache config; see the runbook
+  selector: { matchLabels: { app: keycloak } }
+  strategy: { type: Recreate }       # avoid two versions sharing the DB during a rollout
+  template:
+    metadata: { labels: { app: keycloak } }
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.0
+          # `start` = production mode. It does an implicit build at boot from the
+          # env below (adds ~30s to startup). To skip that, bake a custom image
+          # with `kc.sh build --db=postgres` and use ["start", "--optimized"];
+          # the runbook covers this as a hardening step.
+          args: ["start"]
+          env:
+            # --- identity / hostname ---
+            # SET THIS: the public URL browsers use; also the token issuer.
+            - { name: KC_HOSTNAME, value: "https://sso.example.com" }
+            # TLS terminates at the ingress, so Keycloak speaks HTTP internally
+            # and trusts the proxy's forwarded headers for the real scheme/host.
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_PROXY_HEADERS, value: "xforwarded" }
+            # --- database ---
+            - { name: KC_DB, value: postgres }
+            - { name: KC_DB_URL, value: "jdbc:postgresql://keycloak-db:5432/keycloak" }
+            - { name: KC_DB_USERNAME, value: keycloak }
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_DB_PASSWORD } }
+            # --- first-boot admin (KC 26 bootstrap; rotate/remove after setup) ---
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_BOOTSTRAP_ADMIN_PASSWORD } }
+            # --- health/metrics on the management port (9000) ---
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            - { name: KC_METRICS_ENABLED, value: "true" }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: mgmt, containerPort: 9000 }
+          startupProbe:              # give the implicit build + DB migration time
+            httpGet: { path: /health/started, port: 9000 }
+            periodSeconds: 5
+            failureThreshold: 60     # up to 5 min before declaring failure
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 9000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: 9000 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits:   { cpu: "2",  memory: 2Gi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000          # the keycloak image runs as uid 1000
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+            readOnlyRootFilesystem: false   # Keycloak writes to /tmp and its data dir
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: castle-system
+  labels: { app: keycloak }
+spec:
+  selector: { app: keycloak }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak
+  namespace: castle-system
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["sso.example.com"]    # SET THIS (match KC_HOSTNAME)
+      secretName: keycloak-tls
+  rules:
+    - host: sso.example.com          # SET THIS
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: keycloak, port: { number: 8080 } } }
+---
+# --- Ingress lock-down --------------------------------------------------------
+# Keycloak accepts traffic only from the ingress (browser logins) and from
+# managed tenant namespaces (pods redeeming codes / fetching JWKS). Nothing else
+# in the cluster can reach the IdP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-allow-ingress
+  namespace: castle-system
+spec:
+  podSelector: { matchLabels: { app: keycloak } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+        - namespaceSelector: { matchLabels: { castle.io/managed: "true" } }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# --- The Secret you must provide (DO NOT COMMIT PLAINTEXT) ---------------------
+# Shown for shape only. In a real deploy, generate strong values and seal them:
+#
+#   kubectl create secret generic keycloak-secrets -n castle-system \
+#     --from-literal=KC_DB_PASSWORD="$(openssl rand -base64 24)" \
+#     --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+#     --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
+#     --dry-run=client -o yaml | kubeseal --format yaml > keycloak-secrets-sealed.yaml
+#   kubectl apply -f keycloak-secrets-sealed.yaml
+#
+# The bootstrap admin is a first-boot account: log in once, create a named admin
+# with MFA, then disable or delete it (and remove the two KC_BOOTSTRAP_* env
+# vars on the next rollout).
