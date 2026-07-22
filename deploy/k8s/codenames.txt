@@ -1,0 +1,87 @@
+# Pre-generated codename pool.
+#
+# Every tenant — real or decoy — gets a name from this list, and nothing else
+# ever appears in a hostname, namespace, realm name or certificate. The client's
+# real identity lives only in the control-plane mapping (see `castlectl map`),
+# so a certificate-transparency log, a DNS query or a leaked namespace listing
+# reveals a codename and nothing more.
+#
+# Two properties matter and both are easy to lose:
+#
+#   1. The names must be drawn up FRONT, in bulk, and their certificates issued
+#      together. Issuing a certificate the day a client signs makes the CT log a
+#      timeline of who onboarded when — which is exactly the metadata the
+#      codenames exist to hide.
+#
+#   2. Real tenants and decoys must be indistinguishable in this list. They come
+#      from one pool, in one style, and allocation order says nothing about
+#      which is which. Do not group them, do not prefix decoys, do not let real
+#      clients pick a name they like.
+#
+# Style: single-word military operation names — short, opaque, and uniform, so
+# no name stands out as "clearly the important one".
+#
+# Adding names: append only, never reorder or remove. `castlectl` records
+# allocations by name, and reusing a retired name would point a stale
+# certificate, DNS record and realm at a different client.
+
+citadel
+nightfall
+ironwood
+brightfall
+stonegate
+redoubt
+longspur
+kestrel
+blackthorn
+foxglove
+harrier
+ravenswood
+silverpine
+tidewater
+northgate
+falconry
+greyhound
+mistvale
+oakshield
+pinnacle
+quarryman
+riverbend
+saltmarsh
+thornfield
+umberwood
+vanguard
+westmoor
+yellowhammer
+ashgrove
+bramblewood
+coldharbour
+dunmore
+eastwatch
+fernhollow
+glenmara
+hawthorne
+inglewood
+juniper
+kingfisher
+larkspur
+marshwood
+nettlebed
+overwatch
+palisade
+quicksilver
+rookery
+stormhaven
+tanglewood
+underhill
+vespers
+wildoak
+yewtree
+alderman
+blackwater
+cinderfell
+dovecote
+elmshade
+frostgate
+gallowglass
+hollybank
