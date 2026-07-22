@@ -4,10 +4,9 @@
 # plane). Wraps helm + kubectl so managing tenants is one command instead of a
 # hand-run helm install + label dance.
 #
-#   castlectl onboard "<client name>" [--decoy]  # allocate a codename + provision
-#   castlectl provision <codename> [--decoy]   # stamp out a named tenant (or decoy)
+#   castlectl allocate [--decoy]               # allocate a codename + provision it
+#   castlectl provision <codename> [--decoy]   # provision a specific codename
 #   castlectl pool                             # codename pool: free vs allocated
-#   castlectl map                              # codename -> real client (control plane only)
 #   castlectl list                             # show all managed instances
 #   castlectl deprovision <codename>           # remove one
 #   castlectl deprovision --all                # remove every managed instance
@@ -33,17 +32,23 @@
 #     KC_ADMIN_USER / KC_ADMIN_PASS   admin creds for realm creation
 #     KC_INSECURE=1   accept a self-signed ingress cert (lab only)
 #
-# ONBOARDING A CLIENT IS ONE COMMAND. That is the point: every step below is one
-# a human would otherwise do by hand, and each has a way to go quietly wrong —
-# a codename picked because it sounded nice (and so leaked something about the
-# client), a realm built in the console with `sslRequired` left off, a client
-# secret pasted into two places that then disagree, a helm install missing
-# `secrets.external` so plaintext lands in the release.
+# PROVISIONING IS ONE COMMAND. That is the point: every step below is one a human
+# would otherwise do by hand, and each has a way to go quietly wrong — a codename
+# picked because it sounded nice (and so leaked something about the client), a
+# realm built in the console with `sslRequired` left off, a client secret pasted
+# into two places that then disagree, a helm install missing `secrets.external`
+# so plaintext lands in the release.
 #
-# The codename <-> real-client mapping is the one genuinely sensitive artifact
-# here: it is what turns a public hostname back into "who". It is kept in a
-# Secret in the control-plane namespace, never in a label, never in the tenant's
-# own namespace, and never in git.
+# THE CLUSTER NEVER LEARNS WHICH CLIENT A CODENAME BELONGS TO. That mapping is
+# what turns a public hostname back into "who", and it is the single most
+# sensitive fact in the whole design — so it is kept OUT of here entirely. castle
+# operates purely on opaque codenames; the app and the manifests never reference
+# a real client name (grep them). You, the operator, record "codename -> client"
+# wherever you already keep client records — offline, in a vault, or in the
+# mTLS-isolated management plane once it exists. Storing it in the tenant cluster
+# would mean one etcd read or leaked kubeconfig de-anonymises the entire
+# portfolio, defeating the reason codenames exist. `allocate` prints the codename
+# it picked; that is the only handle you need, and the only one that ever leaves.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -54,8 +59,9 @@ IMG_TAG="${IMG_TAG:-local}"
 BASE_DOMAIN="${BASE_DOMAIN:-127.0.0.1.nip.io}"
 MODE="${MODE:-local}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-}"
+# Namespace the shared platform (Keycloak) lives in — used only as the egress
+# target for proxy-mode tenants reaching the IdP. It holds no client identities.
 CONTROL_NS="${CONTROL_NS:-castle-system}"
-MAP_SECRET="${MAP_SECRET:-castle-codename-map}"
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 REALM_SH="$HERE/keycloak-realm.sh"
 SEAL_SH="$HERE/secrets/seal-tenant.sh"
@@ -89,22 +95,6 @@ next_codename(){
   free="$(comm -23 <(pool_codenames | sort) <(allocated_codenames))"
   [[ -n "$free" ]] || die "codename pool exhausted — add names to $(basename "$POOL") and issue their certificates in bulk"
   echo "$free" | shuf -n 1
-}
-
-# The mapping lives in a Secret so it inherits the cluster's encryption-at-rest
-# and RBAC. Reading it should be an audited, deliberate act.
-#
-# A strategic-merge patch adds just this one codename's entry, leaving every
-# other key untouched — so concurrent onboards cannot clobber each other's
-# mappings the way a read-modify-write of the whole Secret could.
-record_mapping(){
-  local codename="$1" client="$2" role="$3"
-  kubectl get ns "$CONTROL_NS" >/dev/null 2>&1 || kubectl create ns "$CONTROL_NS" >/dev/null
-  kubectl -n "$CONTROL_NS" get secret "$MAP_SECRET" >/dev/null 2>&1 \
-    || kubectl -n "$CONTROL_NS" create secret generic "$MAP_SECRET" >/dev/null
-  local b64; b64="$(printf '%s' "$role:$client" | base64 | tr -d '\n')"
-  kubectl -n "$CONTROL_NS" patch secret "$MAP_SECRET" --type=merge \
-    -p "{\"data\":{\"$codename\":\"$b64\"}}" >/dev/null
 }
 
 # Split-horizon oauth2-proxy args: the browser is sent to Keycloak through the
@@ -231,17 +221,6 @@ list(){
     done
 }
 
-# Removes a codename from the control-plane mapping Secret. The tenant is gone,
-# so the name is free to reallocate — but only after the mapping is cleared, or
-# `map` would still point the retired name at a client that no longer has an
-# instance.
-forget_mapping(){
-  local codename="$1"
-  kubectl -n "$CONTROL_NS" get secret "$MAP_SECRET" >/dev/null 2>&1 || return 0
-  kubectl -n "$CONTROL_NS" patch secret "$MAP_SECRET" --type=json \
-    -p "[{\"op\":\"remove\",\"path\":\"/data/$codename\"}]" >/dev/null 2>&1 || true
-}
-
 deprovision(){
   if [[ "${1:-}" == "--all" ]]; then
     kubectl get ns -l "$LABEL" -o jsonpath='{range .items[*]}{.metadata.labels.castle\.io/codename}{"\n"}{end}' 2>/dev/null \
@@ -261,20 +240,18 @@ deprovision(){
     KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" \
       "$REALM_SH" delete "$codename" 2>/dev/null && echo "  realm removed" || true
   fi
-  forget_mapping "$codename"
   echo "  removed"
 }
 
-# onboard: the client-facing entry point. Allocate a codename, provision it, and
-# record who it belongs to — one command, so none of those three can be skipped
-# or get out of step.
-onboard(){
-  local client="$1" role="${2:-tenant}"
-  [[ -n "$client" ]] || die "onboard needs a \"<client name>\""
+# allocate: pick a free codename, provision it, and print it. No client name is
+# taken or stored — you record which client this codename belongs to in your own
+# records, off this cluster. The printed codename is the only handle you need.
+allocate(){
+  local role="${1:-tenant}"
   local codename; codename="$(next_codename)"
   provision "$codename" "$role"
-  record_mapping "$codename" "$client" "$role"
-  echo "  onboarded \"$client\" as '$codename' ($role)"
+  echo "  allocated codename: $codename ($role)"
+  echo "  record the client<->codename mapping in your own store; the cluster will not."
 }
 
 # pool: free vs allocated codenames, so it is obvious when the pre-issued supply
@@ -290,32 +267,18 @@ pool(){
   return 0
 }
 
-# map: the codename -> real client lookup. This is the sensitive one; reading it
-# should be a deliberate act, which is why it lives in a Secret and is not part
-# of `list`.
-map_show(){
-  kubectl -n "$CONTROL_NS" get secret "$MAP_SECRET" >/dev/null 2>&1 \
-    || { echo "no mappings recorded"; return 0; }
-  printf '%-16s %-8s %s\n' CODENAME ROLE CLIENT
-  kubectl -n "$CONTROL_NS" get secret "$MAP_SECRET" -o json 2>/dev/null \
-    | python3 -c 'import json,sys,base64
-d=json.load(sys.stdin).get("data",{})
-for cn,v in sorted(d.items()):
-    val=base64.b64decode(v).decode()
-    role,_,client=val.partition(":")
-    print(f"{cn:16} {role:8} {client}")'
-}
-
 usage(){
   cat >&2 <<'U'
 usage: castlectl <command> [args]   (MODE=local|proxy|prod, default local)
 
-  onboard "<client name>" [--decoy]   allocate a codename + provision + record mapping
+  allocate [--decoy]                  pick a free codename + provision it (prints the codename)
   provision <codename> [--decoy]      provision a specific codename
   pool                                free vs allocated codenames
-  map                                 codename -> real client (control plane)
   list                                running instances + readiness
-  deprovision <codename> | --all      remove instance(s), realm(s) and mapping(s)
+  deprovision <codename> | --all      remove instance(s) and realm(s)
+
+The cluster only ever knows codenames. Record which client a codename belongs to
+in your own store, off this cluster — see the header of this script.
 U
   exit 1
 }
@@ -328,10 +291,9 @@ for a in "$@"; do
 done
 
 case "$cmd" in
-  onboard)      onboard "${posargs[0]:-}" "$role" ;;
+  allocate)     allocate "$role" ;;
   provision)    provision "${posargs[0]:-}" "$role" ;;
   pool)         pool ;;
-  map)          map_show ;;
   list)         list ;;
   deprovision)  deprovision "${posargs[0]:-}" ;;
   ''|-h|--help|help) usage ;;
