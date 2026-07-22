@@ -73,8 +73,16 @@ clients' security findings." Legend: ✅ done · 🔶 partial · ⬜ not started
 - ⬜ **One real-cluster end-to-end run.** Everything so far is kind + sqlite +
   self-signed. Run on a real cluster with real Postgres, real Keycloak (prod
   mode + TLS), issued certs, and Kata/gVisor.
-- 🔶 **Provisioning automation.** `castlectl` seeds it; prod needs per-tenant
-  Keycloak realm creation + secret/codename mapping + (ideally) a Tenant CRD/operator.
+- ✅ **Provisioning automation.** `castlectl onboard "<client>"` is one command:
+  allocate a random codename from a pre-issued pool, create a hardened
+  per-tenant Keycloak realm (`keycloak-realm.sh`), generate one client secret
+  shared by the realm and oauth2-proxy, install the chart, and record the
+  codename→client mapping in a control-plane Secret. `proxy`/`prod`/`local`
+  modes; `deprovision` tears down namespace + realm + mapping. Lab-verified end
+  to end incl. a full SSO login flow (proving the shared secret matches).
+  Remaining: prod-mode sealing is unexercised (no kubeseal/SealedSecrets
+  controller in the lab; delegates to the validated `seal-tenant.sh`), and a
+  Tenant CRD/operator is still the eventual goal over the shell wrapper.
 
 ## Tier 2 — hardening before scaling past a pilot
 - ⬜ **Management plane.** Cross-client dashboard + client switcher behind VPN +
