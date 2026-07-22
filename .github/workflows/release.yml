@@ -1,0 +1,118 @@
+name: Release image
+
+# Builds and PUBLISHES the castle image — the piece that makes a real kubectl
+# deploy possible. security.yml builds the same image with `load: true` to scan
+# it and never pushes; this one pushes, signs, and attaches an SBOM.
+#
+# Triggers:
+#   push to main   -> ghcr.io/<owner>/castle:main and :sha-<short>
+#   tag v*         -> :<version> and :latest   (the refs a real deploy pins to)
+#
+# Everything published here is verifiable: the image is signed with cosign
+# (keyless, via the workflow's OIDC identity — no long-lived key to leak) and
+# carries an SBOM attestation, so a cluster can require a provenance before it
+# will run the image.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # ghcr requires a lowercase path; github.repository is <owner>/<repo>.
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    name: Build, push, sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr
+      id-token: write # cosign keyless signing via OIDC
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Derives the tag set from the trigger: branch -> :main, tag -> :<version>
+      # + :latest, plus an immutable :sha-<short> on every build so a deploy can
+      # pin to an exact commit rather than a moving tag.
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse the dependency layer cache the scan job populates, so a publish
+          # is a fast source-only rebuild rather than a full dependency compile.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # provenance + sbom become attestations attached to the image in the
+          # registry, verifiable with `cosign verify-attestation`.
+          provenance: true
+          sbom: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      # Keyless: cosign uses the job's OIDC identity as the signer, recorded in
+      # the public Rekor transparency log. There is no private key to store or
+      # rotate. Verify later with:
+      #   cosign verify ghcr.io/<owner>/castle@<digest> \
+      #     --certificate-identity-regexp '^https://github.com/<owner>/castle/' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # A human-readable SBOM as a build artifact too, so it can be diffed and
+      # reviewed without pulling attestations out of the registry.
+      - name: Generate SBOM artifact
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: castle-sbom.spdx.json
+
+      - name: Report what was published
+        run: |
+          {
+            echo "### Published"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo "digest: ${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo "Signed (keyless) and SBOM-attested. Pin deploys to the digest above."
+          } >> "$GITHUB_STEP_SUMMARY"
