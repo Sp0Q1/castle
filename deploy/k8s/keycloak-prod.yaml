@@ -5,8 +5,9 @@
 # for the kind lab ONLY).
 #
 # What makes this "production" and the lab one not:
-#   * `start` (not start-dev): real production mode, hostname enforced, no dev
-#     shortcuts.
+#   * `start --optimized` on a pre-built image (deploy/k8s/keycloak/Dockerfile),
+#     not `start-dev`: real production mode, hostname enforced, no dev shortcuts,
+#     no boot-time build — so the container runs with a read-only root fs.
 #   * Postgres, not the in-memory H2 start-dev uses — H2 loses every realm on
 #     restart, which for castle means losing every tenant's IdP config.
 #   * Admin + DB credentials come from a Secret you provide out-of-band (a
@@ -19,6 +20,8 @@
 #     castlectl / keycloak-realm.sh, not baked in at boot.
 #
 # BEFORE APPLYING, set these to real values (search "SET THIS"):
+#   * the Keycloak image: release.yml publishes ghcr.io/<owner>/castle-keycloak;
+#     pin the `image:` below to a published digest (replace ghcr.io/OWNER/...)
 #   * the hostname (KC_HOSTNAME) and the Ingress host
 #   * provide the `keycloak-secrets` Secret (example at the bottom; seal it)
 #   * decide on the database: the Postgres StatefulSet here is a single-replica
@@ -48,6 +51,14 @@ spec:
   template:
     metadata: { labels: { app: keycloak-db } }
     spec:
+      # Pod-level context: the pod defaults to non-root, so a container that
+      # forgot its own securityContext still cannot run as root. fsGroup makes
+      # the PVC and emptyDirs group-writable by the postgres uid.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70              # postgres user in the alpine image
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -61,6 +72,10 @@ spec:
           ports: [ { containerPort: 5432 } ]
           volumeMounts:
             - { name: data, mountPath: /var/lib/postgresql/data }
+            # The root fs is read-only (below); Postgres still needs to write its
+            # unix socket and lock file, and scratch space. Both are emptyDir.
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
           readinessProbe:
             exec: { command: ["pg_isready", "-U", "keycloak", "-d", "keycloak"] }
             initialDelaySeconds: 10
@@ -74,6 +89,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
             seccompProfile: { type: RuntimeDefault }
+            readOnlyRootFilesystem: true   # data + socket + scratch are mounted above
+      volumes:
+        - { name: run, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec:
@@ -105,14 +124,23 @@ spec:
   template:
     metadata: { labels: { app: keycloak } }
     spec:
+      # Pod-level context: non-root by default for every container in the pod.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000            # the keycloak image runs as uid 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.0
-          # `start` = production mode. It does an implicit build at boot from the
-          # env below (adds ~30s to startup). To skip that, bake a custom image
-          # with `kc.sh build --db=postgres` and use ["start", "--optimized"];
-          # the runbook covers this as a hardening step.
-          args: ["start"]
+          # Optimized image: the Quarkus build ran at image-build time (see
+          # deploy/k8s/keycloak/Dockerfile), so nothing is written under
+          # /opt/keycloak/lib at boot and the root fs can be read-only.
+          # SET THIS: pin to the digest published by release.yml.
+          image: ghcr.io/OWNER/castle-keycloak:26.0
+          # --optimized skips the boot-time build (the image is already built).
+          # Build-time options (KC_DB, health, metrics) are baked into the image;
+          # only runtime options appear in env below.
+          args: ["start", "--optimized"]
           env:
             # --- identity / hostname ---
             # SET THIS: the public URL browsers use; also the token issuer.
@@ -121,8 +149,7 @@ spec:
             # and trusts the proxy's forwarded headers for the real scheme/host.
             - { name: KC_HTTP_ENABLED, value: "true" }
             - { name: KC_PROXY_HEADERS, value: "xforwarded" }
-            # --- database ---
-            - { name: KC_DB, value: postgres }
+            # --- database (URL + credentials are runtime; the vendor is baked) ---
             - { name: KC_DB_URL, value: "jdbc:postgresql://keycloak-db:5432/keycloak" }
             - { name: KC_DB_USERNAME, value: keycloak }
             - name: KC_DB_PASSWORD
@@ -132,13 +159,15 @@ spec:
               valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
               valueFrom: { secretKeyRef: { name: keycloak-secrets, key: KC_BOOTSTRAP_ADMIN_PASSWORD } }
-            # --- health/metrics on the management port (9000) ---
-            - { name: KC_HEALTH_ENABLED, value: "true" }
-            - { name: KC_METRICS_ENABLED, value: "true" }
           ports:
             - { name: http, containerPort: 8080 }
             - { name: mgmt, containerPort: 9000 }
-          startupProbe:              # give the implicit build + DB migration time
+          volumeMounts:
+            # Read-only root fs (below): Keycloak's ephemeral data dir and scratch
+            # are emptyDir. Persistent state lives in Postgres, not here.
+            - { name: data, mountPath: /opt/keycloak/data }
+            - { name: tmp, mountPath: /tmp }
+          startupProbe:              # give the DB migration time on first boot
             httpGet: { path: /health/started, port: 9000 }
             periodSeconds: 5
             failureThreshold: 60     # up to 5 min before declaring failure
@@ -157,7 +186,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
             seccompProfile: { type: RuntimeDefault }
-            readOnlyRootFilesystem: false   # Keycloak writes to /tmp and its data dir
+            readOnlyRootFilesystem: true    # data + scratch are mounted above
+      volumes:
+        - { name: data, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
 ---
 apiVersion: v1
 kind: Service
