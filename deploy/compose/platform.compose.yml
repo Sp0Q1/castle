@@ -37,6 +37,10 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
       PUBLIC_IP: ${PUBLIC_IP:?set PUBLIC_IP in .env for self-hosted DNS}
       DDNS_TSIG_SECRET: ${DDNS_TSIG_SECRET:?run 'castlectl dns-init' and put the value in .env}
+      # Nameserver name the zone advertises. Defaults to ns1.<apex>; override in
+      # .env with a name in the PARENT zone (e.g. ns1.example.com) to delegate
+      # glue-free — see docs/self-hosted-dns.md.
+      NS_NAME: ${NS_NAME:-ns1.${BASE_DOMAIN}}
     volumes:
       - ./dns/entrypoint.sh:/entrypoint.sh:ro,z
       - ./dns/named.conf.template:/templates/named.conf.template:ro,z
