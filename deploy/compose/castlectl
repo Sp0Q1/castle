@@ -66,14 +66,24 @@ mkdir -p "$RUN"
 
 pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
 
-# A codename is "allocated" once its host is in domains.txt (dehydrated's pool);
-# its cert is then produced/renewed by the next batch run. Deprovisioning keeps
-# it in domains.txt so the cert is retained for reuse.
-in_pool(){ grep -qxF "$(host_of "$1")" "$DOMAINS_TXT" 2>/dev/null; }
-allocated(){ for cn in $(pool_codenames); do in_pool "$cn" && echo "$cn"; done; }
+# SOURCE OF TRUTH = the runtime + the artifacts on disk, never a bookkeeping
+# file that could drift from them:
+#   - a codename HAS a cert if its cert file exists (the artifact);
+#   - it's RUNNING as a tenant/canary if its containers exist (ask the engine).
+# The only things genuinely stored are what cannot be re-derived: the per-codename
+# secrets and the certs themselves. domains.txt is just dehydrated's INPUT list
+# (what to issue), not a claim about what exists.
+has_cert(){ [[ -f "$CERTS/$(host_of "$1")/fullchain.pem" ]]; }
+container_exists(){ $ENGINE ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; }
+kind_of(){ # tenant | canary | "" — derived from the engine, not a local file
+  container_exists "castle-$1" && { echo tenant; return; }
+  container_exists "oauth2-proxy-$1" && { echo canary; return; }
+  echo ""
+}
+# next_codename must skip a name that already owns a cert OR is queued for one.
+taken(){ has_cert "$1" || grep -qxF "$(host_of "$1")" "$DOMAINS_TXT" 2>/dev/null; }
+allocated(){ for cn in $(pool_codenames); do taken "$cn" && echo "$cn"; done; }
 add_domain(){ mkdir -p "$RUN"; touch "$DOMAINS_TXT"; grep -qxF "$1" "$DOMAINS_TXT" || echo "$1" >> "$DOMAINS_TXT"; }
-kind_of(){ # canary | tenant | ""
-  [[ -f "$RUN/$1.kind" ]] && cat "$RUN/$1.kind" || echo ""; }
 
 next_codename(){
   local free; free="$(comm -23 <(pool_codenames | sort) <(allocated | sort))"
@@ -160,7 +170,6 @@ provision_canary(){ # <codename>
   KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" \
     CLIENT_SECRET="$(secret_for "$cn")" "$REALM_SH" create "$cn" >/dev/null 2>&1 || die "realm create failed"
   render_instance "$cn" "$TPL/canary.compose.yml"
-  echo canary > "$RUN/$cn.kind"
   write_site "$cn"
   compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
   echo "  ok (canary)"
@@ -198,8 +207,10 @@ issue_certs(){ # [N]
 # Idempotent — safe to re-run. Platform (Keycloak) must be up.
 provision_pool(){
   local done_any=0
-  for cn in $(allocated); do
-    [[ -f "$RUN/$cn.compose.yml" ]] && continue
+  # Every codename that has a cert but isn't running yet -> stand up a canary.
+  for cn in $(pool_codenames); do
+    has_cert "$cn" || continue
+    [[ -n "$(kind_of "$cn")" ]] && continue      # already running (asked the engine)
     provision_canary "$cn"; done_any=1
   done
   [[ "$done_any" == 1 ]] && reload_caddy
@@ -219,7 +230,6 @@ promote(){ # <codename>
   echo "promoting canary '$cn' -> real tenant (cert + subdomain + realm unchanged)"
   compose_instance "$cn" down >/dev/null 2>&1
   render_instance "$cn" "$TPL/tenant.compose.yml"
-  echo tenant > "$RUN/$cn.kind"
   compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
   echo "  ok (tenant) — now add the client's users to realm $(realm_of "$cn")"
 }
@@ -237,16 +247,18 @@ deprovision(){ # <codename>
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
-  rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,kind,client,cookie,jwt,db}
+  rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db}
   reload_caddy
   echo "  removed (cert left in place for reuse)"
 }
 
 list(){
-  printf '%-16s %-8s %s\n' CODENAME STATE URL
-  for cn in $(allocated); do
-    local state; state="$(kind_of "$cn")"; [[ -z "$state" ]] && state="cert-only"
-    printf '%-16s %-8s %s\n' "$cn" "$state" "https://$(host_of "$cn")"
+  printf '%-16s %-9s %s\n' CODENAME STATE URL
+  # Reflect reality: a codename appears if it's running (engine) or has a cert.
+  for cn in $(pool_codenames); do
+    local state; state="$(kind_of "$cn")"
+    if [[ -z "$state" ]]; then has_cert "$cn" && state="cert-only" || continue; fi
+    printf '%-16s %-9s %s\n' "$cn" "$state" "https://$(host_of "$cn")"
   done
 }
 
