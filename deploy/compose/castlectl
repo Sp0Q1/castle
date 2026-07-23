@@ -63,6 +63,19 @@ DOMAINS_TXT="$RUN/domains.txt"                # dehydrated's domains.txt = the a
 
 EXTERNAL_PORT="${EXTERNAL_PORT:-}"   # port in browser-facing URLs (blank = 443)
 
+# --- self-hosted authoritative DNS (Option 3) -----------------------------
+# When SELF_HOSTED_DNS is set, castle runs its own nameserver for $BASE_DOMAIN
+# (the `dns` service in platform.compose.yml). castlectl then publishes each
+# provisioned codename's A record and drives DNS-01 through it, both via RFC 2136
+# dynamic updates (nsupdate + a TSIG key). Unset -> castlectl never touches DNS.
+SELF_HOSTED_DNS="${SELF_HOSTED_DNS:-}"
+PUBLIC_IP="${PUBLIC_IP:-}"                       # VPS public IP for A records
+DNS_SERVER="${DNS_SERVER:-127.0.0.1}"            # where nsupdate sends (this box)
+DNS_PORT="${DNS_PORT:-53}"
+TSIG_NAME="${TSIG_NAME:-castle-ddns}"
+TSIG_ALGO="${TSIG_ALGO:-hmac-sha256}"
+TSIG_KEYFILE="${TSIG_KEYFILE:-$RUN/ddns.key}"    # nsupdate key, derived from .env
+
 die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
 # Bare host — for certs, DNS and Caddy vhost names (no port; a cert is for a
@@ -103,6 +116,41 @@ next_codename(){
   echo "$free" | shuf -n 1
 }
 
+# --- self-hosted DNS (Option 3) -------------------------------------------
+# The nsupdate key file is derived from DDNS_TSIG_SECRET in .env — the SAME
+# secret the `dns` service loads — so both sides share one key. Written 0600 and
+# never committed (it lives under .instances/, which is git-ignored).
+ensure_tsig_keyfile(){
+  [[ -n "${DDNS_TSIG_SECRET:-}" ]] || die "SELF_HOSTED_DNS set but DDNS_TSIG_SECRET missing in .env (run: castlectl dns-init)"
+  [[ -f "$TSIG_KEYFILE" ]] && return 0
+  ( umask 077
+    printf 'key "%s" {\n    algorithm %s;\n    secret "%s";\n};\n' \
+      "$TSIG_NAME" "$TSIG_ALGO" "$DDNS_TSIG_SECRET" > "$TSIG_KEYFILE" )
+}
+# Send RFC 2136 update commands (on stdin) to our authoritative server.
+dns_nsupdate(){
+  nsupdate -k "$TSIG_KEYFILE" <<EOF
+server $DNS_SERVER $DNS_PORT
+zone $BASE_DOMAIN.
+$(cat)
+send
+EOF
+}
+dns_set_a(){ # <codename> — point the codename at this box (idempotent)
+  [[ -n "$SELF_HOSTED_DNS" ]] || return 0
+  need nsupdate; ensure_tsig_keyfile
+  [[ -n "$PUBLIC_IP" ]] || die "SELF_HOSTED_DNS set but PUBLIC_IP missing in .env"
+  local host; host="$(host_of "$1")"
+  printf 'update delete %s. A\nupdate add %s. 300 A %s\n' "$host" "$host" "$PUBLIC_IP" \
+    | dns_nsupdate || die "nsupdate A for $host failed"
+}
+dns_del_a(){ # <codename> — remove the A record (goes dark)
+  [[ -n "$SELF_HOSTED_DNS" ]] || return 0
+  need nsupdate; ensure_tsig_keyfile
+  local host; host="$(host_of "$1")"
+  printf 'update delete %s. A\n' "$host" | dns_nsupdate || true
+}
+
 # --- certificates ---------------------------------------------------------
 # One batch over the WHOLE pool (domains.txt), not per-host: dehydrated issues
 # the missing certs and renews the near-expiry ones together, which is exactly
@@ -117,11 +165,18 @@ sync_certs(){
     return
   fi
   need "$DEHYDRATED"
+  # With self-hosted DNS, dehydrated's DNS-01 hook (dns-hook.sh) talks to our own
+  # nameserver over nsupdate; export the key + server it needs.
+  local -a hook_env=()
+  if [[ -n "$SELF_HOSTED_DNS" ]]; then
+    ensure_tsig_keyfile
+    hook_env=(DNS_SERVER="$DNS_SERVER" DNS_PORT="$DNS_PORT" TSIG_KEYFILE="$TSIG_KEYFILE")
+  fi
   # dehydrated reads its DOMAINS_TXT + CERTDIR from the config file (see
   # dehydrated/config.example); castlectl passes the same DOMAINS_TXT via env so
   # the config can point at it. -c = cron mode: issue missing + renew due, all
   # in one run.
-  DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" \
+  DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" "${hook_env[@]}" \
     "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c ${DEHYDRATED_ARGS:-} \
     || die "dehydrated failed"
   while read -r host; do
@@ -186,6 +241,7 @@ provision_canary(){ # <codename>
   render_instance "$cn" "$TPL/canary.compose.yml"
   write_site "$cn"
   compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
+  dns_set_a "$cn"     # publish the A record (no-op unless SELF_HOSTED_DNS)
   echo "  ok (canary)"
 }
 
@@ -206,8 +262,18 @@ ensure_secret(){ # <codename> <name> <bytes> [hex]
 issue_certs(){ # [N]
   need openssl
   local n="${1:-10}" cn picked=()
-  echo "adding IdP + $n codenames to the pool, then one batch issuance"
-  add_domain "$KC_HOST"
+  # The self-hosted nameserver is authoritative for $BASE_DOMAIN only, so it
+  # can answer DNS-01 for the codename pool but not for an IdP host on another
+  # apex. In that case issue the IdP cert separately (Caddy HTTP-01 on the sso
+  # vhost, or add its apex as a second self-hosted zone) — see docs/self-hosted-dns.md.
+  if [[ -n "$SELF_HOSTED_DNS" && "$KC_HOST" != *".$BASE_DOMAIN" ]]; then
+    echo "note: self-hosted DNS covers *.$BASE_DOMAIN; issuing pool certs only." >&2
+    echo "      obtain the IdP cert for $KC_HOST separately (see docs)." >&2
+    echo "adding $n codenames to the pool, then one batch issuance"
+  else
+    echo "adding IdP + $n codenames to the pool, then one batch issuance"
+    add_domain "$KC_HOST"
+  fi
   for _ in $(seq 1 "$n"); do
     cn="$(next_codename)"; picked+=("$cn")   # next_codename skips names already in the pool
     add_domain "$(host_of "$cn")"
@@ -260,6 +326,7 @@ deprovision(){ # <codename>
   local cn="${1:?deprovision needs a <codename>}"
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
+  dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
   KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
   rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db}
   reload_caddy
@@ -279,6 +346,39 @@ list(){
 # allocate = issue one cert + provision it as a canary (platform must be up).
 allocate(){ local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"; sync_certs; provision_canary "$cn"; reload_caddy; }
 
+# --- self-hosted DNS commands ---------------------------------------------
+# Generate the shared TSIG secret. Print it for .env (the `dns` service and
+# castlectl both read DDNS_TSIG_SECRET from there — one secret, two consumers).
+dns_init(){
+  need openssl
+  local secret; secret="$(openssl rand -base64 32)"
+  cat <<EOF
+Generated a DDNS TSIG secret. Add it to .env (used by the dns service AND castlectl):
+
+  SELF_HOSTED_DNS=1
+  PUBLIC_IP=<this VPS's public IP>
+  DDNS_TSIG_SECRET=$secret
+
+Then delegate $BASE_DOMAIN to this box (NS + glue) at your registrar, open :53,
+and start the platform with the self-dns profile:
+
+  $COMPOSE -f platform.compose.yml --profile self-dns up -d
+
+Full walkthrough: docs/self-hosted-dns.md
+EOF
+}
+# Reconcile the zone with reality: A record for every running codename, nothing
+# for the rest. The runtime is the source of truth (same principle as `list`).
+dns_sync(){
+  [[ -n "$SELF_HOSTED_DNS" ]] || die "SELF_HOSTED_DNS is not set in .env"
+  need nsupdate; ensure_tsig_keyfile
+  local cn n=0
+  for cn in $(pool_codenames); do
+    if [[ -n "$(kind_of "$cn")" ]]; then dns_set_a "$cn"; n=$((n+1)); else dns_del_a "$cn"; fi
+  done
+  echo "dns synced: $n running codename(s) -> $PUBLIC_IP; dark codenames withdrawn"
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   issue-certs)     issue_certs "${1:-10}" ;;
@@ -289,5 +389,7 @@ case "$cmd" in
   demote)          demote "${1:-}" ;;
   deprovision)     deprovision "${1:-}" ;;
   list)            list ;;
-  *) echo "usage: castlectl {issue-certs [N]|provision-pool|renew-pool|allocate|promote <cn>|demote <cn>|deprovision <cn>|list}"; exit 1 ;;
+  dns-init)        dns_init ;;
+  dns-sync)        dns_sync ;;
+  *) echo "usage: castlectl {issue-certs [N]|provision-pool|renew-pool|allocate|promote <cn>|demote <cn>|deprovision <cn>|list|dns-init|dns-sync}"; exit 1 ;;
 esac
