@@ -25,7 +25,7 @@ services:
     command:
       - --provider=oidc
       - --client-id=castle
-      - --redirect-url=https://__HOST__/oauth2/callback
+      - --redirect-url=https://__HOSTPORT__/oauth2/callback
       # Nothing behind auth: a canary has no app. static://200 satisfies
       # oauth2-proxy's upstream requirement without a backend container.
       - --upstream=static://200

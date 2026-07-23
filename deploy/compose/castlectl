@@ -44,6 +44,11 @@ CERTS="$HERE/caddy/certs"
 RUN="$HERE/.instances"                        # per-codename generated compose files
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN in .env}"
 KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
+# Where castlectl reaches Keycloak's admin API FROM THIS HOST. Same as the
+# browser-facing URL in prod; differs only when the public port is a tunnel that
+# doesn't exist on the box (e.g. lab: browser :8443 -> box :443), where this is
+# the bare :443 host.
+KC_ADMIN_URL="${KC_ADMIN_URL:-$KC_PUBLIC_URL}"
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 CASTLE_IMAGE="${CASTLE_IMAGE:-ghcr.io/sp0q1/castle:latest}"
 ENGINE="${ENGINE:-podman}"
@@ -56,9 +61,16 @@ DEHYDRATED_CONFIG="${DEHYDRATED_CONFIG:-$HERE/dehydrated/config}"
 DEHYDRATED_CERTDIR="${DEHYDRATED_CERTDIR:-$CERTS/_dehydrated}"
 DOMAINS_TXT="$RUN/domains.txt"                # dehydrated's domains.txt = the allocated pool
 
+EXTERNAL_PORT="${EXTERNAL_PORT:-}"   # port in browser-facing URLs (blank = 443)
+
 die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+# Bare host — for certs, DNS and Caddy vhost names (no port; a cert is for a
+# host, not a host:port).
 host_of(){ echo "$1.$BASE_DOMAIN"; }
+# Host with the browser-facing port — for OIDC redirect URIs and any URL a
+# browser follows. Equal to host_of when EXTERNAL_PORT is unset (prod, 443).
+hostport_of(){ echo "$1.$BASE_DOMAIN${EXTERNAL_PORT:+:$EXTERNAL_PORT}"; }
 realm_of(){ echo "${KC_REALM_PREFIX}$1"; }
 rand(){ openssl rand -base64 "${1:-32}" | tr -d '\n'; }
 proj_of(){ echo "castle-$1"; }
@@ -143,8 +155,10 @@ reload_caddy(){ $COMPOSE -f platform.compose.yml exec -T caddy caddy reload --co
 # breaks sed and no secret lands on disk in a compose file.
 render_instance(){ # <codename> <template>
   local cn="$1" tpl="$2"
-  local realm; realm="$(realm_of "$cn")"; local host; host="$(host_of "$cn")"
+  local realm host hostport
+  realm="$(realm_of "$cn")"; host="$(host_of "$cn")"; hostport="$(hostport_of "$cn")"
   sed -e "s/__CODENAME__/$cn/g" -e "s/__REALM__/$realm/g" -e "s#__HOST__#$host#g" \
+      -e "s#__HOSTPORT__#$hostport#g" \
       -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${CASTLE_IMAGE//\//\\/}#g" \
       "$tpl" > "$RUN/$cn.compose.yml"
 }
@@ -167,7 +181,7 @@ provision_canary(){ # <codename>
   [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
   echo "canary '$cn' -> https://$(host_of "$cn")"
   # A canary realm: created empty (keycloak-realm.sh makes users:[]), events on.
-  KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" \
+  KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" EXTERNAL_PORT="$EXTERNAL_PORT" \
     CLIENT_SECRET="$(secret_for "$cn")" "$REALM_SH" create "$cn" >/dev/null 2>&1 || die "realm create failed"
   render_instance "$cn" "$TPL/canary.compose.yml"
   write_site "$cn"
@@ -246,7 +260,7 @@ deprovision(){ # <codename>
   local cn="${1:?deprovision needs a <codename>}"
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
-  KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
+  KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
   rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db}
   reload_caddy
   echo "  removed (cert left in place for reuse)"
