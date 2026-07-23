@@ -1,0 +1,39 @@
+// castle self-hosted authoritative DNS (Option 3): this box is the primary
+// nameserver for $BASE_DOMAIN. Rendered from the environment by entrypoint.sh.
+//
+// Authoritative-only, on purpose:
+//   * recursion no        — never a resolver, so this can't be abused as an open
+//                           resolver or a DNS amplification reflector.
+//   * allow-transfer none — the zone (i.e. the whole codename pool) is not
+//                           handed to anyone via AXFR.
+//   * rate-limit          — RRL caps identical answers so a spoofed-source flood
+//                           can't turn this into a reflection cannon.
+//   * dynamic updates are gated by a TSIG key; only castlectl / the ACME hook,
+//                           which hold the key, may write records.
+options {
+    directory "/var/lib/bind";
+    recursion no;
+    allow-query { any; };
+    allow-transfer { none; };
+    minimal-responses yes;
+    listen-on { any; };
+    listen-on-v6 { any; };
+    rate-limit { responses-per-second 15; slip 2; };
+    version none;
+    dnssec-validation no;   // authoritative server, not a validating resolver
+};
+
+key "__TSIG_NAME__" {
+    algorithm hmac-sha256;
+    secret "__TSIG_SECRET__";
+};
+
+zone "__BASE_DOMAIN__" {
+    type primary;
+    file "db.__BASE_DOMAIN__";
+    // Only the holder of the TSIG key may add/remove records (A records for
+    // provisioned codenames; transient _acme-challenge TXT during issuance).
+    allow-update { key "__TSIG_NAME__"; };
+    allow-transfer { none; };
+    notify no;
+};

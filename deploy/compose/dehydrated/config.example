@@ -18,7 +18,14 @@ CERTDIR="${CERTDIR:-/opt/castle/deploy/compose/caddy/certs/_dehydrated}"
 # --- challenge: pick ONE --------------------------------------------------
 # DNS-01 (recommended for the bulk pre-issue): no port 80 or running web server
 # needed, so it works BEFORE the platform is up, and issues without exposing an
-# HTTP path. Provide a hook for your DNS provider (TransIP has an API).
+# HTTP path.
+#
+# dns-hook.sh publishes the _acme-challenge TXT via nsupdate (RFC 2136 + TSIG)
+# to castle's OWN authoritative nameserver — no DNS-provider API key. castlectl
+# exports what the hook needs (DNS_SERVER, DNS_PORT, TSIG_KEYFILE) when it runs
+# dehydrated, so you don't set them here. Requires SELF_HOSTED_DNS in .env and
+# the `dns` service up; see docs/self-hosted-dns.md. Adjust HOOK to your install
+# path if it isn't /opt/castle.
 CHALLENGETYPE="dns-01"
 HOOK="/opt/castle/deploy/compose/dehydrated/dns-hook.sh"
 

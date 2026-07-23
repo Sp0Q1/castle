@@ -1,0 +1,21 @@
+; Initial zone for $BASE_DOMAIN — seeded once, then maintained dynamically.
+; After first boot BIND owns this file and its journal (.jnl); castlectl and the
+; ACME hook add/remove records over RFC 2136, so DO NOT hand-edit it while the
+; server is running. It is seeded only if absent, so a restart never wipes the
+; live pool.
+;
+; What lives here at rest: just SOA + NS + the nameserver's own A (glue). No
+; codename has a record until it is provisioned, and _acme-challenge TXT records
+; exist only for the seconds an issuance is in flight — so a dark codename leaves
+; no standing DNS trace.
+$TTL 300
+@       IN  SOA __NS_NAME__. hostmaster.__BASE_DOMAIN__. (
+                1          ; serial (BIND maintains it from here on)
+                7200       ; refresh
+                3600       ; retry
+                1209600    ; expire
+                300 )      ; negative-cache TTL
+@       IN  NS  __NS_NAME__.
+; Glue: the nameserver's own address. __NS_NAME__ defaults to ns1.__BASE_DOMAIN__,
+; so this A is the in-zone glue the parent delegation points at.
+ns1     IN  A   __PUBLIC_IP__
