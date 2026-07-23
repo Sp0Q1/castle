@@ -160,6 +160,43 @@ fn bearer(token: &str) -> (&'static str, String) {
 
 #[tokio::test]
 #[serial]
+async fn creating_manager_appears_in_the_member_list() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (h, v) = bearer(&f.manager_token);
+
+        let created = request
+            .post("/api/projects")
+            .add_header(h, &v)
+            .json(&serde_json::json!({ "name": "Owned project" }))
+            .await;
+        assert_eq!(created.status_code(), 200);
+        let project_id = created.json::<serde_json::Value>()["id"].as_i64().unwrap();
+
+        // The manager who created it is listed as a member (role "manager"),
+        // so ownership is visible alongside onboarded staff/clients.
+        let members = request
+            .get(&format!("/api/projects/{project_id}/members"))
+            .add_header(h, &v)
+            .await;
+        let body: serde_json::Value = members.json();
+        let owner = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["user"]["email"] == "manager@test.com");
+        assert!(
+            owner.is_some(),
+            "creating manager missing from members: {body}"
+        );
+        assert_eq!(owner.unwrap()["role"], "manager");
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
 async fn clients_cannot_see_draft_findings() {
     fresh_db();
     request::<App, _, _>(|request, ctx| async move {
