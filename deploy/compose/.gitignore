@@ -5,3 +5,5 @@ caddy/certs/*
 caddy/sites/*.caddy
 !caddy/sites/sso.caddy
 !caddy/sites/.gitignore
+dehydrated/config
+dehydrated/accounts/

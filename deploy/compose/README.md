@@ -44,12 +44,21 @@ bulk, and never learns which codenames became real or when.
 ## The certificate strategy (no wildcards)
 
 Certs for the whole codename pool are issued **once, in one bulk batch**
-(`castlectl issue-pool`), so CT shows them appearing together — no per-onboarding
-timeline. Caddy runs with `auto_https off` and serves those static certs; it
-never contacts the CA on its own. Renewal is also **batched** (renew the whole
-pool together, well before the 90-day expiry) to keep CT showing synchronized
-events, never a per-instance trickle. Individual certs (not a wildcard) mean one
-leaked key never exposes the whole swarm.
+(`castlectl issue-certs N`), so CT shows them appearing together — no
+per-onboarding timeline. Caddy runs with `auto_https off` and serves those
+static certs; it never contacts the CA on its own. Renewal is also **batched**
+(`castlectl renew-pool` — the whole pool together) to keep CT showing
+synchronized events, never a per-instance trickle. Individual certs (not a
+wildcard) mean one leaked key never exposes the whole swarm.
+
+Issuance is done with **dehydrated** — a pure-bash ACME client, so no extra
+binary beyond the `curl`/`openssl` castlectl already uses. Its model is a natural
+fit: `castlectl` maintains a `domains.txt` (the pool) and a single `dehydrated -c`
+run issues what's missing and renews what's due, all together. Your dehydrated
+config owns the challenge (DNS-01 recommended for the pre-issue, since it needs
+no port 80 or running server; HTTP-01 also works) and where certs land;
+`castlectl` copies them into Caddy's cert dir. See `dehydrated/config.example`.
+The lab path (`KC_INSECURE=1`) self-signs instead of touching a CA.
 
 Let's Encrypt caps 50 certs/registered-domain/week, which is why the pool is
 sized ≤ 50 (10 is plenty for a pilot).
@@ -83,10 +92,12 @@ castlectl                 provisioner: issue-pool · allocate · promote · depr
 ## Usage
 
 ```bash
-cp .env.example .env && $EDITOR .env        # domain, Keycloak admin, etc.
+cp .env.example .env && $EDITOR .env                 # domain, Keycloak admin, etc.
+cp dehydrated/config.example dehydrated/config && $EDITOR dehydrated/config
+./castlectl issue-certs 10                            # one bulk cert batch for the pool
 docker compose -f platform.compose.yml up -d
-./castlectl issue-pool 10                    # bulk-issue certs, stand up 10 canaries
+./castlectl provision-pool                            # stand up the 10 canaries
 ./castlectl list
-./castlectl promote citadel                  # turn a canary into a real tenant
-./castlectl deprovision citadel              # back to a canary (cert kept)
+./castlectl promote citadel                          # turn a canary into a real tenant
+./castlectl deprovision citadel                      # back to a canary (cert kept)
 ```

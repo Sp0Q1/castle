@@ -1,0 +1,30 @@
+# dehydrated config for castle's certificate pool.
+#
+# Copy to `config` (git-ignored) and adjust. castlectl invokes:
+#   dehydrated -f deploy/compose/dehydrated/config -c
+# over the domains.txt it maintains (the codename pool), and copies the issued
+# certs into caddy/certs/. `-c` (cron mode) issues what's missing and renews
+# what's due — the whole pool in one run, which is the "one CA batch, one CT
+# event, synchronized renewal" property castle wants.
+
+CA="letsencrypt"                 # production. Use "letsencrypt-test" while testing.
+CONTACT_EMAIL="ops@example.com"  # your ACME account email
+
+# castlectl passes DOMAINS_TXT and CERTDIR in the environment; the ${VAR:-...}
+# form keeps those (so this file works both under castlectl and standalone).
+DOMAINS_TXT="${DOMAINS_TXT:-/opt/castle/deploy/compose/.instances/domains.txt}"
+CERTDIR="${CERTDIR:-/opt/castle/deploy/compose/caddy/certs/_dehydrated}"
+
+# --- challenge: pick ONE --------------------------------------------------
+# DNS-01 (recommended for the bulk pre-issue): no port 80 or running web server
+# needed, so it works BEFORE the platform is up, and issues without exposing an
+# HTTP path. Provide a hook for your DNS provider (TransIP has an API).
+CHALLENGETYPE="dns-01"
+HOOK="/opt/castle/deploy/compose/dehydrated/dns-hook.sh"
+
+# HTTP-01 alternative: serve the challenge webroot on :80 for every codename
+# host. With Caddy's auto_https off you'd add a :80 vhost serving WELLKNOWN — but
+# the first batch is issued before Caddy is up, so you need a temporary web
+# server for it. DNS-01 avoids that entirely.
+# CHALLENGETYPE="http-01"
+# WELLKNOWN="/var/www/acme-challenge"
