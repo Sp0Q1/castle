@@ -68,6 +68,19 @@ pub async fn create(
     .insert(&ctx.db)
     .await?;
 
+    // Record the creating manager as a member of their own project, so they show
+    // up in the member list alongside the staff/clients they onboard. This does
+    // not grant access they didn't already have — a manager can reach every
+    // project via their global role — it only makes ownership visible.
+    project_members::ActiveModel {
+        project_id: Set(project.id),
+        user_id: Set(user.id),
+        role: Set("manager".to_string()),
+        ..Default::default()
+    }
+    .insert(&ctx.db)
+    .await?;
+
     format::json(ProjectResponse::new(&project))
 }
 
