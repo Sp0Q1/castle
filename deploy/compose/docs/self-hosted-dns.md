@@ -86,15 +86,21 @@ Then the normal flow works with no provider API key:
 - Updates are authenticated with the TSIG key; an update signed with the wrong key
   is refused, so only castlectl and the ACME hook can write records.
 
-## The IdP host is a separate apex
+## The IdP host is a separate apex — and takes care of itself
 
 `KC_HOST` (e.g. `sso.example.com`) is on a different apex than `$BASE_DOMAIN`, so
-this nameserver isn't authoritative for it and `issue-certs` skips it. The IdP is
-always-on and not a decoy, so give it a cert one of two ways:
+this nameserver isn't authoritative for it and `issue-certs` skips it. It needs
+no manual cert step: the IdP is always-on and not a decoy, so **Caddy manages the
+`sso` vhost's cert itself via ACME** (HTTP-01 / TLS-ALPN-01 over its permanent
+listeners) and renews it automatically. Just point `KC_HOST`'s A record at the
+box, set `ACME_EMAIL`, and keep `:80` open for the challenge.
 
-- **Caddy HTTP-01** for just the `sso` vhost (simplest — it's always listening), or
-- add the IdP apex as a **second self-hosted zone** (another NS delegation + a
-  `zone` block) if you'd rather keep everything on DNS-01.
+The pool stays pre-issued and CA-untouched by Caddy: every pool vhost pins an
+explicit cert, so `sso` is the only vhost Caddy ever issues for.
+
+A direct-IP hit or a connection with no/unknown SNI is answered with a neutral
+internal-CA cert (`sink.castle.invalid`), never a pool or IdP hostname's cert —
+so scanning the address leaks nothing about the pool.
 
 ## Caveats worth remembering
 

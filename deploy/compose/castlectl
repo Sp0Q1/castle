@@ -263,12 +263,11 @@ issue_certs(){ # [N]
   need openssl
   local n="${1:-10}" cn picked=()
   # The self-hosted nameserver is authoritative for $BASE_DOMAIN only, so it
-  # can answer DNS-01 for the codename pool but not for an IdP host on another
-  # apex. In that case issue the IdP cert separately (Caddy HTTP-01 on the sso
-  # vhost, or add its apex as a second self-hosted zone) — see docs/self-hosted-dns.md.
+  # answers DNS-01 for the codename pool but not for an IdP host on another apex.
+  # That's fine: Caddy auto-manages the IdP (sso) cert itself via ACME — nothing
+  # to issue here. See docs/self-hosted-dns.md.
   if [[ -n "$SELF_HOSTED_DNS" && "$KC_HOST" != *".$BASE_DOMAIN" ]]; then
-    echo "note: self-hosted DNS covers *.$BASE_DOMAIN; issuing pool certs only." >&2
-    echo "      obtain the IdP cert for $KC_HOST separately (see docs)." >&2
+    echo "note: pool certs only; the IdP cert for $KC_HOST is auto-managed by Caddy." >&2
     echo "adding $n codenames to the pool, then one batch issuance"
   else
     echo "adding IdP + $n codenames to the pool, then one batch issuance"

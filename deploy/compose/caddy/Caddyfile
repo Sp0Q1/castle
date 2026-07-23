@@ -1,11 +1,19 @@
 {
-	# NEVER issue certificates automatically. The whole codename pool is
-	# pre-issued in one bulk batch (castlectl issue-pool) so Certificate
-	# Transparency shows them appearing together — no per-onboarding timeline,
-	# and promoting a canary to a real tenant contacts no CA at all. Leaving
-	# auto_https on would defeat that: Caddy would issue on demand and stamp a
-	# fresh CT entry the moment a new subdomain was hit.
-	auto_https off
+	# We do NOT issue certificates for the codename pool: every pool vhost pins an
+	# explicit pre-issued cert (templates/site.caddy), so Caddy never contacts a CA
+	# for them and promoting a canary leaves no fresh CT entry. Automatic HTTPS is
+	# enabled ONLY so the always-on IdP vhost (sso) — which carries no explicit cert
+	# — can obtain and renew its own cert. On-demand TLS is off, so nothing else is
+	# ever issued; disable_redirects keeps Caddy off :80 except for the ACME
+	# HTTP-01 challenge itself.
+	auto_https disable_redirects
+	email {$ACME_EMAIL}
+
+	# No-SNI / unknown-SNI probes (someone scanning the raw IP on :443, or sending
+	# an SNI that matches no vhost) must NOT be handed a pool or IdP hostname's
+	# certificate — that would confirm the box and leak a codename. Point the
+	# default at a neutral internal-CA cert that names nothing real.
+	default_sni sink.castle.invalid
 
 	# No admin API surface exposed.
 	admin off
@@ -18,6 +26,15 @@
 	}
 }
 
-# Each codename (and sso) is a vhost dropped into sites/ by castlectl, each
-# pinning its own pre-issued cert.
+# Neutral catch-all. Anything that doesn't match a configured vhost — no SNI,
+# an unknown SNI, a direct-IP hit — terminates here with an internal self-signed
+# cert (naming nothing real) and a blank 404, so the box looks generic and leaks
+# no hostname from the pool.
+sink.castle.invalid {
+	tls internal
+	respond 404
+}
+
+# Each codename (and the IdP) is a vhost dropped into sites/ by castlectl: each
+# pool vhost pins its own pre-issued cert; the IdP (sso) manages its own via ACME.
 import sites/*.caddy
