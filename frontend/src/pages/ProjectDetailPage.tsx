@@ -56,7 +56,9 @@ export function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("staff");
+  // Default to the least-privileged role: a mis-onboard should grant read-only
+  // client access, not staff write/publish rights.
+  const [inviteRole, setInviteRole] = useState("client");
   const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [finding, setFinding] = useState<CreateFindingParams>(EMPTY_FINDING);
