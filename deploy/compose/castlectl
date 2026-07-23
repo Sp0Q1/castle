@@ -118,6 +118,7 @@ render_instance(){ # <codename> <template>
       "$tpl" > "$RUN/$cn.compose.yml"
 }
 
+
 # Run a compose command for a codename with its secrets exported, so compose
 # substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
 # (URL-safe in DATABASE_URL); JWT stays base64 (loco decodes it).
