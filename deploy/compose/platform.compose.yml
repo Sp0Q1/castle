@@ -67,6 +67,9 @@ services:
     environment:
       # The sso vhost substitutes {$KC_HOST}; Caddy reads it from here.
       KC_HOST: ${KC_HOST:?set KC_HOST in .env}
+      # The global Caddyfile sets `email {$ACME_EMAIL}` for the IdP cert's ACME
+      # account; without it the directive has no argument and Caddy won't parse.
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
       - ./caddy/sites:/etc/caddy/sites:ro,z
