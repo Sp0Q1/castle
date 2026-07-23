@@ -48,6 +48,13 @@ KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 CASTLE_IMAGE="${CASTLE_IMAGE:-ghcr.io/sp0q1/castle:latest}"
 ENGINE="${ENGINE:-podman}"
 COMPOSE="${COMPOSE:-$ENGINE compose}"
+# Cert issuance is dehydrated (pure-bash ACME, matches this script). castlectl
+# maintains DOMAINS_TXT (the pool) and collects results; your dehydrated config
+# owns the challenge (http-01 webroot / dns-01 hook) and CERTDIR.
+DEHYDRATED="${DEHYDRATED:-dehydrated}"
+DEHYDRATED_CONFIG="${DEHYDRATED_CONFIG:-$HERE/dehydrated/config}"
+DEHYDRATED_CERTDIR="${DEHYDRATED_CERTDIR:-$CERTS/_dehydrated}"
+DOMAINS_TXT="$RUN/domains.txt"                # dehydrated's domains.txt = the allocated pool
 
 die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
@@ -59,11 +66,12 @@ mkdir -p "$RUN"
 
 pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
 
-# A codename is "taken" once it has a cert (issued in the bulk batch), whether or
-# not it's been provisioned yet. The host's files are the source of truth.
-has_cert(){ [[ -f "$CERTS/$(host_of "$1")/fullchain.pem" ]]; }
-allocated(){ for cn in $(pool_codenames); do has_cert "$cn" && echo "$cn"; done; }
-provisioned(){ ls "$RUN" 2>/dev/null | sed -n 's/\.compose\.yml$//p' | sort; }
+# A codename is "allocated" once its host is in domains.txt (dehydrated's pool);
+# its cert is then produced/renewed by the next batch run. Deprovisioning keeps
+# it in domains.txt so the cert is retained for reuse.
+in_pool(){ grep -qxF "$(host_of "$1")" "$DOMAINS_TXT" 2>/dev/null; }
+allocated(){ for cn in $(pool_codenames); do in_pool "$cn" && echo "$cn"; done; }
+add_domain(){ mkdir -p "$RUN"; touch "$DOMAINS_TXT"; grep -qxF "$1" "$DOMAINS_TXT" || echo "$1" >> "$DOMAINS_TXT"; }
 kind_of(){ # canary | tenant | ""
   [[ -f "$RUN/$1.kind" ]] && cat "$RUN/$1.kind" || echo ""; }
 
@@ -74,18 +82,31 @@ next_codename(){
 }
 
 # --- certificates ---------------------------------------------------------
-# Bulk issuance is the ONE controlled CA interaction. Uses the standalone/webroot
-# ACME client of your choice; here we shell to `lego`. The point is that this is
-# the only place a cert is ever obtained, and it does the whole pool at once.
-issue_cert(){ # <host>
-  local host="$1"
-  [[ -n "${KC_INSECURE:-}" ]] && { mock_cert "$host"; return; }
-  need lego
-  lego --accept-tos --email "${ACME_EMAIL:?set ACME_EMAIL}" \
-       --http --http.webroot "$CERTS/_webroot" \
-       --domains "$host" --path "$CERTS/_lego" run || die "cert issuance failed for $host"
-  install -D "$CERTS/_lego/certificates/$host.crt" "$CERTS/$host/fullchain.pem"
-  install -D "$CERTS/_lego/certificates/$host.key" "$CERTS/$host/privkey.pem"
+# One batch over the WHOLE pool (domains.txt), not per-host: dehydrated issues
+# the missing certs and renews the near-expiry ones together, which is exactly
+# the "one CA event, one CT batch, synchronized renewal" property. This is the
+# only place a cert is ever obtained, and promoting a canary never re-enters it.
+# Your dehydrated config owns the challenge type + CERTDIR; castlectl only
+# supplies the domains and copies the results into Caddy's cert dir.
+sync_certs(){
+  touch "$DOMAINS_TXT"
+  if [[ -n "${KC_INSECURE:-}" ]]; then          # lab: self-signed, never touch a CA
+    while read -r host; do [[ -n "$host" ]] && mock_cert "$host"; done < "$DOMAINS_TXT"
+    return
+  fi
+  need "$DEHYDRATED"
+  # dehydrated reads its DOMAINS_TXT + CERTDIR from the config file (see
+  # dehydrated/config.example); castlectl passes the same DOMAINS_TXT via env so
+  # the config can point at it. -c = cron mode: issue missing + renew due, all
+  # in one run.
+  DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" \
+    "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c ${DEHYDRATED_ARGS:-} \
+    || die "dehydrated failed"
+  while read -r host; do
+    [[ -n "$host" ]] || continue
+    install -m600 -D "$DEHYDRATED_CERTDIR/$host/fullchain.pem" "$CERTS/$host/fullchain.pem"
+    install -m600 -D "$DEHYDRATED_CERTDIR/$host/privkey.pem"  "$CERTS/$host/privkey.pem"
+  done < "$DOMAINS_TXT"
 }
 
 # Lab-only self-signed stand-in so the whole flow is testable without a CA.
@@ -162,12 +183,13 @@ ensure_secret(){ # <codename> <name> <bytes> [hex]
 issue_certs(){ # [N]
   need openssl
   local n="${1:-10}" cn picked=()
-  echo "bulk-issuing certs: IdP + $n codenames (one CA batch)"
-  issue_cert "$KC_HOST"
+  echo "adding IdP + $n codenames to the pool, then one batch issuance"
+  add_domain "$KC_HOST"
   for _ in $(seq 1 "$n"); do
-    cn="$(next_codename)"; picked+=("$cn")   # next_codename now skips cert-owning names
-    issue_cert "$(host_of "$cn")"
+    cn="$(next_codename)"; picked+=("$cn")   # next_codename skips names already in the pool
+    add_domain "$(host_of "$cn")"
   done
+  sync_certs
   echo "issued for: ${picked[*]}"
   echo "next: bring up platform, then 'castlectl provision-pool'"
 }
@@ -185,9 +207,8 @@ provision_pool(){
 }
 
 renew_pool(){
-  echo "batch-renewing the whole pool's certs together"
-  issue_cert "$KC_HOST"
-  for cn in $(allocated); do issue_cert "$(host_of "$cn")"; done
+  echo "batch-renewing the whole pool's certs together (one dehydrated run)"
+  sync_certs      # dehydrated -c renews everything in domains.txt that's due
   reload_caddy
   echo "renewed."
 }
@@ -230,7 +251,7 @@ list(){
 }
 
 # allocate = issue one cert + provision it as a canary (platform must be up).
-allocate(){ local cn; cn="$(next_codename)"; issue_cert "$(host_of "$cn")"; provision_canary "$cn"; reload_caddy; }
+allocate(){ local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"; sync_certs; provision_canary "$cn"; reload_caddy; }
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
