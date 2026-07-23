@@ -76,6 +76,18 @@ TSIG_NAME="${TSIG_NAME:-castle-ddns}"
 TSIG_ALGO="${TSIG_ALGO:-hmac-sha256}"
 TSIG_KEYFILE="${TSIG_KEYFILE:-$RUN/ddns.key}"    # nsupdate key, derived from .env
 
+# --- backups ---------------------------------------------------------------
+# Logical, encrypted backups (complement to whole-box VPS snapshots): each
+# tenant's DB + uploads + secrets + certs, bundled and age-encrypted to a public
+# key, so the box can WRITE backups but can't read them back — decrypting needs
+# the identity you keep offline. Restore uses BACKUP_AGE_IDENTITY.
+BACKUP_DIR="${BACKUP_DIR:-$HERE/backups}"
+BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"   # age public key (age1…) — required to back up
+BACKUP_AGE_IDENTITY="${BACKUP_AGE_IDENTITY:-}"     # age identity file — required to restore
+# postgres:16-alpine is already pinned by the deployment, so reuse it as the
+# utility image for tar-ing volumes (busybox tar) — no extra image to pull.
+UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:16-alpine}"
+
 die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
 # Bare host — for certs, DNS and Caddy vhost names (no port; a cert is for a
@@ -378,6 +390,124 @@ dns_sync(){
   echo "dns synced: $n running codename(s) -> $PUBLIC_IP; dark codenames withdrawn"
 }
 
+# --- upgrade ---------------------------------------------------------------
+# Recreate running instances with the current images (CASTLE_IMAGE / templates),
+# keeping their data volumes. castle runs pending schema migrations on boot
+# (auto_migrate), so an app upgrade is: bump CASTLE_IMAGE in .env, then this.
+upgrade(){ # [<codename>]  (default: every running codename)
+  local one="${1:-}" targets=() cn
+  if [[ -n "$one" ]]; then
+    [[ -n "$(kind_of "$one")" ]] || die "'$one' is not running"
+    targets=("$one")
+  else
+    for cn in $(pool_codenames); do [[ -n "$(kind_of "$cn")" ]] && targets+=("$cn"); done
+  fi
+  [[ ${#targets[@]} -gt 0 ]] || { echo "nothing running to upgrade"; return 0; }
+  echo "upgrading ${#targets[@]} instance(s): ${targets[*]}"
+  for cn in "${targets[@]}"; do
+    local kind tpl; kind="$(kind_of "$cn")"
+    [[ "$kind" == tenant ]] && tpl="$TPL/tenant.compose.yml" || tpl="$TPL/canary.compose.yml"
+    render_instance "$cn" "$tpl"
+    compose_instance "$cn" pull >/dev/null 2>&1 || true
+    compose_instance "$cn" up -d >/dev/null 2>&1 || die "upgrade of $cn failed"
+    echo "  $cn ($kind) recreated with current image (data kept)"
+  done
+  reload_caddy
+  echo "done — migrations applied on boot (auto_migrate)."
+}
+
+# --- backup / restore ------------------------------------------------------
+# Logical, portable, encrypted backups. Complements VPS snapshots by being
+# per-tenant, off-box and pg-version-independent — and by bundling each tenant's
+# DB *with its secrets and cert*, so a restore can never orphan the data.
+platform_exec(){ $COMPOSE -f platform.compose.yml exec -T "$@"; }
+
+backup(){
+  [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted backup of secrets + client data"
+  need age; need "$ENGINE"; need tar
+  local ts work out cn
+  ts="$(date +%Y%m%d-%H%M%S)"
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  echo "backup: platform + tenants -> encrypted bundle"
+  # Platform: Keycloak realms/users, plus the re-derivable-only state (all
+  # per-codename secrets, the whole pre-issued cert pool, the dehydrated account,
+  # and .env). --clean makes the dump loadable over an existing DB on restore.
+  mkdir -p "$work/platform"
+  platform_exec keycloak-db pg_dump --clean --if-exists -U keycloak -d keycloak > "$work/platform/keycloak.sql" \
+    || die "keycloak pg_dump failed (is the platform up?)"
+  [[ -f .env ]] && cp -a .env "$work/platform/env"
+  [[ -d "$RUN"   ]] && cp -a "$RUN"   "$work/instances"
+  [[ -d "$CERTS" ]] && { mkdir -p "$work/certs"; cp -a "$CERTS/." "$work/certs/"; }
+  [[ -d "$HERE/dehydrated" ]] && cp -a "$HERE/dehydrated" "$work/dehydrated"
+  # Per tenant: logical DB dump (portable across pg versions) + uploads.
+  for cn in $(pool_codenames); do
+    [[ "$(kind_of "$cn")" == tenant ]] || continue
+    mkdir -p "$work/tenants/$cn"
+    $ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle > "$work/tenants/$cn/db.sql" \
+      || die "pg_dump for tenant $cn failed"
+    $ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" \
+      tar cf - -C /data . > "$work/tenants/$cn/uploads.tar" 2>/dev/null || true
+    echo "  tenant $cn: db + uploads"
+  done
+  mkdir -p "$BACKUP_DIR"
+  out="$BACKUP_DIR/castle-backup-$ts.tar.age"
+  ( cd "$work" && tar cf - . ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
+  echo "wrote $out ($(du -h "$out" | cut -f1)) — decrypt needs your offline age identity."
+}
+
+# Restore is idempotent and safe to re-run: it restores the files, then loads the
+# DBs into whichever stacks are currently up (stopping the app for each load so it
+# isn't mutating the DB mid-restore). On a fresh box: restore -> bring up platform
+# -> provision-pool -> restore again to load the tenant DBs.
+restore(){ # <backup-file> [--yes]
+  local file="${1:-}" yes="${2:-}"
+  [[ -n "$file" && -f "$file" ]] || die "usage: castlectl restore <backup-file> [--yes]"
+  [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
+  [[ "$yes" == "--yes" ]] || die "restore overwrites secrets/certs and loads DBs — re-run with --yes to confirm"
+  need age; need "$ENGINE"; need tar
+  local work cn; work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  echo "restore: decrypting $file"
+  age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
+
+  # 1) Files first, so any stack that comes up afterwards uses the right secrets.
+  [[ -d "$work/instances" ]] && { mkdir -p "$RUN"; cp -a "$work/instances/." "$RUN/"; echo "  restored per-codename secrets"; }
+  [[ -d "$work/certs" ]] && { mkdir -p "$CERTS"; cp -a "$work/certs/." "$CERTS/"; echo "  restored cert pool"; }
+  [[ -d "$work/dehydrated" ]] && { cp -a "$work/dehydrated/." "$HERE/dehydrated/"; echo "  restored dehydrated account"; }
+  if [[ -f "$work/platform/env" ]]; then
+    [[ -f .env ]] && echo "  .env already present — left as-is (backup copy at $work is discarded)" \
+                  || { cp -a "$work/platform/env" .env; echo "  restored .env"; }
+  fi
+
+  # 2) Keycloak realms/users — stop keycloak so the load isn't fighting it.
+  if [[ -f "$work/platform/keycloak.sql" ]] && platform_exec keycloak-db pg_isready -U keycloak >/dev/null 2>&1; then
+    $COMPOSE -f platform.compose.yml stop keycloak >/dev/null 2>&1 || true
+    if platform_exec keycloak-db psql -v ON_ERROR_STOP=0 -U keycloak -d keycloak < "$work/platform/keycloak.sql" >/dev/null 2>&1; then
+      echo "  loaded keycloak realms/users"; else echo "  ! keycloak load reported errors"; fi
+    $COMPOSE -f platform.compose.yml start keycloak >/dev/null 2>&1 || true
+  elif [[ -f "$work/platform/keycloak.sql" ]]; then
+    echo "  keycloak-db not up — bring the platform up, then re-run restore."
+  fi
+
+  # 3) Tenant DBs + uploads — stop each castle app for its DB load.
+  for cn in "$work"/tenants/*/; do
+    [[ -d "$cn" ]] || continue; cn="$(basename "$cn")"
+    if $ENGINE exec "postgres-$cn" pg_isready -U castle >/dev/null 2>&1; then
+      compose_instance "$cn" stop castle >/dev/null 2>&1 || true
+      $ENGINE exec -i "postgres-$cn" psql -U castle -d castle < "$work/tenants/$cn/db.sql" >/dev/null 2>&1 \
+        && echo "  tenant $cn: DB loaded" || echo "  ! tenant $cn: DB load errors"
+      if [[ -s "$work/tenants/$cn/uploads.tar" ]]; then
+        $ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" \
+          sh -c 'cd /data && tar xf -' < "$work/tenants/$cn/uploads.tar" 2>/dev/null \
+          && echo "  tenant $cn: uploads restored" || true
+      fi
+      compose_instance "$cn" start castle >/dev/null 2>&1 || true
+    else
+      echo "  tenant $cn not up — run 'castlectl provision-pool', then re-run restore."
+    fi
+  done
+  echo "restore pass complete."
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   issue-certs)     issue_certs "${1:-10}" ;;
@@ -390,5 +520,22 @@ case "$cmd" in
   list)            list ;;
   dns-init)        dns_init ;;
   dns-sync)        dns_sync ;;
-  *) echo "usage: castlectl {issue-certs [N]|provision-pool|renew-pool|allocate|promote <cn>|demote <cn>|deprovision <cn>|list|dns-init|dns-sync}"; exit 1 ;;
+  upgrade)         upgrade "${1:-}" ;;
+  backup)          backup ;;
+  restore)         restore "${1:-}" "${2:-}" ;;
+  *) cat >&2 <<'USAGE'
+usage: castlectl <command>
+  issue-certs [N]        bulk-issue certs for N codenames (one CA batch)
+  provision-pool         stand up a canary for every codename that has a cert
+  allocate               pick a free codename, issue its cert, canary it
+  promote|demote <cn>    canary <-> tenant (cert/subdomain/realm unchanged)
+  deprovision <cn>       tear an instance down (cert kept)
+  renew-pool             batch-renew the pool's certs
+  list                   show codenames and their state
+  upgrade [<cn>]         recreate running instance(s) with current images (keeps data)
+  backup                 write an age-encrypted bundle (DBs + secrets + certs)
+  restore <file> --yes   restore from a bundle
+  dns-init | dns-sync    self-hosted DNS: init the TSIG secret / reconcile A records
+USAGE
+     exit 1 ;;
 esac
