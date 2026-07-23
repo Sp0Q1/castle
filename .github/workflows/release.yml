@@ -52,6 +52,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ghcr (and OCI references generally) must be lowercase, but github.repository
+      # keeps the owner's original casing. metadata-action and build-push-action
+      # lowercase it themselves; cosign and sbom-action do not, so give every step
+      # one already-lowercased ref to use.
+      - name: Normalize image ref
+        id: image
+        run: echo "ref=${IMAGE,,}" >> "$GITHUB_OUTPUT"
+
       # Derives the tag set from the trigger: branch -> :main, tag -> :<version>
       # + :latest, plus an immutable :sha-<short> on every build so a deploy can
       # pin to an exact commit rather than a moving tag.
@@ -59,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.ref }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -95,14 +103,14 @@ jobs:
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        run: cosign sign --yes "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       # A human-readable SBOM as a build artifact too, so it can be diffed and
       # reviewed without pulling attestations out of the registry.
       - name: Generate SBOM artifact
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          image: ${{ steps.image.outputs.ref }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: castle-sbom.spdx.json
 
@@ -140,11 +148,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ghcr requires lowercase; see the note in the app job above.
+      - name: Normalize image ref
+        id: image
+        run: echo "ref=${IMAGE,,}-keycloak" >> "$GITHUB_OUTPUT"
+
       - name: Compute tags
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.IMAGE }}-keycloak
+          images: ${{ steps.image.outputs.ref }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -171,7 +184,7 @@ jobs:
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}-keycloak@${DIGEST}"
+        run: cosign sign --yes "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       - name: Report what was published
         run: |
