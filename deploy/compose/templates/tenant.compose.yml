@@ -1,0 +1,107 @@
+# A real tenant: the same oauth2-proxy front as a canary, but its upstream is
+# this tenant's own castle app, backed by its own Postgres, on an isolated
+# per-tenant network. castle + postgres are reachable ONLY by this tenant's
+# oauth2-proxy — never by the edge, the IdP, or another tenant.
+#
+# Promoting a canary to a tenant swaps canary.compose.yml -> this file for the
+# same codename: identical oauth2-proxy config except --upstream, plus the
+# castle+pg stack. Same subdomain, same pre-issued cert, same realm name.
+#
+# castlectl substitutes __CODENAME__, __REALM__, __HOST__, __IMAGE__ and secrets.
+
+networks:
+  edge:
+    name: castle_edge
+    external: true
+  kc:
+    name: castle_kc
+    external: true
+  # Private to this tenant. Not external — created per project, isolating
+  # castle+pg from everything else.
+  tenant:
+    name: castle_tenant___CODENAME__
+
+volumes:
+  castle_uploads: {}
+  castle_db: {}
+
+services:
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
+    container_name: oauth2-proxy-__CODENAME__
+    restart: unless-stopped
+    networks: [edge, kc, tenant]
+    depends_on: [castle]
+    command:
+      - --provider=oidc
+      - --client-id=castle
+      - --redirect-url=https://__HOST__/oauth2/callback
+      - --upstream=http://castle-__CODENAME__:5150
+      - --http-address=0.0.0.0:4180
+      - --email-domain=*
+      - --reverse-proxy=true
+      # Redirect straight to Keycloak instead of showing oauth2-proxy's own
+      # sign-in page — so an unauthenticated GET 302s to the realm, exactly
+      # like a real tenant. Without this it 403s an interstitial (a tell).
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-csrf-per-request=true
+      - --pass-user-headers=true
+      - --set-xauthrequest=true
+      # castle reads the auth mode unauthenticated so the SPA knows to hand off
+      # to the IdP; everything else requires a session.
+      - --skip-auth-route=^/api/auth/mode$
+      - --skip-oidc-discovery=true
+      - --oidc-issuer-url=__KC_PUBLIC__/realms/__REALM__
+      - --login-url=__KC_PUBLIC__/realms/__REALM__/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/certs
+      - --profile-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/userinfo
+    environment:
+      # Injected from the environment by castlectl (see canary template note).
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAP_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAP_COOKIE_SECRET}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  castle:
+    image: __IMAGE__
+    container_name: castle-__CODENAME__
+    restart: unless-stopped
+    # Only on the private tenant network — unreachable except via oauth2-proxy.
+    networks: [tenant]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CASTLE_AUTH_MODE: proxy
+      # CASTLE_DB_PW is hex (URL-safe); JWT_SECRET is base64 (loco decodes it).
+      DATABASE_URL: postgres://castle:${CASTLE_DB_PW}@postgres-__CODENAME__:5432/castle
+      JWT_SECRET: ${CASTLE_JWT}
+      HOST: https://__HOST__
+    volumes:
+      - castle_uploads:/app/uploads:z
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: postgres-__CODENAME__
+    restart: unless-stopped
+    networks: [tenant]
+    environment:
+      POSTGRES_DB: castle
+      POSTGRES_USER: castle
+      POSTGRES_PASSWORD: ${CASTLE_DB_PW}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - castle_db:/var/lib/postgresql/data:z
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "castle", "-d", "castle"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true

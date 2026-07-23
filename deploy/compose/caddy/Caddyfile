@@ -1,0 +1,23 @@
+{
+	# NEVER issue certificates automatically. The whole codename pool is
+	# pre-issued in one bulk batch (castlectl issue-pool) so Certificate
+	# Transparency shows them appearing together — no per-onboarding timeline,
+	# and promoting a canary to a real tenant contacts no CA at all. Leaving
+	# auto_https on would defeat that: Caddy would issue on demand and stamp a
+	# fresh CT entry the moment a new subdomain was hit.
+	auto_https off
+
+	# No admin API surface exposed.
+	admin off
+
+	# Access logs are the canary tripwire: any request to a canary subdomain is,
+	# by definition, an attacker (canaries have no real users).
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Each codename (and sso) is a vhost dropped into sites/ by castlectl, each
+# pinning its own pre-issued cert.
+import sites/*.caddy

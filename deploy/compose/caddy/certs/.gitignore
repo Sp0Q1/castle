@@ -1,0 +1,3 @@
+# Pre-issued certs live here at runtime; never commit private keys.
+*
+!.gitignore

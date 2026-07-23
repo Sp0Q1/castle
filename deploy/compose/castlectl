@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# castlectl (compose edition) — provision castle on a single VPS with Podman/
+# Docker Compose + Caddy. The non-Kubernetes counterpart of ../k8s/castlectl.sh;
+# same ideas (codename pool, per-tenant Keycloak realm, one shared client
+# secret, codename-only — the cluster/host never learns a client's real name).
+#
+#   castlectl issue-certs [N]       bulk-issue certs for the IdP + N codenames in
+#                                   ONE CA batch (the only CT event). No Keycloak
+#                                   needed — run this BEFORE bringing up platform.
+#   castlectl provision-pool        stand up a canary for every codename that has
+#                                   a cert but no instance (platform must be up)
+#   castlectl renew-pool            batch-renew the whole pool's certs together
+#   castlectl allocate              pick a free codename, issue its cert, canary it
+#   castlectl promote <codename>    turn a canary into a real tenant (no new cert)
+#   castlectl demote <codename>     turn a tenant back into a canary (cert kept)
+#   castlectl deprovision <codename>
+#   castlectl list
+#
+# Canonical bring-up:
+#   castlectl issue-certs 10
+#   docker compose -f platform.compose.yml up -d
+#   castlectl provision-pool
+#
+# THE CERT STRATEGY: certs for the whole pool are issued once, together, and
+# Caddy runs with auto_https off — so promoting a canary to a real tenant
+# contacts no CA and leaves no Certificate Transparency trace. An observer sees
+# the pool issued in bulk and never learns which codenames became real, or when.
+#
+# CODENAME-ONLY: no client name is ever taken or stored. You record which client
+# a codename belongs to in your own store, off this host.
+# ---------------------------------------------------------------------------
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+[[ -f .env ]] && set -a && . ./.env && set +a
+
+K8S="$HERE/../k8s"
+POOL="${POOL:-$K8S/codenames.txt}"           # shared with the k8s path
+REALM_SH="${REALM_SH:-$K8S/keycloak-realm.sh}"
+TPL="$HERE/templates"
+SITES="$HERE/caddy/sites"
+CERTS="$HERE/caddy/certs"
+RUN="$HERE/.instances"                        # per-codename generated compose files
+BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN in .env}"
+KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
+KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
+CASTLE_IMAGE="${CASTLE_IMAGE:-ghcr.io/sp0q1/castle:latest}"
+ENGINE="${ENGINE:-podman}"
+COMPOSE="${COMPOSE:-$ENGINE compose}"
+
+die(){ echo "castlectl: $*" >&2; exit 1; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+host_of(){ echo "$1.$BASE_DOMAIN"; }
+realm_of(){ echo "${KC_REALM_PREFIX}$1"; }
+rand(){ openssl rand -base64 "${1:-32}" | tr -d '\n'; }
+proj_of(){ echo "castle-$1"; }
+mkdir -p "$RUN"
+
+pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
+
+# A codename is "taken" once it has a cert (issued in the bulk batch), whether or
+# not it's been provisioned yet. The host's files are the source of truth.
+has_cert(){ [[ -f "$CERTS/$(host_of "$1")/fullchain.pem" ]]; }
+allocated(){ for cn in $(pool_codenames); do has_cert "$cn" && echo "$cn"; done; }
+provisioned(){ ls "$RUN" 2>/dev/null | sed -n 's/\.compose\.yml$//p' | sort; }
+kind_of(){ # canary | tenant | ""
+  [[ -f "$RUN/$1.kind" ]] && cat "$RUN/$1.kind" || echo ""; }
+
+next_codename(){
+  local free; free="$(comm -23 <(pool_codenames | sort) <(allocated | sort))"
+  [[ -n "$free" ]] || die "codename pool exhausted — add names to $(basename "$POOL")"
+  echo "$free" | shuf -n 1
+}
+
+# --- certificates ---------------------------------------------------------
+# Bulk issuance is the ONE controlled CA interaction. Uses the standalone/webroot
+# ACME client of your choice; here we shell to `lego`. The point is that this is
+# the only place a cert is ever obtained, and it does the whole pool at once.
+issue_cert(){ # <host>
+  local host="$1"
+  [[ -n "${KC_INSECURE:-}" ]] && { mock_cert "$host"; return; }
+  need lego
+  lego --accept-tos --email "${ACME_EMAIL:?set ACME_EMAIL}" \
+       --http --http.webroot "$CERTS/_webroot" \
+       --domains "$host" --path "$CERTS/_lego" run || die "cert issuance failed for $host"
+  install -D "$CERTS/_lego/certificates/$host.crt" "$CERTS/$host/fullchain.pem"
+  install -D "$CERTS/_lego/certificates/$host.key" "$CERTS/$host/privkey.pem"
+}
+
+# Lab-only self-signed stand-in so the whole flow is testable without a CA.
+mock_cert(){ # <host>
+  local host="$1"; local d="$CERTS/$host"; mkdir -p "$d"
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/privkey.pem" \
+    -out "$d/fullchain.pem" -days 90 -subj "/CN=$host" \
+    -addext "subjectAltName=DNS:$host" >/dev/null 2>&1
+}
+
+# --- Caddy vhosts ---------------------------------------------------------
+write_site(){ # <codename>
+  local cn="$1" host; host="$(host_of "$cn")"
+  sed -e "s/__HOST__/$host/g" -e "s/__CODENAME__/$cn/g" \
+    "$TPL/site.caddy" > "$SITES/$cn.caddy"
+}
+reload_caddy(){ $COMPOSE -f platform.compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
+  || $COMPOSE -f platform.compose.yml restart caddy >/dev/null 2>&1 || true; }
+
+# --- provision a canary / tenant -----------------------------------------
+# Only STRUCTURAL placeholders are sed'd in (codename/realm/host/image — all safe
+# chars). Secrets are NOT written into the rendered file; they are injected from
+# the environment at compose time (compose_instance), so base64 `/`/`+` never
+# breaks sed and no secret lands on disk in a compose file.
+render_instance(){ # <codename> <template>
+  local cn="$1" tpl="$2"
+  local realm; realm="$(realm_of "$cn")"; local host; host="$(host_of "$cn")"
+  sed -e "s/__CODENAME__/$cn/g" -e "s/__REALM__/$realm/g" -e "s#__HOST__#$host#g" \
+      -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${CASTLE_IMAGE//\//\\/}#g" \
+      "$tpl" > "$RUN/$cn.compose.yml"
+}
+
+# Run a compose command for a codename with its secrets exported, so compose
+# substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
+# (URL-safe in DATABASE_URL); JWT stays base64 (loco decodes it).
+compose_instance(){ # <codename> <compose args...>
+  local cn="$1"; shift
+  OAP_CLIENT_SECRET="$(secret_for "$cn")" \
+  OAP_COOKIE_SECRET="$(cookie_for "$cn")" \
+  CASTLE_JWT="$(ensure_secret "$cn" jwt 48)" \
+  CASTLE_DB_PW="$(ensure_secret "$cn" db 24 hex)" \
+    $COMPOSE -p "$(proj_of "$cn")" -f "$RUN/$cn.compose.yml" "$@"
+}
+
+provision_canary(){ # <codename>
+  local cn="$1"
+  [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
+  echo "canary '$cn' -> https://$(host_of "$cn")"
+  # A canary realm: created empty (keycloak-realm.sh makes users:[]), events on.
+  KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" \
+    CLIENT_SECRET="$(secret_for "$cn")" "$REALM_SH" create "$cn" >/dev/null 2>&1 || die "realm create failed"
+  render_instance "$cn" "$TPL/canary.compose.yml"
+  echo canary > "$RUN/$cn.kind"
+  write_site "$cn"
+  compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
+  echo "  ok (canary)"
+}
+
+# Per-codename secrets are generated once and cached, so the realm's client
+# secret and the oauth2-proxy's stay in lockstep across canary<->tenant swaps.
+secret_for(){ ensure_secret "$1" client 32; }
+cookie_for(){ ensure_secret "$1" cookie 16 hex; }
+ensure_secret(){ # <codename> <name> <bytes> [hex]
+  local f="$RUN/$1.$2"; [[ -f "$f" ]] && { cat "$f"; return; }
+  local v; if [[ "${4:-}" == hex ]]; then v="$(openssl rand -hex "$3")"; else v="$(rand "$3")"; fi
+  printf '%s' "$v" > "$f"; printf '%s' "$v"
+}
+
+# --- commands -------------------------------------------------------------
+# The single controlled CA interaction: issue the IdP cert + N codename certs in
+# one batch. No Keycloak or platform required — this runs first, so the certs
+# exist before Caddy starts. CT shows them appearing together.
+issue_certs(){ # [N]
+  need openssl
+  local n="${1:-10}" cn picked=()
+  echo "bulk-issuing certs: IdP + $n codenames (one CA batch)"
+  issue_cert "$KC_HOST"
+  for _ in $(seq 1 "$n"); do
+    cn="$(next_codename)"; picked+=("$cn")   # next_codename now skips cert-owning names
+    issue_cert "$(host_of "$cn")"
+  done
+  echo "issued for: ${picked[*]}"
+  echo "next: bring up platform, then 'castlectl provision-pool'"
+}
+
+# Stand up a canary for every codename that has a cert but isn't provisioned yet.
+# Idempotent — safe to re-run. Platform (Keycloak) must be up.
+provision_pool(){
+  local done_any=0
+  for cn in $(allocated); do
+    [[ -f "$RUN/$cn.compose.yml" ]] && continue
+    provision_canary "$cn"; done_any=1
+  done
+  [[ "$done_any" == 1 ]] && reload_caddy
+  echo "pool provisioned."
+}
+
+renew_pool(){
+  echo "batch-renewing the whole pool's certs together"
+  issue_cert "$KC_HOST"
+  for cn in $(allocated); do issue_cert "$(host_of "$cn")"; done
+  reload_caddy
+  echo "renewed."
+}
+
+promote(){ # <codename>
+  local cn="${1:?promote needs a <codename>}"
+  [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary"
+  echo "promoting canary '$cn' -> real tenant (cert + subdomain + realm unchanged)"
+  compose_instance "$cn" down >/dev/null 2>&1
+  render_instance "$cn" "$TPL/tenant.compose.yml"
+  echo tenant > "$RUN/$cn.kind"
+  compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
+  echo "  ok (tenant) — now add the client's users to realm $(realm_of "$cn")"
+}
+
+demote(){ # <codename> — back to a canary; keeps the cert and realm
+  local cn="${1:?demote needs a <codename>}"
+  [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
+  echo "demoting tenant '$cn' -> canary (cert kept; DATA IS DESTROYED)"
+  compose_instance "$cn" down -v >/dev/null 2>&1
+  provision_canary "$cn"; reload_caddy
+}
+
+deprovision(){ # <codename>
+  local cn="${1:?deprovision needs a <codename>}"
+  echo "deprovisioning '$cn'"
+  [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
+  KC_URL="$KC_PUBLIC_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
+  rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,kind,client,cookie,jwt,db}
+  reload_caddy
+  echo "  removed (cert left in place for reuse)"
+}
+
+list(){
+  printf '%-16s %-8s %s\n' CODENAME STATE URL
+  for cn in $(allocated); do
+    local state; state="$(kind_of "$cn")"; [[ -z "$state" ]] && state="cert-only"
+    printf '%-16s %-8s %s\n' "$cn" "$state" "https://$(host_of "$cn")"
+  done
+}
+
+# allocate = issue one cert + provision it as a canary (platform must be up).
+allocate(){ local cn; cn="$(next_codename)"; issue_cert "$(host_of "$cn")"; provision_canary "$cn"; reload_caddy; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  issue-certs)     issue_certs "${1:-10}" ;;
+  provision-pool)  provision_pool ;;
+  renew-pool)      renew_pool ;;
+  allocate)        allocate ;;
+  promote)         promote "${1:-}" ;;
+  demote)          demote "${1:-}" ;;
+  deprovision)     deprovision "${1:-}" ;;
+  list)            list ;;
+  *) echo "usage: castlectl {issue-certs [N]|provision-pool|renew-pool|allocate|promote <cn>|demote <cn>|deprovision <cn>|list}"; exit 1 ;;
+esac
