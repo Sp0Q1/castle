@@ -118,6 +118,7 @@ render() {
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": false,
       "baseUrl": "https://${host}/",
+      "alwaysDisplayInConsole": true,
       "redirectUris": ["https://${host}/oauth2/callback"],
       "webOrigins": ["https://${host}"],
       "attributes": {
