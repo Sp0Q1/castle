@@ -16,8 +16,13 @@ options {
     allow-query { any; };
     allow-transfer { none; };
     minimal-responses yes;
-    listen-on { any; };
-    listen-on-v6 { any; };
+    // Bind ONLY the public IP and loopback, never 0.0.0.0 — otherwise we collide
+    // with podman's aardvark-dns, which needs :53 on the container-network
+    // gateways (10.89.x.1) for inter-container name resolution. With host
+    // networking (platform.compose.yml) these are the host's real interfaces:
+    // the public IP serves the internet, 127.0.0.1 serves castlectl / the ACME hook.
+    listen-on { 127.0.0.1; __PUBLIC_IP__; };
+    listen-on-v6 { none; };
     rate-limit { responses-per-second 15; slip 2; };
     version none;
     dnssec-validation no;   // authoritative server, not a validating resolver

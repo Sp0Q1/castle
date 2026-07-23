@@ -30,9 +30,12 @@ services:
     image: docker.io/internetsystemsconsortium/bind9:9.20
     restart: unless-stopped
     profiles: ["self-dns"]
-    ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+    # Host networking, NOT published ports: BIND binds the host's real :53 via
+    # listen-on {public IP; 127.0.0.1} (see dns/named.conf.template), so it never
+    # touches the podman bridge gateways and coexists with aardvark-dns (podman's
+    # own per-network :53 for container name resolution). Publishing 0.0.0.0:53
+    # instead makes aardvark fail with "address already in use".
+    network_mode: host
     environment:
       BASE_DOMAIN: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
       PUBLIC_IP: ${PUBLIC_IP:?set PUBLIC_IP in .env for self-hosted DNS}
