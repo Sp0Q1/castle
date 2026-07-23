@@ -1,0 +1,4 @@
+# Generated per-codename vhosts live here at runtime.
+*.caddy
+!sso.caddy
+!.gitignore

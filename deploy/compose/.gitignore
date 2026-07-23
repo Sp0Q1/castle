@@ -1,0 +1,7 @@
+.env
+.instances/
+caddy/certs/*
+!caddy/certs/.gitignore
+caddy/sites/*.caddy
+!caddy/sites/sso.caddy
+!caddy/sites/.gitignore

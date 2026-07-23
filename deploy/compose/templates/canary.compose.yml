@@ -1,0 +1,56 @@
+# A canary: a single oauth2-proxy pointed at this codename's (empty) Keycloak
+# realm, with oauth2-proxy's built-in static upstream — so there is NO backend
+# at all. It presents the exact same SSO surface as a real tenant (same real
+# oauth2-proxy, same redirect to a realm named for this codename), but the realm
+# has no users, so the only thing an attacker can do is trip a LOGIN_ERROR that
+# Keycloak records. ~30 MB per canary.
+#
+# castlectl substitutes __CODENAME__, __REALM__, __HOST__ and the secrets, then
+# runs this as its own compose project (`castle-<codename>`).
+
+networks:
+  edge:
+    name: castle_edge
+    external: true
+  kc:
+    name: castle_kc
+    external: true
+
+services:
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
+    container_name: oauth2-proxy-__CODENAME__
+    restart: unless-stopped
+    networks: [edge, kc]
+    command:
+      - --provider=oidc
+      - --client-id=castle
+      - --redirect-url=https://__HOST__/oauth2/callback
+      # Nothing behind auth: a canary has no app. static://200 satisfies
+      # oauth2-proxy's upstream requirement without a backend container.
+      - --upstream=static://200
+      - --http-address=0.0.0.0:4180
+      - --email-domain=*
+      - --reverse-proxy=true
+      # Redirect straight to Keycloak instead of showing oauth2-proxy's own
+      # sign-in page — so an unauthenticated GET 302s to the realm, exactly
+      # like a real tenant. Without this it 403s an interstitial (a tell).
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-csrf-per-request=true
+      - --skip-auth-route=^/api/auth/mode$
+      # Split-horizon: browser is sent to the public IdP URL; token/keys are
+      # fetched over the in-container network. Identical to a real tenant.
+      - --skip-oidc-discovery=true
+      - --oidc-issuer-url=__KC_PUBLIC__/realms/__REALM__
+      - --login-url=__KC_PUBLIC__/realms/__REALM__/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/certs
+    environment:
+      # Injected from the environment by castlectl, never written into this
+      # file — so secrets don't land on disk in rendered compose files.
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAP_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAP_COOKIE_SECRET}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]

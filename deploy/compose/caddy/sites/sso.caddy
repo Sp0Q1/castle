@@ -1,0 +1,6 @@
+# The IdP vhost. Its cert is pre-issued alongside the codename pool.
+# {$KC_HOST} is substituted from the environment when Caddy starts.
+{$KC_HOST} {
+	tls /certs/{$KC_HOST}/fullchain.pem /certs/{$KC_HOST}/privkey.pem
+	reverse_proxy keycloak:8080
+}

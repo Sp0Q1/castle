@@ -1,0 +1,96 @@
+# Shared platform: the edge (Caddy) and the IdP (Keycloak + its Postgres).
+# Brought up once; tenants and canaries are separate per-codename compose files
+# that join the `castle_edge` and `castle_kc` networks this file creates.
+#
+#   docker compose -f platform.compose.yml up -d
+#
+# Values come from .env (see .env.example).
+
+networks:
+  # Caddy <-> each codename's oauth2-proxy. Named explicitly so per-codename
+  # compose files can join it as `external`.
+  edge:
+    name: castle_edge
+  # oauth2-proxies <-> Keycloak (OIDC backchannel), and Keycloak <-> its DB.
+  kc:
+    name: castle_kc
+
+volumes:
+  keycloak_db: {}
+  caddy_data: {}
+
+services:
+  caddy:
+    image: docker.io/library/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [edge, kc]
+    environment:
+      # The sso vhost substitutes {$KC_HOST}; Caddy reads it from here.
+      KC_HOST: ${KC_HOST:?set KC_HOST in .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - ./caddy/sites:/etc/caddy/sites:ro,z
+      # Pre-issued certs (bulk). Caddy serves these; it never issues its own.
+      - ./caddy/certs:/certs:ro,z
+      - caddy_data:/data
+    # Drop every capability except the two Caddy needs to bind 80/443 as non-root.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+
+  keycloak-db:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    networks: [kc]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD:?set KC_DB_PASSWORD in .env}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - keycloak_db:/var/lib/postgresql/data:z
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak", "-d", "keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    # `start` = production mode (not start-dev). Implicit build at boot from the
+    # env below; bake an optimized image later to skip it.
+    command: ["start"]
+    networks: [edge, kc]
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    environment:
+      # Public URL browsers use + the token issuer. TLS terminates at Caddy, so
+      # Keycloak speaks HTTP and trusts the forwarded headers.
+      KC_HOSTNAME: ${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      # First-boot admin — rotate to a named MFA admin, then remove these.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:?set KC_ADMIN_USER in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASS:?set KC_ADMIN_PASS in .env}
+      KC_HEALTH_ENABLED: "true"
+    healthcheck:
+      # KC 26 exposes health on the management port 9000.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true

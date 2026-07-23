@@ -1,0 +1,12 @@
+# A codename's edge vhost — identical shape for a canary or a real tenant, so
+# they are indistinguishable at the edge. castlectl substitutes __HOST__ and
+# __CODENAME__ and writes this to caddy/sites/<codename>.caddy.
+#
+# The cert is pre-issued (bulk); Caddy serves it and never contacts the CA.
+# The upstream (oauth2-proxy-<codename>) is the same container name whether this
+# codename is a canary or a real tenant — only what sits BEHIND oauth2-proxy
+# differs, which is invisible from here.
+__HOST__ {
+	tls /certs/__HOST__/fullchain.pem /certs/__HOST__/privkey.pem
+	reverse_proxy oauth2-proxy-__CODENAME__:4180
+}
