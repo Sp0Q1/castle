@@ -44,6 +44,11 @@ services:
       # sign-in page — so an unauthenticated GET 302s to the realm, exactly
       # like a real tenant. Without this it 403s an interstitial (a tell).
       - --skip-provider-button=true
+      # Full single-logout: on /oauth2/sign_out, oauth2-proxy calls Keycloak's
+      # end-session endpoint SERVER-SIDE with the real id_token (the {id_token}
+      # placeholder), which ends the SSO session with no confirmation page. Uses
+      # the in-container Keycloak URL — it's a backchannel call, not a redirect.
+      - --backend-logout-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/logout?id_token_hint={id_token}
       - --cookie-secure=true
       - --cookie-csrf-per-request=true
       - --pass-user-headers=true
@@ -80,6 +85,9 @@ services:
       DATABASE_URL: postgres://castle:${CASTLE_DB_PW}@postgres-__CODENAME__:5432/castle
       JWT_SECRET: ${CASTLE_JWT}
       HOST: https://__HOST__
+      # castle's default logout (/oauth2/sign_out?rd=/) is enough: oauth2-proxy
+      # ends the Keycloak session via --backend-logout-url above, clears its own
+      # cookie, and returns to the app root — which then shows a fresh login.
     volumes:
       - castle_uploads:/app/uploads:z
     security_opt:
