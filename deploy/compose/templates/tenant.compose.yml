@@ -35,7 +35,7 @@ services:
     command:
       - --provider=oidc
       - --client-id=castle
-      - --redirect-url=https://__HOST__/oauth2/callback
+      - --redirect-url=https://__HOSTPORT__/oauth2/callback
       - --upstream=http://castle-__CODENAME__:5150
       - --http-address=0.0.0.0:4180
       - --email-domain=*
