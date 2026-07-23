@@ -117,6 +117,7 @@ render() {
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": false,
+      "baseUrl": "https://${host}/",
       "redirectUris": ["https://${host}/oauth2/callback"],
       "webOrigins": ["https://${host}"],
       "attributes": {
