@@ -86,13 +86,20 @@ services:
     image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
     networks: [kc]
+    # Run AS the postgres user (uid 70), not root. The postgres entrypoint invokes
+    # gosu to drop root->postgres ONLY when it starts as root — and gosu spins at
+    # 100% CPU under no-new-privileges, never reaching the server. Starting as 70
+    # skips gosu entirely: no-new-privileges stays on AND postgres never runs as
+    # root, not even during init. `:U` has podman chown the volume so uid 70 can
+    # write it.
+    user: "70:70"
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: ${KC_DB_PASSWORD:?set KC_DB_PASSWORD in .env}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - keycloak_db:/var/lib/postgresql/data:z
+      - keycloak_db:/var/lib/postgresql/data:U
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "keycloak", "-d", "keycloak"]
       interval: 10s
