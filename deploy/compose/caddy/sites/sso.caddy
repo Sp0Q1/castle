@@ -4,5 +4,6 @@
 # automatically — no dehydrated, no pre-issue, no manual step.
 # {$KC_HOST} is substituted from the environment when Caddy starts.
 {$KC_HOST} {
+	log   # login attempts hit /realms/<realm>/login-actions/authenticate here
 	reverse_proxy keycloak:8080
 }
