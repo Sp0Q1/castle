@@ -7,6 +7,9 @@
 # codename is a canary or a real tenant — only what sits BEHIND oauth2-proxy
 # differs, which is invisible from here.
 __HOST__ {
+	# Access log = the canary tripwire: any request to a codename subdomain is,
+	# by definition, someone who shouldn't be there. client_ip + uri + status.
+	log
 	tls /certs/__HOST__/fullchain.pem /certs/__HOST__/privkey.pem
 	reverse_proxy oauth2-proxy-__CODENAME__:4180
 }
