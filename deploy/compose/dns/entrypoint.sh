@@ -9,6 +9,10 @@ set -eu
 : "${PUBLIC_IP:?PUBLIC_IP required}"
 : "${DDNS_TSIG_SECRET:?DDNS_TSIG_SECRET required}"
 NS_NAME="${NS_NAME:-ns1.${BASE_DOMAIN}}"
+# Defensive: if NS_NAME arrives empty or as an unexpanded compose literal (podman
+# -compose's variable substitution is unreliable), fall back to the in-zone default
+# so a broken value can never reach the zone file and SERVFAIL the whole zone.
+case "$NS_NAME" in ''|*'${'*|*'}'*) NS_NAME="ns1.${BASE_DOMAIN}" ;; esac
 TSIG_NAME="${TSIG_NAME:-castle-ddns}"
 
 DATA=/var/lib/bind

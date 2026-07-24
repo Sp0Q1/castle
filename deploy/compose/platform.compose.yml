@@ -51,7 +51,10 @@ services:
       # Nameserver name the zone advertises. Defaults to ns1.<apex>; override in
       # .env with a name in the PARENT zone (e.g. ns1.example.com) to delegate
       # glue-free — see docs/self-hosted-dns.md.
-      NS_NAME: ${NS_NAME:-ns1.${BASE_DOMAIN}}
+      # Forward NS_NAME verbatim from .env — NO nested ${…${…}} default here:
+      # podman-compose mis-parses nested substitution and would pass a broken
+      # literal into the zone file. The entrypoint supplies the default instead.
+      NS_NAME: ${NS_NAME:-}
     volumes:
       - ./dns/entrypoint.sh:/entrypoint.sh:ro,z
       - ./dns/named.conf.template:/templates/named.conf.template:ro,z
