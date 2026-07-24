@@ -178,17 +178,18 @@ sync_certs(){
   fi
   need "$DEHYDRATED"
   # With self-hosted DNS, dehydrated's DNS-01 hook (dns-hook.sh) talks to our own
-  # nameserver over nsupdate; export the key + server it needs.
-  local -a hook_env=()
+  # nameserver over nsupdate; export the key + server it needs so the hook (a
+  # dehydrated subprocess) inherits them. (An array of VAR=val can't be used as a
+  # command's env-assignment prefix — bash only honours literal assignments.)
   if [[ -n "$SELF_HOSTED_DNS" ]]; then
     ensure_tsig_keyfile
-    hook_env=(DNS_SERVER="$DNS_SERVER" DNS_PORT="$DNS_PORT" TSIG_KEYFILE="$TSIG_KEYFILE")
+    export DNS_SERVER DNS_PORT TSIG_KEYFILE
   fi
   # dehydrated reads its DOMAINS_TXT + CERTDIR from the config file (see
   # dehydrated/config.example); castlectl passes the same DOMAINS_TXT via env so
   # the config can point at it. -c = cron mode: issue missing + renew due, all
   # in one run.
-  DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" "${hook_env[@]}" \
+  DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" \
     "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c ${DEHYDRATED_ARGS:-} \
     || die "dehydrated failed"
   while read -r host; do
