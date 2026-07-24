@@ -99,13 +99,17 @@ services:
     container_name: postgres-__CODENAME__
     restart: unless-stopped
     networks: [tenant]
+    # Run as the postgres user (uid 70) so the entrypoint skips gosu — gosu spins
+    # under no-new-privileges (see keycloak-db in platform.compose.yml). `:U`
+    # chowns the volume so uid 70 can write it.
+    user: "70:70"
     environment:
       POSTGRES_DB: castle
       POSTGRES_USER: castle
       POSTGRES_PASSWORD: ${CASTLE_DB_PW}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - castle_db:/var/lib/postgresql/data:z
+      - castle_db:/var/lib/postgresql/data:U
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "castle", "-d", "castle"]
       interval: 10s
