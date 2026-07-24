@@ -189,6 +189,10 @@ sync_certs(){
   # dehydrated/config.example); castlectl passes the same DOMAINS_TXT via env so
   # the config can point at it. -c = cron mode: issue missing + renew due, all
   # in one run.
+  # Ensure the ACME account exists (idempotent; per-CA, so this covers both the
+  # staging and prod accounts the first time each is used) — otherwise dehydrated
+  # aborts asking you to accept the CA's terms.
+  "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} --register --accept-terms >/dev/null 2>&1 || true
   DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" \
     "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c ${DEHYDRATED_ARGS:-} \
     || die "dehydrated failed"
