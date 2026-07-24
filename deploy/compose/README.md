@@ -89,15 +89,34 @@ castlectl                 provisioner: issue-pool · allocate · promote · depr
 
 `keycloak-realm.sh` and `codenames.txt` are reused unchanged from `../k8s/`.
 
+## Host setup (once, before anything else)
+
+A fresh VPS needs preparing first — packages, and two non-obvious bits that will
+otherwise stop the deployment cold: use the **runc** runtime (crun + AppArmor
+breaks Postgres), and free **port 53** if you self-host DNS. Full walkthrough with
+the *why*: **`docs/host-setup.md`**. The one that bites hardest:
+
+```bash
+# podman must use runc, or Postgres crash-loops under AppArmor
+mkdir -p /etc/containers/containers.conf.d
+printf '[engine]\nruntime = "runc"\n' > /etc/containers/containers.conf.d/runtime.conf
+```
+
 ## Usage
+
+Host prepared (`docs/host-setup.md`) and, if self-hosting DNS, delegation done
+(`docs/self-hosted-dns.md`). Then:
 
 ```bash
 cp .env.example .env && $EDITOR .env                 # domain, Keycloak admin, etc.
 cp dehydrated/config.example dehydrated/config && $EDITOR dehydrated/config
 ./castlectl issue-certs 10                            # one bulk cert batch for the pool
-docker compose -f platform.compose.yml up -d
+podman compose -f platform.compose.yml --profile self-dns up -d
 ./castlectl provision-pool                            # stand up the 10 canaries
 ./castlectl list
 ./castlectl promote citadel                          # turn a canary into a real tenant
 ./castlectl deprovision citadel                      # back to a canary (cert kept)
 ```
+
+(`--profile self-dns` starts the bundled nameserver; omit it if you manage DNS
+elsewhere. Use `docker compose` instead of `podman compose` if `ENGINE=docker`.)

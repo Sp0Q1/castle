@@ -4,6 +4,14 @@
 #
 #   docker compose -f platform.compose.yml up -d
 #
+# HOST PREREQUISITE (Debian / AppArmor hosts): use the runc OCI runtime, not crun.
+# crun stacks container processes under an AppArmor child profile (…//&crun) that
+# the default profile won't let them signal, which breaks Postgres — its processes
+# wake each other with SIGURG and get "could not signal for checkpoint: Permission
+# denied", so the DB never becomes healthy. runc doesn't stack the profile, so
+# AppArmor stays fully enforced AND Postgres works. Set it once, then re-create:
+#   printf '[engine]\nruntime = "runc"\n' > /etc/containers/containers.conf.d/runtime.conf
+#
 # Values come from .env (see .env.example).
 
 networks:
