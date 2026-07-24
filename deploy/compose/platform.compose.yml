@@ -86,6 +86,13 @@ services:
     image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
     networks: [kc]
+    # Cap open files: podman may hand the container an enormous RLIMIT_NOFILE,
+    # which makes postgres's gosu wrapper spin at 100% CPU forever closing fds
+    # and never reach initdb (a well-known gosu issue). A sane cap fixes it.
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 65536
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak

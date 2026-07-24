@@ -99,6 +99,12 @@ services:
     container_name: postgres-__CODENAME__
     restart: unless-stopped
     networks: [tenant]
+    # Cap open files, or postgres's gosu wrapper spins at 100% CPU on podman's
+    # huge default RLIMIT_NOFILE and never reaches initdb (same fix as keycloak-db).
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 65536
     environment:
       POSTGRES_DB: castle
       POSTGRES_USER: castle
