@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@uiw/react-md-editor": "^4.1.1",
-    "mermaid": "^11.16.0",
+    "mermaid": "^11.16.1",
     "react": "^19",
     "react-dom": "^19",
     "react-router-dom": "^7",
