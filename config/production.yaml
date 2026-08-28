@@ -11,11 +11,11 @@ logger:
 
 # Web server configuration
 server:
-  port: {{ get_env(name="PORT", default="5150") }}
+  port: <%= get_env(name="PORT", default="5150") %>
   # Bind to all interfaces so the service is reachable inside a container.
   binding: 0.0.0.0
   # The public URL mailers and links should point to.
-  host: {{ get_env(name="HOST", default="http://localhost") }}
+  host: <%= get_env(name="HOST", default="http://localhost") %>
   middlewares:
     # Loco applies a 2MB body limit by default even with no config, which would
     # reject image uploads well below the 10 MiB cap in `controllers::uploads`.
@@ -57,21 +57,21 @@ workers:
 mailer:
   smtp:
     enable: true
-    host: {{ get_env(name="MAILER_HOST", default="localhost") }}
-    port: {{ get_env(name="MAILER_PORT", default="1025") }}
-    secure: {{ get_env(name="MAILER_SECURE", default="false") }}
+    host: <%= get_env(name="MAILER_HOST", default="localhost") %>
+    port: <%= get_env(name="MAILER_PORT", default="1025") %>
+    secure: <%= get_env(name="MAILER_SECURE", default="false") %>
 
 # Database Configuration
 database:
   # The connection URI should be supplied via the environment in production.
-  uri: {{ get_env(name="DATABASE_URL", default="sqlite://castle_production.sqlite?mode=rwc") }}
+  uri: <%= get_env(name="DATABASE_URL", default="sqlite://castle_production.sqlite?mode=rwc") %>
   enable_logging: false
   # Milliseconds. 500ms is fine for local sqlite but too tight for a networked
   # Postgres first-connect (pool times out -> crashloop); use realistic values.
-  connect_timeout: {{ get_env(name="DB_CONNECT_TIMEOUT", default="5000") }}
-  idle_timeout: {{ get_env(name="DB_IDLE_TIMEOUT", default="30000") }}
-  min_connections: {{ get_env(name="DB_MIN_CONNECTIONS", default="1") }}
-  max_connections: {{ get_env(name="DB_MAX_CONNECTIONS", default="10") }}
+  connect_timeout: <%= get_env(name="DB_CONNECT_TIMEOUT", default="5000") %>
+  idle_timeout: <%= get_env(name="DB_IDLE_TIMEOUT", default="30000") %>
+  min_connections: <%= get_env(name="DB_MIN_CONNECTIONS", default="1") %>
+  max_connections: <%= get_env(name="DB_MAX_CONNECTIONS", default="10") %>
   # Run pending migrations on boot.
   auto_migrate: true
   dangerously_truncate: false
@@ -86,7 +86,7 @@ auth:
     # NO DEFAULT ON PURPOSE: a committed placeholder would become a live signing
     # key for anyone who forgets to set it (forgeable tokens for any user). With
     # no default the config fails to render and the app refuses to start.
-    secret: {{ get_env(name="JWT_SECRET") }}
+    secret: <%= get_env(name="JWT_SECRET") %>
     # Token expiration time in seconds
     expiration: 604800 # 7 days
 
@@ -96,11 +96,11 @@ settings:
   # identity headers and manages no passwords). "jwt" = built-in login/register.
   # Env-overridable so one image can run either mode (the chart sets it from
   # oauth2Proxy.enabled).
-  auth_mode: {{ get_env(name="CASTLE_AUTH_MODE", default="proxy") }}
+  auth_mode: <%= get_env(name="CASTLE_AUTH_MODE", default="proxy") %>
   # Decoy mode: capture submitted credentials + attacker metadata to the
   # `castle::honeypot` log target and return believable responses (no real DB).
   # Set only on canary instances (the chart sets it from .Values.honeypot).
-  honeypot: {{ get_env(name="CASTLE_HONEYPOT", default="false") }}
+  honeypot: <%= get_env(name="CASTLE_HONEYPOT", default="false") %>
   proxy:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
     # x-forwarded-* variants; an nginx/ingress auth_request setup with
@@ -111,7 +111,7 @@ settings:
     # Defense-in-depth: a secret only the proxy injects (leave empty to rely on
     # network isolation alone). Set both the header name and the value.
     shared_secret_header: x-castle-proxy-secret
-    shared_secret: {{ get_env(name="CASTLE_PROXY_SECRET", default="") }}
+    shared_secret: <%= get_env(name="CASTLE_PROXY_SECRET", default="") %>
     # Keycloak groups (leaf names) that grant each platform role; unmapped users
     # default to least privilege (client).
     manager_group: castle-managers
@@ -124,4 +124,4 @@ settings:
     # (also add that post_logout_redirect_uri to the Keycloak client, and add the
     # IdP host to oauth2-proxy --whitelist-domain). Falls back to a proxy-only
     # sign-out if unset.
-    logout_url: {{ get_env(name="CASTLE_LOGOUT_URL", default="/oauth2/sign_out?rd=/") }}
+    logout_url: <%= get_env(name="CASTLE_LOGOUT_URL", default="/oauth2/sign_out?rd=/") %>
