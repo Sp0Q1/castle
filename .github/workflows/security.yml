@@ -270,5 +270,5 @@ jobs:
             high=$(echo "$json" | jq '[.Results[]?.Vulnerabilities[]?|select(.Severity=="HIGH")]|length' 2>/dev/null || echo 0)
             crit=$(echo "$json" | jq '[.Results[]?.Vulnerabilities[]?|select(.Severity=="CRITICAL")]|length' 2>/dev/null || echo 0)
             echo "::endgroup::"
-            printf -- '- `%s` — HIGH: %s, CRITICAL: %s\n' "$img" "${high:-0}" "${crit:-0}" >> "$GITHUB_STEP_SUMMARY"
+            printf -- '- %s  (HIGH: %s, CRITICAL: %s)\n' "$img" "${high:-0}" "${crit:-0}" >> "$GITHUB_STEP_SUMMARY"
           done < images.txt
