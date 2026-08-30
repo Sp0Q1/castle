@@ -120,7 +120,7 @@ services:
       - no-new-privileges:true
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: quay.io/keycloak/keycloak:26.7.2
     restart: unless-stopped
     # `start` = production mode (not start-dev). Implicit build at boot from the
     # env below; bake an optimized image later to skip it.
