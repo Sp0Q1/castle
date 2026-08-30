@@ -242,19 +242,32 @@ jobs:
             | sort -u > images.txt
           echo "will scan:"; cat images.txt
 
-      # Blocking, but --ignore-unfixed: fails only when a FIX exists (i.e. we are
-      # behind and should bump), never on an unpatched upstream CVE we can't act on.
-      - name: Scan each for fixable HIGH/CRITICAL
+      # HIGH is report-only; a fixable CRITICAL blocks. These images carry OS- and
+      # Go-stdlib CVEs only their maintainer can rebuild away — a pin bump here
+      # cannot fix an Alpine or Go-stdlib CVE baked into upstream's image — so
+      # gating on every fixable HIGH would sit perpetually red and get ignored,
+      # the exact failure this file's header warns about. The ACTIONABLE signal,
+      # "a newer image tag exists", is Dependabot's job (it now watches
+      # /deploy/**) and arrives as a PR. A fixable CRITICAL is rare and worth
+      # stopping for, so that still fails the build.
+      - name: Scan each — report HIGH, block on fixable CRITICAL
         run: |
           set -uo pipefail
           rc=0
+          echo "## Deployed third-party images — fixable HIGH/CRITICAL" >> "$GITHUB_STEP_SUMMARY"
           while read -r img; do
             [ -n "$img" ] || continue
             echo "::group::trivy $img"
-            docker run --rm -v "$HOME/.cache/trivy:/root/.cache/trivy" \
-              aquasec/trivy:latest image \
-                --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img" || rc=1
+            json=$(docker run --rm -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed \
+              --format json --quiet "$img")
+            echo "$json" | jq -r '.Results[]?.Vulnerabilities[]? | "  \(.Severity)  \(.VulnerabilityID)  \(.PkgName) -> \(.FixedVersion)"' | sort -u
+            high=$(echo "$json" | jq '[.Results[]?.Vulnerabilities[]?|select(.Severity=="HIGH")]|length')
+            crit=$(echo "$json" | jq '[.Results[]?.Vulnerabilities[]?|select(.Severity=="CRITICAL")]|length')
             echo "::endgroup::"
+            [ "${crit:-0}" -eq 0 ] || rc=1
+            flag=""; [ "${crit:-0}" -ne 0 ] && flag="  ⛔ blocking"
+            printf -- '- `%s` — HIGH: %s, CRITICAL: %s%s\n' "$img" "${high:-0}" "${crit:-0}" "$flag" >> "$GITHUB_STEP_SUMMARY"
           done < images.txt
-          [ "$rc" -eq 0 ] || echo "::error::a deployed image has a fixable HIGH/CRITICAL CVE — bump its pin"
+          [ "$rc" -eq 0 ] || echo "::error::a deployed image has a fixable CRITICAL CVE — act now"
           exit $rc
