@@ -1,0 +1,18 @@
+[Unit]
+Description=Castle encrypted backup (castlectl backup)
+Documentation=https://github.com/Sp0Q1/castle/blob/main/deploy/compose/docs/backup-and-upgrade.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# castlectl sources ./.env for BACKUP_* itself, so it only needs the right cwd.
+# Adjust the paths if you cloned somewhere other than /opt/castle.
+WorkingDirectory=/opt/castle/deploy/compose
+ExecStart=/opt/castle/deploy/compose/castlectl backup
+# Rootful podman/docker own the container sockets + secrets, so run as root.
+# For a rootless engine, set this to the user that owns the stack instead.
+User=root
+# Backups are I/O-heavy and never urgent — stay out of the way of live traffic.
+Nice=10
+IOSchedulingClass=idle
