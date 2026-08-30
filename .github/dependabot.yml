@@ -60,9 +60,18 @@ updates:
       actions:
         update-types: [major, minor, patch]
 
+  # Container base images live in the root Dockerfile, the optimized-Keycloak
+  # Dockerfile, and the compose files + k8s manifests under deploy/. Watching only
+  # "/" missed every image outside the root Dockerfile — including Keycloak, which
+  # is exactly how it drifted seven minors behind. Watch the whole tree.
   - package-ecosystem: docker
-    directory: "/"
+    directories:
+      - "/"
+      - "/deploy/**"
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      docker:
+        update-types: [major, minor, patch]

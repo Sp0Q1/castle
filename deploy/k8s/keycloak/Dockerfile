@@ -10,14 +10,14 @@
 # and /tmp. That is what lets keycloak-prod.yaml set readOnlyRootFilesystem: true.
 #
 # Published by .github/workflows/release.yml to
-#   ghcr.io/<owner>/castle-keycloak:26.0
+#   ghcr.io/<owner>/castle-keycloak:26.7.2
 # (signed keyless with cosign, same as the app image). Pin deploys to the digest.
 #
 # Build-time options set below are FIXED for this image; changing the database
 # vendor, health or metrics means rebuilding. Runtime options (hostname, DB URL
 # and credentials, proxy headers) stay in the manifest's env, not here.
 # =============================================================================
-FROM quay.io/keycloak/keycloak:26.0 AS builder
+FROM quay.io/keycloak/keycloak:26.7.2 AS builder
 
 # Build-time options: these are compiled into the optimized server and must NOT
 # be repeated at runtime (with --optimized Keycloak ignores build options passed
@@ -28,7 +28,7 @@ ENV KC_METRICS_ENABLED=true
 
 RUN /opt/keycloak/bin/kc.sh build
 
-FROM quay.io/keycloak/keycloak:26.0
+FROM quay.io/keycloak/keycloak:26.7.2
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 # The base image already runs as uid 1000; stated explicitly so it is verifiable
 # from the Dockerfile itself and the container never falls back to root.

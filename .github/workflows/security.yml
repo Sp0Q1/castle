@@ -219,3 +219,42 @@ jobs:
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
+
+  platform-images:
+    name: Platform images (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Third-party images we deploy but don't build (Keycloak, oauth2-proxy,
+      # Postgres, Caddy, BIND). The `containers` job scans the app image we build;
+      # these had NO CVE gate at all — which is how Keycloak sat seven minors
+      # behind a known advisory unnoticed. The list is read from the compose pins
+      # so the scan can never drift from what actually runs, and the weekly
+      # schedule (see `on:`) catches a new CVE landing against unchanged pins.
+      - name: Collect the pinned deployment images
+        run: |
+          set -euo pipefail
+          grep -rhE '^[[:space:]]*image:[[:space:]]' \
+            deploy/compose/*.yml deploy/compose/templates/*.compose.yml \
+            | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+#.*//' \
+            | grep -vE '__IMAGE__|:latest' \
+            | sort -u > images.txt
+          echo "will scan:"; cat images.txt
+
+      # Blocking, but --ignore-unfixed: fails only when a FIX exists (i.e. we are
+      # behind and should bump), never on an unpatched upstream CVE we can't act on.
+      - name: Scan each for fixable HIGH/CRITICAL
+        run: |
+          set -uo pipefail
+          rc=0
+          while read -r img; do
+            [ -n "$img" ] || continue
+            echo "::group::trivy $img"
+            docker run --rm -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              aquasec/trivy:latest image \
+                --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img" || rc=1
+            echo "::endgroup::"
+          done < images.txt
+          [ "$rc" -eq 0 ] || echo "::error::a deployed image has a fixable HIGH/CRITICAL CVE — bump its pin"
+          exit $rc

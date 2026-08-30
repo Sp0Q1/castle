@@ -136,7 +136,7 @@ spec:
           # deploy/k8s/keycloak/Dockerfile), so nothing is written under
           # /opt/keycloak/lib at boot and the root fs can be read-only.
           # SET THIS: pin to the digest published by release.yml.
-          image: ghcr.io/OWNER/castle-keycloak:26.0
+          image: ghcr.io/OWNER/castle-keycloak:26.7.2
           # --optimized skips the boot-time build (the image is already built).
           # Build-time options (KC_DB, health, metrics) are baked into the image;
           # only runtime options appear in env below.
