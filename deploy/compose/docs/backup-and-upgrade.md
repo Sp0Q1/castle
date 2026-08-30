@@ -66,6 +66,41 @@ whole-box disaster recovery; these bundles add portability, per-tenant granular
 restore, and off-provider safety — and, unlike re-issuing, they preserve the
 existing certs so a restore creates **no new Certificate Transparency entries**.
 
+## Scheduling (unattended)
+
+`castlectl backup` is meant to run from a timer. Units live in
+`deploy/compose/systemd/`:
+
+```bash
+# paths in the unit assume /opt/castle — edit them if you cloned elsewhere
+cp deploy/compose/systemd/castle-backup.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now castle-backup.timer
+systemctl list-timers castle-backup.timer   # confirm the next run
+journalctl -u castle-backup.service          # inspect the last run
+```
+
+It fires daily at 03:30 (randomized ±30m; `Persistent=true` catches a run the box
+slept through). Run one by hand any time with `systemctl start
+castle-backup.service` — or just `./castlectl backup`.
+
+**Retention.** `BACKUP_KEEP` (default 14) prunes the local bundle dir to the
+newest N after each run so it can't fill the disk; `0` keeps everything.
+
+**Off-box copy.** Set `BACKUP_PUSH_CMD` to ship each new bundle somewhere durable.
+It runs once per bundle with `{}` replaced by the bundle path (or the path
+appended when there's no `{}`):
+
+```bash
+BACKUP_PUSH_CMD='rclone copy {} b2:castle-backups/'       # any rclone remote
+BACKUP_PUSH_CMD='rsync -a {} backups@vault:/srv/castle/'  # another host over ssh
+```
+
+The bundles are already age-encrypted to your offline key, so the destination
+never sees plaintext — object storage, another VPS, or a NAS are all fine. If the
+push fails, the bundle is kept locally and the run exits non-zero (so the timer's
+`journalctl` flags it) rather than being pruned away.
+
 ## Restoring
 
 `restore` is idempotent and safe to re-run; it restores the files, then loads the

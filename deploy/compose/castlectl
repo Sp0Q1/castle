@@ -84,6 +84,8 @@ TSIG_KEYFILE="${TSIG_KEYFILE:-$RUN/ddns.key}"    # nsupdate key, derived from .e
 BACKUP_DIR="${BACKUP_DIR:-$HERE/backups}"
 BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"   # age public key (age1…) — required to back up
 BACKUP_AGE_IDENTITY="${BACKUP_AGE_IDENTITY:-}"     # age identity file — required to restore
+BACKUP_KEEP="${BACKUP_KEEP:-14}"                   # keep this many local bundles (0 = keep all)
+BACKUP_PUSH_CMD="${BACKUP_PUSH_CMD:-}"             # optional off-box copy per bundle ({} = its path)
 # postgres:16-alpine is already pinned by the deployment, so reuse it as the
 # utility image for tar-ing volumes (busybox tar) — no extra image to pull.
 UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:16-alpine}"
@@ -458,6 +460,24 @@ backup(){
   out="$BACKUP_DIR/castle-backup-$ts.tar.age"
   ( cd "$work" && tar cf - . ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
   echo "wrote $out ($(du -h "$out" | cut -f1)) — decrypt needs your offline age identity."
+
+  # Off-box copy (optional). BACKUP_PUSH_CMD runs once per bundle; {} expands to
+  # its path (otherwise the path is appended), so any transport works:
+  #   BACKUP_PUSH_CMD='rclone copy {} b2:castle-backups/'
+  #   BACKUP_PUSH_CMD='rsync -a {} backups@vault:/srv/castle/'
+  if [[ -n "$BACKUP_PUSH_CMD" ]]; then
+    local push="$BACKUP_PUSH_CMD"
+    case "$push" in *'{}'*) push="${push//\{\}/$out}" ;; *) push="$push \"$out\"" ;; esac
+    echo "backup: off-box copy"
+    eval "$push" || die "BACKUP_PUSH_CMD failed (bundle kept locally at $out)"
+  fi
+
+  # Retention: keep the newest $BACKUP_KEEP bundles locally — they're
+  # age-encrypted, so pruning old local copies is safe once they're off-box.
+  if [[ "$BACKUP_KEEP" =~ ^[0-9]+$ ]] && (( BACKUP_KEEP > 0 )); then
+    ls -1t "$BACKUP_DIR"/castle-backup-*.tar.age 2>/dev/null | tail -n +"$((BACKUP_KEEP + 1))" \
+      | while read -r old; do rm -f "$old" && echo "  pruned $(basename "$old")"; done
+  fi
 }
 
 # Restore is idempotent and safe to re-run: it restores the files, then loads the

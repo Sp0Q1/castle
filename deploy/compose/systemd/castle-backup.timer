@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily Castle encrypted backup
+Documentation=https://github.com/Sp0Q1/castle/blob/main/deploy/compose/docs/backup-and-upgrade.md
+
+[Timer]
+# Daily at 03:30 local, randomized up to +30m so it doesn't stampede other jobs.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=1800
+# Run a missed backup once the box is back if it was off at the scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
