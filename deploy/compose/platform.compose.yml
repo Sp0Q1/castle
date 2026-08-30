@@ -139,7 +139,9 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KC_DB_PASSWORD}
-      # First-boot admin — rotate to a named MFA admin, then remove these.
+      # First-boot admin only — Keycloak ignores these once an admin exists.
+      # Rotate to a named admin with TOTP and delete this one before real client
+      # data lands: see docs/admin-rotation.md.
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:?set KC_ADMIN_USER in .env}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASS:?set KC_ADMIN_PASS in .env}
       KC_HEALTH_ENABLED: "true"
