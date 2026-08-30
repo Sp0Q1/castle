@@ -165,6 +165,20 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
         return unauthorized("unauthorized!");
     }
 
+    // Email verification is a hard gate on issuing a session: an account that has
+    // not proven control of its address must never receive a token, even with the
+    // right password. Registration is open and unauthenticated, so anyone can
+    // create an account for any email; without this, pre-registering a victim's
+    // address and waiting for a manager to onboard it hands the attacker a working
+    // login into that project's confidential findings. `verify` documents the
+    // contract ("if the user not verified his email, he can't login") — it was
+    // simply never enforced here. (proxy/SSO mode never mounts this route; there
+    // the IdP asserts identity and this handler is unreachable.)
+    if user.email_verified_at.is_none() {
+        tracing::info!(user_email = %params.email, "login rejected: email not verified");
+        return unauthorized("Please verify your email address before signing in.");
+    }
+
     let jwt_secret = ctx.config.get_jwt_config()?;
 
     let token = user

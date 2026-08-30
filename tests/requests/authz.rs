@@ -438,3 +438,57 @@ async fn repeated_failed_logins_are_throttled() {
     })
     .await;
 }
+
+/// The email-verification gate that closes the account pre-registration hijack.
+/// Registration is open and unauthenticated, so anyone can create an account for
+/// any address — but until that address is verified, the account must never get
+/// a session, even with the correct password. Otherwise an attacker pre-registers
+/// a victim's email and, once a manager onboards that address, logs in and reads
+/// the project's confidential findings.
+#[tokio::test]
+#[serial]
+async fn unverified_accounts_cannot_log_in() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        // Registered but never verified — exactly the state /api/auth/register
+        // leaves behind (create_with_password does not set email_verified_at).
+        users::Model::create_with_password(
+            &ctx.db,
+            &RegisterParams {
+                email: "mallory@test.com".to_string(),
+                password: "correct-horse-battery".to_string(),
+                name: "Mallory".to_string(),
+            },
+        )
+        .await
+        .expect("create user");
+
+        let creds = serde_json::json!({
+            "email": "mallory@test.com",
+            "password": "correct-horse-battery"
+        });
+
+        // Correct password, but unverified -> no session.
+        let denied = request.post("/api/auth/login").json(&creds).await;
+        assert_eq!(
+            denied.status_code(),
+            401,
+            "unverified account was issued a session with the correct password"
+        );
+
+        // Verifying the email lifts the gate; the same credentials now succeed.
+        let user = users::Model::find_by_email(&ctx.db, "mallory@test.com")
+            .await
+            .expect("find user");
+        let active: users::ActiveModel = user.into();
+        active.verified(&ctx.db).await.expect("mark verified");
+
+        let ok = request.post("/api/auth/login").json(&creds).await;
+        assert_eq!(
+            ok.status_code(),
+            200,
+            "verified account with correct password could not log in"
+        );
+    })
+    .await;
+}
