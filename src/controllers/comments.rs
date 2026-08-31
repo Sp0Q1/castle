@@ -19,7 +19,7 @@ pub struct CreateCommentParams {
 async fn load_viewable_finding(
     ctx: &AppContext,
     user: &users::Model,
-    finding_id: i32,
+    finding_id: i64,
 ) -> Result<findings::Model> {
     let finding = findings::Entity::find_by_id(finding_id)
         .one(&ctx.db)
@@ -46,7 +46,7 @@ async fn load_viewable_finding(
 #[debug_handler]
 pub async fn list(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_viewable_finding(&ctx, &user, finding_id).await?;
@@ -68,7 +68,7 @@ pub async fn list(
 #[debug_handler]
 pub async fn create(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
     Json(params): Json<CreateCommentParams>,
 ) -> Result<Response> {

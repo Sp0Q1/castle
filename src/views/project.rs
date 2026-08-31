@@ -4,12 +4,12 @@ use crate::models::_entities::projects;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProjectResponse {
-    pub id: i32,
+    pub id: i64,
     pub pid: String,
     pub name: String,
     pub description: Option<String>,
     pub status: String,
-    pub created_by: i32,
+    pub created_by: i64,
     pub created_at: String,
     pub updated_at: String,
 }

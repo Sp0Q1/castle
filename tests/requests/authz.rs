@@ -24,9 +24,9 @@ struct Fixture {
     staff_token: String,
     client_token: String,
     outsider_token: String,
-    project_id: i32,
-    draft_id: i32,
-    published_id: i32,
+    project_id: i64,
+    draft_id: i64,
+    published_id: i64,
 }
 
 async fn make_user(db: &DatabaseConnection, email: &str, name: &str, role: &str) -> users::Model {
@@ -48,8 +48,8 @@ async fn make_user(db: &DatabaseConnection, email: &str, name: &str, role: &str)
 
 async fn make_finding(
     db: &DatabaseConnection,
-    project_id: i32,
-    author_id: i32,
+    project_id: i64,
+    author_id: i64,
     title: &str,
     status: &str,
 ) -> findings::Model {

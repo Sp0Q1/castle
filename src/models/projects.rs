@@ -37,7 +37,7 @@ impl Model {
     ///
     /// # Errors
     /// When the project is missing or the query fails.
-    pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+    pub async fn find_by_id(db: &DatabaseConnection, id: i64) -> ModelResult<Self> {
         let project = Entity::find_by_id(id).one(db).await?;
         project.ok_or_else(|| ModelError::EntityNotFound)
     }

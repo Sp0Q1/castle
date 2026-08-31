@@ -9,7 +9,7 @@ use crate::models::_entities::users;
 /// and memberships without leaking credentials.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserSummary {
-    pub id: i32,
+    pub id: i64,
     pub pid: String,
     pub name: String,
     pub email: String,

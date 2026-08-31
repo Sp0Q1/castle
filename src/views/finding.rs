@@ -6,10 +6,10 @@ use crate::views::user::UserSummary;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FindingResponse {
-    pub id: i32,
+    pub id: i64,
     pub pid: String,
-    pub project_id: i32,
-    pub author_id: i32,
+    pub project_id: i64,
+    pub author_id: i64,
     pub title: String,
     pub finding_type: String,
     pub description: String,

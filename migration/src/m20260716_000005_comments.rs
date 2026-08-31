@@ -13,8 +13,8 @@ impl MigrationTrait for Migration {
             "comments",
             &[("id", ColType::PkAuto), ("body", ColType::Text)],
             &[
-                ("findings", ""), // finding_id INTEGER NOT NULL, FK -> findings(id)
-                ("users", ""),    // user_id    INTEGER NOT NULL, FK -> users(id)
+                ("findings", ""), // finding_id BIGINT NOT NULL, FK -> findings(id)
+                ("users", ""),    // user_id    BIGINT NOT NULL, FK -> users(id)
             ],
         )
         .await?;
