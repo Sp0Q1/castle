@@ -31,8 +31,11 @@
 # a codename belongs to in your own store, off this host.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+# Defined first so the startup cd below can use it: a function isn't callable
+# before the line that defines it runs, and this is the earliest thing that can fail.
+die(){ echo "castlectl: $*" >&2; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE"
+cd "$HERE" || die "cannot cd to $HERE"
 [[ -f .env ]] && set -a && . ./.env && set +a
 
 K8S="$HERE/../k8s"
@@ -44,6 +47,11 @@ CERTS="$HERE/caddy/certs"
 RUN="$HERE/.instances"                        # per-codename generated compose files
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN in .env}"
 KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
+# The IdP's bare hostname (no scheme/port) — used by issue-certs' pool-vs-IdP-apex
+# check and matching the caddy service's ${KC_HOST}. Guarded like the two above so
+# `set -u` can't abort issue-certs (bring-up step 1) with a cryptic "unbound
+# variable" when it's missing from .env.
+KC_HOST="${KC_HOST:?set KC_HOST in .env (IdP hostname, e.g. sso.example.com)}"
 # Where castlectl reaches Keycloak's admin API FROM THIS HOST. Same as the
 # browser-facing URL in prod; differs only when the public port is a tunnel that
 # doesn't exist on the box (e.g. lab: browser :8443 -> box :443), where this is
@@ -90,8 +98,34 @@ BACKUP_PUSH_CMD="${BACKUP_PUSH_CMD:-}"             # optional off-box copy per b
 # utility image for tar-ing volumes (busybox tar) — no extra image to pull.
 UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:18-alpine}"
 
-die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+# Run a command silently on success but, on failure, die WITH its output — so the
+# operator sees the actual cause (a failed pull, a compose conflict) instead of a
+# generic line. Replaces the old `>/dev/null 2>&1 || die "..."` that hid it. (Only
+# for commands with no leading VAR=val env prefix, which `"$@"` can't carry.)
+run_or_die(){ # <what> <cmd> [args...]
+  local what="$1"; shift
+  local out
+  out="$("$@" 2>&1)" || die "$what:"$'\n'"$out"
+}
+# Batch failure policy shared by upgrade/backup/restore: none may abort the whole
+# fleet on the first bad item — each collects failures in a local array, keeps
+# going, and ends here. Prints an "ok/total" summary (failures to stderr) and
+# returns 1 iff anything failed, so the caller can still run its final steps
+# (reload_caddy, retention) and only then exit nonzero.
+batch_result(){ # <label> <total> [<failure>...]
+  local label="$1" total="$2"; shift 2
+  local failed=$#
+  if (( failed > 0 )); then
+    echo "$label: $((total - failed))/$total ok, $failed failed:" >&2
+    printf '  - %s\n' "$@" >&2
+    return 1
+  fi
+  echo "$label: $total/$total ok."
+}
+# A literal newline, so "${out##*"$NL"}" can trim captured output to its last line
+# (usually the error) for a concise failure summary.
+NL=$'\n'
 # Bare host — for certs, DNS and Caddy vhost names (no port; a cert is for a
 # host, not a host:port).
 host_of(){ echo "$1.$BASE_DOMAIN"; }
@@ -131,7 +165,7 @@ kind_of(){ # tenant | canary | "" — derived from the engine, not a local file
 }
 # next_codename must skip a name that already owns a cert OR is queued for one.
 taken(){ has_cert "$1" || grep -qxF "$(host_of "$1")" "$DOMAINS_TXT" 2>/dev/null; }
-allocated(){ for cn in $(pool_codenames); do taken "$cn" && echo "$cn"; done; }
+allocated(){ local cn; for cn in $(pool_codenames); do taken "$cn" && echo "$cn"; done; }
 add_domain(){ mkdir -p "$RUN"; touch "$DOMAINS_TXT"; grep -qxF "$1" "$DOMAINS_TXT" || echo "$1" >> "$DOMAINS_TXT"; }
 
 next_codename(){
@@ -241,9 +275,11 @@ render_instance(){ # <codename> <template> [<image>]  (image defaults to $CASTLE
   local cn="$1" tpl="$2" img="${3:-$CASTLE_IMAGE}"
   local realm host hostport
   realm="$(realm_of "$cn")"; host="$(host_of "$cn")"; hostport="$(hostport_of "$cn")"
+  # __IMAGE__ uses '#' as the sed delimiter, so the image ref (which contains '/'
+  # and, for a digest, '@' and ':' — but never '#') needs no escaping.
   sed -e "s/__CODENAME__/$cn/g" -e "s/__REALM__/$realm/g" -e "s#__HOST__#$host#g" \
       -e "s#__HOSTPORT__#$hostport#g" \
-      -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${img//\//\\/}#g" \
+      -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${img}#g" \
       "$tpl" > "$RUN/$cn.compose.yml"
 }
 
@@ -271,15 +307,19 @@ compose_instance(){ # <codename> <compose args...>
 }
 
 provision_canary(){ # <codename>
-  local cn="$1"
+  local cn="$1" rerr
   [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
   echo "canary '$cn' -> https://$(host_of "$cn")"
   # A canary realm: created empty (keycloak-realm.sh makes users:[]), events on.
-  KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" EXTERNAL_PORT="$EXTERNAL_PORT" \
-    CLIENT_SECRET="$(secret_for "$cn")" "$REALM_SH" create "$cn" >/dev/null 2>&1 || die "realm create failed"
+  # Capture the realm script's output so a failure surfaces WHY (admin auth, an
+  # HTTP error) instead of a bare "realm create failed". Env prefix -> inline
+  # capture, since run_or_die's "$@" can't carry VAR=val assignments.
+  rerr="$(KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" EXTERNAL_PORT="$EXTERNAL_PORT" \
+    CLIENT_SECRET="$(secret_for "$cn")" "$REALM_SH" create "$cn" 2>&1)" \
+    || die "realm create failed for $cn:"$'\n'"$rerr"
   render_instance "$cn" "$TPL/canary.compose.yml"
   write_site "$cn"
-  compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
+  run_or_die "compose up failed for $cn" compose_instance "$cn" up -d
   dns_set_a "$cn"     # publish the A record (no-op unless SELF_HOSTED_DNS)
   echo "  ok (canary)"
 }
@@ -324,7 +364,7 @@ issue_certs(){ # [N]
 # Stand up a canary for every codename that has a cert but isn't provisioned yet.
 # Idempotent — safe to re-run. Platform (Keycloak) must be up.
 provision_pool(){
-  local done_any=0
+  local done_any=0 cn
   # Every codename that has a cert but isn't running yet -> stand up a canary.
   for cn in $(pool_codenames); do
     has_cert "$cn" || continue
@@ -348,7 +388,7 @@ promote(){ # <codename>
   echo "promoting canary '$cn' -> real tenant (cert + subdomain + realm unchanged)"
   compose_instance "$cn" down >/dev/null 2>&1
   render_instance "$cn" "$TPL/tenant.compose.yml"
-  compose_instance "$cn" up -d >/dev/null 2>&1 || die "compose up failed"
+  run_or_die "compose up failed for $cn" compose_instance "$cn" up -d
   echo "  ok (tenant) — now add the client's users to realm $(realm_of "$cn")"
 }
 
@@ -362,6 +402,9 @@ demote(){ # <codename> — back to a canary; keeps the cert and realm
 
 deprovision(){ # <codename>
   local cn="${1:?deprovision needs a <codename>}"
+  # Validate before $cn reaches `rm -f` below (same regex provision_canary uses):
+  # an unchecked codename with a slash or glob could delete outside its own files.
+  [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
@@ -374,8 +417,9 @@ deprovision(){ # <codename>
 list(){
   printf '%-16s %-9s %s\n' CODENAME STATE URL
   # Reflect reality: a codename appears if it's running (engine) or has a cert.
+  local cn state
   for cn in $(pool_codenames); do
-    local state; state="$(kind_of "$cn")"
+    state="$(kind_of "$cn")"
     if [[ -z "$state" ]]; then has_cert "$cn" && state="cert-only" || continue; fi
     printf '%-16s %-9s %s\n' "$cn" "$state" "https://$(host_of "$cn")"
   done
@@ -418,6 +462,32 @@ dns_sync(){
 }
 
 # --- upgrade ---------------------------------------------------------------
+# up -d returns once a container is CREATED, not once the app inside is serving —
+# a crash-loop or a failed migration would otherwise pass as "deployed". Poll the
+# container until its healthcheck goes healthy (a tenant's castle has one — see the
+# tenant template); a canary's oauth2-proxy has none, so just confirm it stayed up.
+# Returns nonzero on unhealthy / exited / timeout. (podman-compose has no
+# `up --wait`, so poll rather than rely on compose to block.)
+wait_healthy(){ # <container> <mode: health|running> [<timeout-seconds>]
+  local c="$1" mode="$2" timeout="${3:-${UPGRADE_HEALTH_TIMEOUT:-120}}" waited=0 status health
+  while :; do
+    status="$($ENGINE inspect --format '{{.State.Status}}' "$c" 2>/dev/null)"
+    case "$status" in
+      exited|died|removing) return 1 ;;                 # crashed out / gone
+    esac
+    if [[ "$mode" == running ]]; then
+      [[ "$status" == running ]] && return 0
+    elif [[ "$status" == running ]]; then
+      # .State.Health.Status exists only when a healthcheck is defined.
+      health="$($ENGINE inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)"
+      [[ "$health" == healthy ]]   && return 0
+      [[ "$health" == unhealthy ]] && return 1
+    fi
+    (( waited >= timeout )) && return 1
+    sleep 3; waited=$((waited + 3))
+  done
+}
+
 # Recreate running instances with the current images (CASTLE_IMAGE / templates),
 # keeping their data volumes. castle runs pending schema migrations on boot
 # (auto_migrate), so an app upgrade is: bump CASTLE_IMAGE in .env, then this.
@@ -431,27 +501,49 @@ upgrade(){ # [<codename>]  (default: every running codename)
   fi
   [[ ${#targets[@]} -gt 0 ]] || { echo "nothing running to upgrade"; return 0; }
   echo "upgrading ${#targets[@]} instance(s): ${targets[*]}"
+
+  # Resolve the tenant app image to its immutable digest ONCE, before the loop, so
+  # every tenant in this batch is pinned to the SAME build — a tag like :main that
+  # moves mid-run can't split the fleet across two images. Only needed if a tenant
+  # is in scope (canaries carry their own fixed proxy image, no __IMAGE__). A
+  # failed pull/resolve is fatal UP FRONT (nothing has been touched yet): shipping a
+  # stale image is exactly how a moved :main looks "deployed" while the old
+  # container keeps running.
+  local app_img="" has_tenant=0
+  for cn in "${targets[@]}"; do [[ "$(kind_of "$cn")" == tenant ]] && { has_tenant=1; break; }; done
+  if (( has_tenant )); then
+    run_or_die "pull failed for $CASTLE_IMAGE" "$ENGINE" pull "$CASTLE_IMAGE"
+    app_img="$(resolve_digest "$CASTLE_IMAGE")"
+    [[ "$app_img" == *@sha256:* ]] || die "could not resolve a digest for $CASTLE_IMAGE (is it pulled?)"
+  fi
+
+  # One bad instance must NOT abort the fleet or skip reload_caddy: collect the
+  # failures, keep going, then summarize and exit nonzero at the end if any failed.
+  local -a fails=()
+  local kind target hc out
   for cn in "${targets[@]}"; do
-    local kind tpl img; kind="$(kind_of "$cn")"
-    [[ "$kind" == tenant ]] && tpl="$TPL/tenant.compose.yml" || tpl="$TPL/canary.compose.yml"
-    # Pin a tenant's app to the digest its (possibly moving) tag resolves to
-    # *now*, so a moved :main actually redeploys: up -d recreates on the changed
-    # reference, and only the app — Postgres and the proxy keep their own tags. A
-    # failed pull is fatal here: silently shipping a stale image is precisely how
-    # a moved :main can look "deployed" while the old container keeps running.
-    img="$CASTLE_IMAGE"
+    kind="$(kind_of "$cn")"
     if [[ "$kind" == tenant ]]; then
-      $ENGINE pull "$CASTLE_IMAGE" >/dev/null 2>&1 || die "pull failed for $CASTLE_IMAGE ($cn)"
-      img="$(resolve_digest "$CASTLE_IMAGE")"
-      [[ "$img" == *@sha256:* ]] || die "could not resolve a digest for $CASTLE_IMAGE ($cn)"
+      render_instance "$cn" "$TPL/tenant.compose.yml" "$app_img"; target="castle-$cn"; hc=health
+    else
+      render_instance "$cn" "$TPL/canary.compose.yml";            target="oauth2-proxy-$cn"; hc=running
     fi
-    render_instance "$cn" "$tpl" "$img"
-    compose_instance "$cn" pull >/dev/null 2>&1 || die "pull failed for $cn"
-    compose_instance "$cn" up -d >/dev/null 2>&1 || die "upgrade of $cn failed"
-    echo "  $cn ($kind) recreated with current image (data kept)"
+    if ! out="$(compose_instance "$cn" pull 2>&1)"; then
+      fails+=("$cn ($kind): image pull failed — ${out##*"$NL"}"); continue
+    fi
+    if ! out="$(compose_instance "$cn" up -d 2>&1)"; then
+      fails+=("$cn ($kind): up -d failed — ${out##*"$NL"}"); continue
+    fi
+    # up -d only created the container; verify the app actually came up.
+    if wait_healthy "$target" "$hc"; then
+      echo "  $cn ($kind) recreated with current image (data kept)"
+    else
+      fails+=("$cn ($kind): $target not healthy after up -d (see: $ENGINE logs $target)")
+    fi
   done
   reload_caddy
-  echo "done — migrations applied on boot (auto_migrate)."
+  batch_result upgrade "${#targets[@]}" "${fails[@]}" || exit 1
+  echo "migrations apply on boot (auto_migrate)."
 }
 
 # --- backup / restore ------------------------------------------------------
@@ -477,14 +569,24 @@ backup(){
   [[ -d "$RUN"   ]] && cp -a "$RUN"   "$work/instances"
   [[ -d "$CERTS" ]] && { mkdir -p "$work/certs"; cp -a "$CERTS/." "$work/certs/"; }
   [[ -d "$HERE/dehydrated" ]] && cp -a "$HERE/dehydrated" "$work/dehydrated"
-  # Per tenant: logical DB dump (portable across pg versions) + uploads.
+  # Per tenant: logical DB dump (portable across pg versions) + uploads. One
+  # unhealthy tenant must NOT abort the whole run — record and continue. Uploads
+  # are part of the tenant's data, so a failed tar is a recorded failure too, not
+  # a silent `|| true` that ships an incomplete bundle while printing success.
+  # (`2>&1 >file`: dump/tarball go to the file, only stderr is captured for the
+  # cause.)
+  local -a bfails=()
+  local tcount=0 derr uerr
   for cn in $(pool_codenames); do
     [[ "$(kind_of "$cn")" == tenant ]] || continue
+    tcount=$((tcount + 1))
     mkdir -p "$work/tenants/$cn"
-    $ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle > "$work/tenants/$cn/db.sql" \
-      || die "pg_dump for tenant $cn failed"
-    $ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" \
-      tar cf - -C /data . > "$work/tenants/$cn/uploads.tar" 2>/dev/null || true
+    if ! derr="$($ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle 2>&1 > "$work/tenants/$cn/db.sql")"; then
+      bfails+=("tenant $cn: pg_dump failed — ${derr##*"$NL"}"); continue
+    fi
+    if ! uerr="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" tar cf - -C /data . 2>&1 > "$work/tenants/$cn/uploads.tar")"; then
+      bfails+=("tenant $cn: uploads tar failed — ${uerr##*"$NL"}"); continue
+    fi
     echo "  tenant $cn: db + uploads"
   done
   mkdir -p "$BACKUP_DIR"
@@ -509,6 +611,12 @@ backup(){
     ls -1t "$BACKUP_DIR"/castle-backup-*.tar.age 2>/dev/null | tail -n +"$((BACKUP_KEEP + 1))" \
       | while read -r old; do rm -f "$old" && echo "  pruned $(basename "$old")"; done
   fi
+
+  # The bundle was written (and pushed/pruned) so the tenants that DID dump are
+  # safe, but if any tenant was incomplete, exit nonzero — a cron/timer run must
+  # not look clean when a tenant's data is missing. (return, not exit, so the
+  # RETURN trap still clears $work.)
+  batch_result backup "$tcount" "${bfails[@]}" || return 1
 }
 
 # Restore is idempotent and safe to re-run: it restores the files, then loads the
@@ -521,7 +629,10 @@ restore(){ # <backup-file> [--yes]
   [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
   [[ "$yes" == "--yes" ]] || die "restore overwrites secrets/certs and loads DBs — re-run with --yes to confirm"
   need age; need "$ENGINE"; need tar
-  local work cn; work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  local work cn
+  local -a rfails=()
+  local attempted=0 kerr terr uerr
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
   echo "restore: decrypting $file"
   age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
 
@@ -536,31 +647,51 @@ restore(){ # <backup-file> [--yes]
 
   # 2) Keycloak realms/users — stop keycloak so the load isn't fighting it.
   if [[ -f "$work/platform/keycloak.sql" ]] && platform_exec keycloak-db pg_isready -U keycloak >/dev/null 2>&1; then
+    attempted=$((attempted + 1))
     $COMPOSE -f platform.compose.yml stop keycloak >/dev/null 2>&1 || true
-    if platform_exec keycloak-db psql -v ON_ERROR_STOP=0 -U keycloak -d keycloak < "$work/platform/keycloak.sql" >/dev/null 2>&1; then
-      echo "  loaded keycloak realms/users"; else echo "  ! keycloak load reported errors"; fi
+    # ON_ERROR_STOP=1 (not the old 0): without it psql exits 0 even when every
+    # statement errored, so a broken load would always report success. The dump is
+    # --clean --if-exists, so re-loading over an existing DB drops cleanly first.
+    # `2>&1 >/dev/null` keeps stderr (the cause) and drops psql's normal chatter.
+    if kerr="$(platform_exec keycloak-db psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak < "$work/platform/keycloak.sql" 2>&1 >/dev/null)"; then
+      echo "  loaded keycloak realms/users"
+    else
+      rfails+=("keycloak: load failed — ${kerr##*"$NL"}")
+    fi
     $COMPOSE -f platform.compose.yml start keycloak >/dev/null 2>&1 || true
   elif [[ -f "$work/platform/keycloak.sql" ]]; then
-    echo "  keycloak-db not up — bring the platform up, then re-run restore."
+    echo "  keycloak-db not up — bring the platform up, then re-run restore." >&2
   fi
 
-  # 3) Tenant DBs + uploads — stop each castle app for its DB load.
+  # 3) Tenant DBs + uploads — stop each castle app for its DB load. Errors are
+  # recorded (not printed to stdout as if benign) so the pass can exit nonzero.
   for cn in "$work"/tenants/*/; do
     [[ -d "$cn" ]] || continue; cn="$(basename "$cn")"
     if $ENGINE exec "postgres-$cn" pg_isready -U castle >/dev/null 2>&1; then
+      attempted=$((attempted + 1))
       compose_instance "$cn" stop castle >/dev/null 2>&1 || true
-      $ENGINE exec -i "postgres-$cn" psql -U castle -d castle < "$work/tenants/$cn/db.sql" >/dev/null 2>&1 \
-        && echo "  tenant $cn: DB loaded" || echo "  ! tenant $cn: DB load errors"
+      # ON_ERROR_STOP=1 so a failed statement makes psql exit nonzero (see keycloak).
+      if terr="$($ENGINE exec -i "postgres-$cn" psql -v ON_ERROR_STOP=1 -U castle -d castle < "$work/tenants/$cn/db.sql" 2>&1 >/dev/null)"; then
+        echo "  tenant $cn: DB loaded"
+      else
+        rfails+=("tenant $cn: DB load failed — ${terr##*"$NL"}")
+      fi
       if [[ -s "$work/tenants/$cn/uploads.tar" ]]; then
-        $ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" \
-          sh -c 'cd /data && tar xf -' < "$work/tenants/$cn/uploads.tar" 2>/dev/null \
-          && echo "  tenant $cn: uploads restored" || true
+        if uerr="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" sh -c 'cd /data && tar xf -' < "$work/tenants/$cn/uploads.tar" 2>&1)"; then
+          echo "  tenant $cn: uploads restored"
+        else
+          rfails+=("tenant $cn: uploads restore failed — ${uerr##*"$NL"}")
+        fi
       fi
       compose_instance "$cn" start castle >/dev/null 2>&1 || true
     else
-      echo "  tenant $cn not up — run 'castlectl provision-pool', then re-run restore."
+      echo "  tenant $cn not up — run 'castlectl provision-pool', then re-run restore." >&2
     fi
   done
+  # A pass where nothing was reachable (attempted=0) is fine — the multi-pass flow
+  # expects it. Fail only when something we DID try to load errored. (return, not
+  # exit, so the RETURN trap still clears $work.)
+  batch_result restore "$attempted" "${rfails[@]}" || return 1
   echo "restore pass complete."
 }
 
