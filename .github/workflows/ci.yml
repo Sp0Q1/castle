@@ -27,6 +27,26 @@ jobs:
   rust:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
+    # Real Postgres for the test suite (see the Test step). SQLite — the config
+    # default — is loosely typed and accepts INT4/INT8 interchangeably, which is
+    # how a BIGINT-vs-i32 entity mismatch passed CI yet 500'd on the first live
+    # tenant (PR #65). Testing on the engine we deploy on catches that class here.
+    # Pin to the same major the deployment runs: compose + k8s use postgres:18 —
+    # keep this in lockstep with those pins.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: castle
+          POSTGRES_PASSWORD: castle
+          POSTGRES_DB: castle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U castle -d castle_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -46,6 +66,12 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Test
+        env:
+          # Prod parity: exercise the suite against Postgres, not the SQLite default
+          # in config/test.yaml, so Postgres-only type mismatches fail here instead
+          # of on a promote. The suite's auto_migrate + dangerously_recreate build
+          # the schema on this DB. Local `cargo test` still defaults to SQLite.
+          DATABASE_URL: postgres://castle:castle@localhost:5432/castle_test
         run: cargo test --all-features
 
   frontend:
