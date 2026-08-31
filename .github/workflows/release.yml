@@ -100,10 +100,19 @@ jobs:
       #   cosign verify ghcr.io/<owner>/castle@<digest> \
       #     --certificate-identity-regexp '^https://github.com/<owner>/castle/' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      #
+      # --registry-referrers-mode=legacy stores the signature as the classic
+      # `<digest>.sig` tag rather than an OCI 1.1 referrer. ghcr only partially
+      # implements the referrers API (its /referrers endpoint returns nothing),
+      # so a recent cosign — the unpinned installer pulls `latest`, and current
+      # cosign defaults to referrers when the registry advertises support —
+      # writes signatures that `cosign verify` then can't find ("no signatures
+      # found"). Pinning the *mode* keeps signing verifiable while cosign itself
+      # stays current, so there's no version to babysit.
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${{ steps.image.outputs.ref }}@${DIGEST}"
+        run: cosign sign --yes --registry-referrers-mode=legacy "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       # A human-readable SBOM as a build artifact too, so it can be diffed and
       # reviewed without pulling attestations out of the registry.
@@ -184,7 +193,8 @@ jobs:
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${{ steps.image.outputs.ref }}@${DIGEST}"
+        # legacy .sig tags, not OCI referrers (ghcr) — see the app job's Sign step.
+        run: cosign sign --yes --registry-referrers-mode=legacy "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       - name: Report what was published
         run: |
