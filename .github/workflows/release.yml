@@ -2,16 +2,17 @@ name: Release image
 
 # Builds and PUBLISHES the castle image — the piece that makes a real kubectl
 # deploy possible. security.yml builds the same image with `load: true` to scan
-# it and never pushes; this one pushes, signs, and attaches an SBOM.
+# it and never pushes; this one pushes and attaches provenance + an SBOM.
 #
 # Triggers:
 #   push to main   -> ghcr.io/<owner>/castle:main and :sha-<short>
 #   tag v*         -> :<version> and :latest   (the refs a real deploy pins to)
 #
-# Everything published here is verifiable: the image is signed with cosign
-# (keyless, via the workflow's OIDC identity — no long-lived key to leak) and
-# carries an SBOM attestation, so a cluster can require a provenance before it
-# will run the image.
+# Each build carries SLSA provenance + an SBOM attestation (embedded by buildx)
+# and is addressable by an immutable digest. Cosign image signing was removed:
+# ghcr's OCI 1.1 referrers API is non-functional, so cosign signatures pushed
+# there can't be verified (`cosign verify` -> "no signatures found"). Reinstate
+# it only alongside a registry that fully supports referrers.
 
 on:
   push:
@@ -33,12 +34,11 @@ env:
 
 jobs:
   publish:
-    name: Build, push, sign
+    name: Build, push
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push to ghcr
-      id-token: write # cosign keyless signing via OIDC
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,8 +54,8 @@ jobs:
 
       # ghcr (and OCI references generally) must be lowercase, but github.repository
       # keeps the owner's original casing. metadata-action and build-push-action
-      # lowercase it themselves; cosign and sbom-action do not, so give every step
-      # one already-lowercased ref to use.
+      # lowercase it themselves; sbom-action does not, so give every step one
+      # already-lowercased ref to use.
       - name: Normalize image ref
         id: image
         run: echo "ref=${IMAGE,,}" >> "$GITHUB_OUTPUT"
@@ -86,39 +86,9 @@ jobs:
           # is a fast source-only rebuild rather than a full dependency compile.
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # provenance + sbom become attestations attached to the image in the
-          # registry, verifiable with `cosign verify-attestation`.
+          # provenance + sbom become attestations embedded in the image index.
           provenance: true
           sbom: true
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      # Keyless: cosign uses the job's OIDC identity as the signer, recorded in
-      # the public Rekor transparency log. There is no private key to store or
-      # rotate. Verify later with:
-      #   cosign verify ghcr.io/<owner>/castle@<digest> \
-      #     --certificate-identity-regexp '^https://github.com/<owner>/castle/' \
-      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-      #
-      # --registry-referrers-mode=legacy stores the signature as the classic
-      # `<digest>.sig` tag rather than an OCI 1.1 referrer. ghcr only partially
-      # implements the referrers API (its /referrers endpoint returns nothing),
-      # so referrer-stored signatures are unverifiable there — `cosign verify`
-      # reports "no signatures found". Same keyless signature and Rekor entry;
-      # only the storage location differs. Pinning the *mode* (not the cosign
-      # version) keeps signing verifiable while the unpinned installer's cosign
-      # stays current.
-      #
-      # EXIT: when ghcr serves the Referrers API, flip `legacy` -> `oci-1-1` here
-      # and in the keycloak Sign step below — that is the entire change. Tracked
-      # in the backlog; watch upstream for the signal:
-      #   https://github.com/sigstore/cosign/issues/4641
-      #   https://github.com/orgs/community/discussions/163029
-      - name: Sign the image
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes --registry-referrers-mode=legacy "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       # A human-readable SBOM as a build artifact too, so it can be diffed and
       # reviewed without pulling attestations out of the registry.
@@ -137,19 +107,18 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo "digest: ${{ steps.build.outputs.digest }}"
             echo '```'
-            echo "Signed (keyless) and SBOM-attested. Pin deploys to the digest above."
+            echo "Provenance + SBOM attested. Pin deploys to the digest above."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The optimized Keycloak image (deploy/k8s/keycloak/Dockerfile). Built and
-  # signed the same way as the app image so keycloak-prod.yaml can pin a
-  # verifiable digest from our own registry — no boot-time build, read-only rootfs.
+  # The optimized Keycloak image (deploy/k8s/keycloak/Dockerfile). Built the same
+  # way as the app image so keycloak-prod.yaml can pin an immutable digest from
+  # our own registry — no boot-time build, read-only rootfs.
   publish-keycloak:
-    name: Build, push, sign (keycloak)
+    name: Build, push (keycloak)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push to ghcr
-      id-token: write # cosign keyless signing via OIDC
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -193,15 +162,6 @@ jobs:
           provenance: true
           sbom: true
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Sign the image
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        # legacy .sig tags, not OCI referrers (ghcr) — see the app job's Sign step.
-        run: cosign sign --yes --registry-referrers-mode=legacy "${{ steps.image.outputs.ref }}@${DIGEST}"
-
       - name: Report what was published
         run: |
           {
@@ -210,5 +170,5 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo "digest: ${{ steps.build.outputs.digest }}"
             echo '```'
-            echo "Signed (keyless). Pin keycloak-prod.yaml to the digest above."
+            echo "Provenance + SBOM attested. Pin keycloak-prod.yaml to the digest above."
           } >> "$GITHUB_STEP_SUMMARY"
