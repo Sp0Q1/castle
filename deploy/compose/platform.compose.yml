@@ -94,7 +94,10 @@ services:
       - no-new-privileges:true
 
   keycloak-db:
-    image: docker.io/library/postgres:16-alpine
+    # Postgres major = on-disk format change: a new major won't boot on this
+    # volume's data dir. Do NOT just bump this tag — run the dump/restore migration
+    # in docs/backup-and-upgrade.md first, then bump. (Minor 18.x bumps are free.)
+    image: docker.io/library/postgres:18-alpine
     restart: unless-stopped
     networks: [kc]
     # Run AS the postgres user (uid 70), not root. The postgres entrypoint invokes

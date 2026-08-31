@@ -86,9 +86,9 @@ BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"   # age public key (age1…) �
 BACKUP_AGE_IDENTITY="${BACKUP_AGE_IDENTITY:-}"     # age identity file — required to restore
 BACKUP_KEEP="${BACKUP_KEEP:-14}"                   # keep this many local bundles (0 = keep all)
 BACKUP_PUSH_CMD="${BACKUP_PUSH_CMD:-}"             # optional off-box copy per bundle ({} = its path)
-# postgres:16-alpine is already pinned by the deployment, so reuse it as the
+# postgres:18-alpine is already pinned by the deployment, so reuse it as the
 # utility image for tar-ing volumes (busybox tar) — no extra image to pull.
-UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:16-alpine}"
+UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:18-alpine}"
 
 die(){ echo "castlectl: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }

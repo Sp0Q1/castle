@@ -95,7 +95,7 @@ services:
     cap_drop: [ALL]
 
   postgres:
-    image: docker.io/library/postgres:16-alpine
+    image: docker.io/library/postgres:18-alpine
     container_name: postgres-__CODENAME__
     restart: unless-stopped
     networks: [tenant]
