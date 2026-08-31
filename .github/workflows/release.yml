@@ -104,11 +104,17 @@ jobs:
       # --registry-referrers-mode=legacy stores the signature as the classic
       # `<digest>.sig` tag rather than an OCI 1.1 referrer. ghcr only partially
       # implements the referrers API (its /referrers endpoint returns nothing),
-      # so a recent cosign — the unpinned installer pulls `latest`, and current
-      # cosign defaults to referrers when the registry advertises support —
-      # writes signatures that `cosign verify` then can't find ("no signatures
-      # found"). Pinning the *mode* keeps signing verifiable while cosign itself
-      # stays current, so there's no version to babysit.
+      # so referrer-stored signatures are unverifiable there — `cosign verify`
+      # reports "no signatures found". Same keyless signature and Rekor entry;
+      # only the storage location differs. Pinning the *mode* (not the cosign
+      # version) keeps signing verifiable while the unpinned installer's cosign
+      # stays current.
+      #
+      # EXIT: when ghcr serves the Referrers API, flip `legacy` -> `oci-1-1` here
+      # and in the keycloak Sign step below — that is the entire change. Tracked
+      # in the backlog; watch upstream for the signal:
+      #   https://github.com/sigstore/cosign/issues/4641
+      #   https://github.com/orgs/community/discussions/163029
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
