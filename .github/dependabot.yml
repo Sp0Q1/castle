@@ -21,19 +21,26 @@ updates:
       rust-minor-patch:
         update-types: [minor, patch]
     ignore:
-      # sea-orm's major version is not ours to choose: loco-rs 0.16.4 pins
-      # sea-orm 1.1, so taking 2.x here puts two incompatible copies in the
-      # tree and the entities stop satisfying loco's traits —
-      # "the trait bound users::ActiveModel: ActiveModelBehavior is not
-      # satisfied", ten times over. Verified by trying it (PRs #10/#11).
+      # These majors are loco-rs's to choose, not ours: loco re-exports each crate's
+      # traits, so a version mismatch stops our types satisfying loco's bounds.
       #
-      # Minor and patch updates still come through; only the major is held.
-      # REMOVE this once loco-rs releases against sea-orm 2, at which point the
-      # loco bump and this one have to land together.
+      # sea-orm: loco-rs 1.1 is built against sea-orm 2.x (we upgraded both together,
+      # loco 0.16->1.1 / sea-orm 1.1->2.0). Taking a sea-orm *3* early would again put
+      # two incompatible copies in the tree and break "the trait bound
+      # users::ActiveModel: ActiveModelBehavior". Minor/patch still come through.
+      # REMOVE the major hold when loco ships against the next sea-orm major.
       - dependency-name: sea-orm
         update-types: ["version-update:semver-major"]
       - dependency-name: sea-orm-migration
         update-types: ["version-update:semver-major"]
+      # validator: loco-rs 1.1 re-exports Validate from validator 0.20; our
+      # #[derive(Validate)] + Validatable impl must match. Bumping to 0.21 fails to
+      # compile ("the trait bound Validator: loco_rs::prelude::Validate is not
+      # satisfied") — verified 2026-08-31. 0.x minor is the breaking axis, so hold
+      # minor+major; 0.20.x patches still come through. REMOVE together with the loco
+      # bump when loco-rs ships against validator 0.21.
+      - dependency-name: validator
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/frontend"
@@ -75,3 +82,12 @@ updates:
     groups:
       docker:
         update-types: [major, minor, patch]
+    ignore:
+      # Postgres majors change the on-disk storage format: postgres:18 refuses to
+      # start on a data directory written by 16 ("database files are incompatible
+      # with server"). That's a deliberate dump/restore (or pg_upgrade) migration,
+      # not a tag bump — see docs/backup-and-upgrade.md. Hold the major so an
+      # auto-merge can't brick the live DB on the next `up -d`; 16.x security
+      # patches still land. Bump deliberately, together with the data migration.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
