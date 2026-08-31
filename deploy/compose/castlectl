@@ -237,16 +237,26 @@ reload_caddy(){ $COMPOSE -f platform.compose.yml exec -T caddy caddy reload --co
 # chars). Secrets are NOT written into the rendered file; they are injected from
 # the environment at compose time (compose_instance), so base64 `/`/`+` never
 # breaks sed and no secret lands on disk in a compose file.
-render_instance(){ # <codename> <template>
-  local cn="$1" tpl="$2"
+render_instance(){ # <codename> <template> [<image>]  (image defaults to $CASTLE_IMAGE)
+  local cn="$1" tpl="$2" img="${3:-$CASTLE_IMAGE}"
   local realm host hostport
   realm="$(realm_of "$cn")"; host="$(host_of "$cn")"; hostport="$(hostport_of "$cn")"
   sed -e "s/__CODENAME__/$cn/g" -e "s/__REALM__/$realm/g" -e "s#__HOST__#$host#g" \
       -e "s#__HOSTPORT__#$hostport#g" \
-      -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${CASTLE_IMAGE//\//\\/}#g" \
+      -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${img//\//\\/}#g" \
       "$tpl" > "$RUN/$cn.compose.yml"
 }
 
+# Resolve an image ref to its immutable repo@sha256 form (the image must be local
+# first — pull it; prints nothing if it isn't present). A moving tag like :main
+# keeps the same string while the digest it points at changes underneath, so
+# `up -d` sees no change to the rendered compose and leaves the old container
+# running. Rendering pinned to the resolved digest makes the reference change
+# when the image does — so a moved tag actually redeploys, and only the app
+# service, since the DB and proxy carry their own separately-pinned tags.
+resolve_digest(){ # <image-ref>  ->  <repo>@sha256:...
+  $ENGINE image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$1" 2>/dev/null
+}
 
 # Run a compose command for a codename with its secrets exported, so compose
 # substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
@@ -422,10 +432,21 @@ upgrade(){ # [<codename>]  (default: every running codename)
   [[ ${#targets[@]} -gt 0 ]] || { echo "nothing running to upgrade"; return 0; }
   echo "upgrading ${#targets[@]} instance(s): ${targets[*]}"
   for cn in "${targets[@]}"; do
-    local kind tpl; kind="$(kind_of "$cn")"
+    local kind tpl img; kind="$(kind_of "$cn")"
     [[ "$kind" == tenant ]] && tpl="$TPL/tenant.compose.yml" || tpl="$TPL/canary.compose.yml"
-    render_instance "$cn" "$tpl"
-    compose_instance "$cn" pull >/dev/null 2>&1 || true
+    # Pin a tenant's app to the digest its (possibly moving) tag resolves to
+    # *now*, so a moved :main actually redeploys: up -d recreates on the changed
+    # reference, and only the app — Postgres and the proxy keep their own tags. A
+    # failed pull is fatal here: silently shipping a stale image is precisely how
+    # a moved :main can look "deployed" while the old container keeps running.
+    img="$CASTLE_IMAGE"
+    if [[ "$kind" == tenant ]]; then
+      $ENGINE pull "$CASTLE_IMAGE" >/dev/null 2>&1 || die "pull failed for $CASTLE_IMAGE ($cn)"
+      img="$(resolve_digest "$CASTLE_IMAGE")"
+      [[ "$img" == *@sha256:* ]] || die "could not resolve a digest for $CASTLE_IMAGE ($cn)"
+    fi
+    render_instance "$cn" "$tpl" "$img"
+    compose_instance "$cn" pull >/dev/null 2>&1 || die "pull failed for $cn"
     compose_instance "$cn" up -d >/dev/null 2>&1 || die "upgrade of $cn failed"
     echo "  $cn ($kind) recreated with current image (data kept)"
   done
