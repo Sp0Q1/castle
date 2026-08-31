@@ -14,8 +14,9 @@ pub struct CreateCommentParams {
     pub body: String,
 }
 
-/// Loads a finding the user is allowed to see, or fails with the appropriate
-/// status: 401 if they are not a member, 404 if it is a draft they may not read.
+/// Loads a finding the user is allowed to see, or 404 — whether because it does
+/// not exist, they are not a member of its project, or it is a draft a client
+/// may not read. All three collapse to 404 so existence is never disclosed.
 async fn load_viewable_finding(
     ctx: &AppContext,
     user: &users::Model,
@@ -30,9 +31,7 @@ async fn load_viewable_finding(
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
     if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::Unauthorized(
-            "you do not have access to this finding".to_string(),
-        ));
+        return Err(Error::NotFound);
     }
 
     let privileged = user.is_manager() || membership.as_ref().is_some_and(|m| m.role == "staff");

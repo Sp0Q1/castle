@@ -22,3 +22,6 @@ target/
 
 # Runtime-uploaded images
 uploads/
+
+# Claude Code scratch/worktrees — never commit
+.claude/

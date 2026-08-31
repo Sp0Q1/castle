@@ -19,7 +19,7 @@ impl MigrationTrait for Migration {
                 ("technical_description", ColType::Text),
                 ("impact", ColType::Text),
                 ("recommendation", ColType::Text),
-                // info | low | medium | high | critical
+                // low | medium | elevated | high | extreme
                 ("severity", ColType::StringWithDefault("medium".to_string())),
                 // draft | published — clients only ever see "published" findings
                 ("status", ColType::StringWithDefault("draft".to_string())),

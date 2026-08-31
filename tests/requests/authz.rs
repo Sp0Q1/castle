@@ -280,19 +280,22 @@ async fn non_members_cannot_reach_a_project_at_all() {
             format!("/api/projects/{}/members", f.project_id),
         ] {
             let response = request.get(&path).add_header(h, &v).await;
+            // 404 (not 401): a non-member must not be able to distinguish a
+            // forbidden project from a nonexistent one.
             assert_eq!(
                 response.status_code(),
-                401,
-                "{path} was reachable by a non-member"
+                404,
+                "{path} disclosed its existence to a non-member"
             );
         }
 
-        // Even the published finding, which its own project's client may read.
+        // Even the published finding, which its own project's client may read —
+        // to an outsider it simply does not exist.
         let response = request
             .get(&format!("/api/findings/{}", f.published_id))
             .add_header(h, &v)
             .await;
-        assert_eq!(response.status_code(), 401);
+        assert_eq!(response.status_code(), 404);
     })
     .await;
 }
@@ -316,19 +319,17 @@ async fn clients_cannot_write_or_publish() {
                 "recommendation": ""
             }))
             .await;
-        assert_eq!(response.status_code(), 401);
+        // 403: a client *is* a member of the project (hiding it is pointless),
+        // but only staff/management may write findings.
+        assert_eq!(response.status_code(), 403);
 
-        // Nor may they publish someone else's draft — but they must not learn
-        // it exists either, so this is a 404 rather than a 401.
+        // Nor may they publish someone else's draft — and since a client can't
+        // see drafts, this is a 404 that never reveals the draft exists.
         let response = request
             .post(&format!("/api/findings/{}/publish", f.draft_id))
             .add_header(h, &v)
             .await;
-        assert!(
-            response.status_code() == 401 || response.status_code() == 404,
-            "client publish returned {}",
-            response.status_code()
-        );
+        assert_eq!(response.status_code(), 404);
     })
     .await;
 }
