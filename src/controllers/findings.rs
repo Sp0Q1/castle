@@ -2,8 +2,7 @@
 //! sections (description, technical description, impact, recommendation) plus a
 //! severity and a draft/published status. Access rules enforced here:
 //!
-//! * write / edit / publish — project staff (a "staff" member, the author, or
-//!   management)
+//! * write / edit / publish — project staff (a "staff" member or management)
 //! * read — management and staff see everything; clients see only *published*
 //!   findings
 use loco_rs::prelude::*;
@@ -95,6 +94,49 @@ fn is_privileged(user: &users::Model, membership: &Option<project_members::Model
     user.is_manager() || membership.as_ref().is_some_and(|m| m.role == "staff")
 }
 
+/// Write authorization for a finding's project: a platform manager or a project
+/// "staff" member may write. A non-member gets **404** (existence stays hidden,
+/// like the read paths); a client member gets **403** (they can already see the
+/// project). Authorship grants nothing on its own, so an IdP demotion that
+/// downgrades a `staff` membership genuinely revokes write access.
+fn require_write(
+    user: &users::Model,
+    membership: &Option<project_members::Model>,
+    action: &str,
+) -> Result<()> {
+    if !(user.is_manager() || membership.is_some()) {
+        return Err(Error::NotFound);
+    }
+    if user.is_manager() || membership.as_ref().is_some_and(|m| m.role == "staff") {
+        Ok(())
+    } else {
+        Err(crate::security::forbidden(action))
+    }
+}
+
+/// Write authorization for an *existing* finding. Like [`require_write`], but a
+/// non-privileged member acting on a **draft** gets 404 (a client must not learn
+/// a draft exists — matching the read path), and on a **published** finding gets
+/// 403.
+fn require_finding_write(
+    user: &users::Model,
+    membership: &Option<project_members::Model>,
+    finding: &findings::Model,
+    action: &str,
+) -> Result<()> {
+    if !(user.is_manager() || membership.is_some()) {
+        return Err(Error::NotFound);
+    }
+    if !is_privileged(user, membership) && !finding.is_published() {
+        return Err(Error::NotFound);
+    }
+    if is_privileged(user, membership) {
+        Ok(())
+    } else {
+        Err(crate::security::forbidden(action))
+    }
+}
+
 #[debug_handler]
 pub async fn create(
     CurrentUser(user): CurrentUser,
@@ -105,12 +147,7 @@ pub async fn create(
     let project = load_project(&ctx, project_id).await?;
     let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
 
-    let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
-    let is_owner_manager = user.is_manager() && project.created_by == user.id;
-    let is_manager_member = user.is_manager() && membership.is_some();
-    if !(is_staff_member || is_owner_manager || is_manager_member) {
-        return unauthorized("only staff assigned to this project can write findings");
-    }
+    require_write(&user, &membership, "only project staff can write findings")?;
 
     let CreateFindingParams {
         title,
@@ -172,8 +209,10 @@ pub async fn list(
     let project = load_project(&ctx, project_id).await?;
     let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
 
+    // Non-members must not be able to distinguish a forbidden project from a
+    // nonexistent one, so hide it as 404 rather than 401.
     if !(user.is_manager() || membership.is_some()) {
-        return unauthorized("you do not have access to this project");
+        return Err(Error::NotFound);
     }
 
     let mut items = findings::Model::list_for_project(&ctx.db, project.id).await?;
@@ -195,8 +234,10 @@ pub async fn show(
     let membership =
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
+    // A non-member gets 404 (hide existence); a member who can't see drafts
+    // gets 404 below. Either way existence is never disclosed via the status.
     if !(user.is_manager() || membership.is_some()) {
-        return unauthorized("you do not have access to this finding");
+        return Err(Error::NotFound);
     }
     // Drafts are invisible to clients — behave as if the finding does not exist.
     if !is_privileged(&user, &membership) && !finding.is_published() {
@@ -237,11 +278,12 @@ pub async fn update(
     let membership =
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
-    let is_author = finding.author_id == user.id;
-    let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
-    if !(is_author || is_staff_member || user.is_manager()) {
-        return unauthorized("only project staff can edit findings");
-    }
+    require_finding_write(
+        &user,
+        &membership,
+        &finding,
+        "only project staff can edit findings",
+    )?;
 
     if let Some(severity) = &params.severity {
         if !is_valid_severity(severity) {
@@ -309,11 +351,12 @@ pub async fn publish(
     let membership =
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
-    let is_author = finding.author_id == user.id;
-    let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
-    if !(is_author || is_staff_member || user.is_manager()) {
-        return unauthorized("only project staff can publish findings");
-    }
+    require_finding_write(
+        &user,
+        &membership,
+        &finding,
+        "only project staff can publish findings",
+    )?;
 
     let mut item = finding.into_active_model();
     item.status = Set(crate::models::findings::STATUS_PUBLISHED.to_string());
@@ -331,11 +374,12 @@ pub async fn unpublish(
     let membership =
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
-    let is_author = finding.author_id == user.id;
-    let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
-    if !(is_author || is_staff_member || user.is_manager()) {
-        return unauthorized("only project staff can unpublish findings");
-    }
+    require_finding_write(
+        &user,
+        &membership,
+        &finding,
+        "only project staff can unpublish findings",
+    )?;
 
     // Reverting to draft hides it from clients again.
     let mut item = finding.into_active_model();
@@ -354,11 +398,12 @@ pub async fn remove(
     let membership =
         project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
 
-    let is_author = finding.author_id == user.id;
-    let is_staff_member = membership.as_ref().is_some_and(|m| m.role == "staff");
-    if !(is_author || is_staff_member || user.is_manager()) {
-        return unauthorized("only project staff can delete findings");
-    }
+    require_finding_write(
+        &user,
+        &membership,
+        &finding,
+        "only project staff can delete findings",
+    )?;
 
     // Remove dependent comments first so nothing is orphaned (robust even when
     // SQLite foreign-key cascade enforcement is off).
