@@ -16,11 +16,12 @@ fan-out for you.
 
 Two things it does **not** paper over:
 
-- **Postgres *major* upgrades are not a tag bump.** `postgres:16 → 17` changes
-  the on-disk format, so it needs a dump/restore (or `pg_upgrade`) for keycloak-db
-  and every tenant DB. Minor (16.x) bumps are free. Keep Postgres pinned to 16 and
-  treat a major as a deliberate migration (a `backup` then restore into fresh 17
-  volumes is the simplest path).
+- **Postgres *major* upgrades are not a tag bump.** A new major won't boot on the
+  old major's data dir ("database files are incompatible"), so it needs a
+  dump/restore (or `pg_upgrade`) for keycloak-db and every tenant DB. Minor (18.x)
+  bumps are free. The pins are on **18**; treat the *next* major as a deliberate
+  migration — see **Migrating a Postgres major** below. Dependabot surfaces a pg
+  major as a PR: that's your cue to plan the migration, not to blind-merge it.
 - **Keycloak major upgrades** (e.g. 26 → 27): bump the image, but read the release
   notes first — Keycloak migrates its own schema, but majors can change config. If
   you built the optimized image (deploy/k8s/keycloak/Dockerfile), rebuild it on the
@@ -28,6 +29,47 @@ Two things it does **not** paper over:
 
 Always `./castlectl backup` before a schema-changing release, and test it on a
 staging box.
+
+## Migrating a Postgres major
+
+A pg major rewrites the on-disk format, so the move is: dump the logical data on
+the old major, recreate the DB container on the new major with a **fresh** volume,
+and load the dump back. Do it in a maintenance window. keycloak-db is always
+present; tenant DBs exist only for promoted codenames (canaries have no DB):
+
+```bash
+cd /opt/castle/deploy/compose
+
+# 1. Dump each live DB WHILE STILL ON THE OLD MAJOR (logical dump = portable).
+podman exec compose_keycloak-db_1 pg_dump --clean --if-exists -U keycloak -d keycloak \
+  | gzip > /root/kc-pre-migration.sql.gz
+for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
+  podman exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle \
+    | gzip > "/root/tenant-$cn.sql.gz"
+done
+
+# 2. Pull the new pins (postgres:NN-alpine bumped across compose + k8s).
+git pull
+
+# 3. Recreate keycloak-db on the new major with an empty volume, then load the dump.
+podman compose -f platform.compose.yml stop keycloak keycloak-db
+podman volume rm compose_keycloak_db          # the OLD-major data dir (confirm: podman volume ls)
+podman compose -f platform.compose.yml up -d keycloak-db
+until podman exec compose_keycloak-db_1 pg_isready -U keycloak >/dev/null 2>&1; do sleep 2; done
+gunzip -c /root/kc-pre-migration.sql.gz | podman exec -i compose_keycloak-db_1 psql -U keycloak -d keycloak
+
+# 4. Per promoted tenant (skip if all-canary): stop its castle, wipe its pg volume,
+#    up -d postgres-<cn>, load /root/tenant-<cn>.sql.gz, then ./castlectl upgrade <cn>.
+
+# 5. Bring the platform back and verify.
+podman compose -f platform.compose.yml up -d keycloak
+podman logs -f compose_keycloak_1             # wait until healthy
+./castlectl list
+```
+
+Keep the `/root/*-pre-migration.sql.gz` dumps until the new major is proven
+healthy — they're the rollback (recreate on the old tag, load the dump). Delete
+them once verified.
 
 ## Backups
 

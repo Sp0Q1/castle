@@ -82,12 +82,8 @@ updates:
     groups:
       docker:
         update-types: [major, minor, patch]
-    ignore:
-      # Postgres majors change the on-disk storage format: postgres:18 refuses to
-      # start on a data directory written by 16 ("database files are incompatible
-      # with server"). That's a deliberate dump/restore (or pg_upgrade) migration,
-      # not a tag bump — see docs/backup-and-upgrade.md. Hold the major so an
-      # auto-merge can't brick the live DB on the next `up -d`; 16.x security
-      # patches still land. Bump deliberately, together with the data migration.
-      - dependency-name: postgres
-        update-types: ["version-update:semver-major"]
+    # NOTE: Postgres majors are NOT ignored — we want to *see* them. But a pg major
+    # changes the on-disk format (a new major won't boot on the old data dir), so
+    # its PR is a "plan the migration" signal, not a blind-merge: do the deliberate
+    # dump/restore in docs/backup-and-upgrade.md, then bump the pins. The compose
+    # file carries the same warning next to the image.
