@@ -424,6 +424,9 @@ async fn hp_magic_link(
     Json(params): Json<MagicLinkParams>,
 ) -> Result<Response> {
     honeypot_capture("magic_link", &headers, &format!("email={}", params.email));
+    // Same throttle as the real `magic_link`, so a decoy can't be told apart by
+    // never returning 429.
+    rate_limit::check_signup(&params.email)?;
     format::empty_json()
 }
 
@@ -443,6 +446,8 @@ async fn hp_resend(
         &headers,
         &format!("email={}", params.email),
     );
+    // Same throttle as the real `resend_verification_email`.
+    rate_limit::check_signup(&params.email)?;
     format::json(())
 }
 
