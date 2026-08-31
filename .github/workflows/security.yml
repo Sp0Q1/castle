@@ -134,7 +134,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -188,17 +188,27 @@ jobs:
           docker run --rm --entrypoint sh castle:ci -c 'test -s frontend/dist/index.html' \
             || { echo "::error::built SPA missing from the image"; exit 1; }
 
-      # Blocking: known CVEs in what we actually ship.
+      # Blocking: known CVEs in what we actually ship. The image is exported with
+      # `docker save` and scanned from that tarball — NOT by bind-mounting the Docker
+      # socket into a floating `:latest` scanner, which would hand daemon (root on the
+      # runner) access to third-party code every run. Trivy reads the tar file and
+      # never touches the daemon. (`--input` takes a file, not stdin: a docker-save
+      # tar needs random access to pull individual layers, so it's written to
+      # $RUNNER_TEMP and mounted read-only.) GitHub's default shell runs with
+      # `set -eo pipefail`, so a Trivy exit 1 still fails the step — blocking behavior
+      # is unchanged.
       - name: Scan image for HIGH/CRITICAL vulnerabilities
         run: |
+          set -euo pipefail
+          docker save castle:ci -o "$RUNNER_TEMP/castle-ci.tar"
           docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$RUNNER_TEMP/castle-ci.tar:/scan/castle-ci.tar:ro" \
             -v "$HOME/.cache/trivy:/root/.cache/trivy" \
             aquasec/trivy:latest image \
+              --input /scan/castle-ci.tar \
               --severity HIGH,CRITICAL \
               --ignore-unfixed \
-              --exit-code 1 \
-              castle:ci
+              --exit-code 1
 
       # Non-blocking: Dockerfile and Kubernetes hardening opinions. Reported to
       # the Security tab for triage; see docs/production-readiness.md for the
