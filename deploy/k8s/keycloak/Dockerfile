@@ -9,9 +9,10 @@
 # needs nothing writable under /opt/keycloak except an emptyDir at /opt/keycloak/data
 # and /tmp. That is what lets keycloak-prod.yaml set readOnlyRootFilesystem: true.
 #
-# Published by .github/workflows/release.yml to
-#   ghcr.io/<owner>/castle-keycloak:26.7.2
-# (signed keyless with cosign, same as the app image). Pin deploys to the digest.
+# Published by .github/workflows/release-keycloak.yml to
+#   ghcr.io/<owner>/castle-keycloak  (only when this directory changes, not on
+# every main push). Provenance + SBOM are embedded, same as the app image. Pin
+# deploys to the digest.
 #
 # Build-time options set below are FIXED for this image; changing the database
 # vendor, health or metrics means rebuilding. Runtime options (hostname, DB URL

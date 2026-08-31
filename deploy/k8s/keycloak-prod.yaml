@@ -20,7 +20,7 @@
 #     castlectl / keycloak-realm.sh, not baked in at boot.
 #
 # BEFORE APPLYING, set these to real values (search "SET THIS"):
-#   * the Keycloak image: release.yml publishes ghcr.io/<owner>/castle-keycloak;
+#   * the Keycloak image: release-keycloak.yml publishes ghcr.io/<owner>/castle-keycloak;
 #     pin the `image:` below to a published digest (replace ghcr.io/OWNER/...)
 #   * the hostname (KC_HOSTNAME) and the Ingress host
 #   * provide the `keycloak-secrets` Secret (example at the bottom; seal it)
@@ -135,7 +135,7 @@ spec:
           # Optimized image: the Quarkus build ran at image-build time (see
           # deploy/k8s/keycloak/Dockerfile), so nothing is written under
           # /opt/keycloak/lib at boot and the root fs can be read-only.
-          # SET THIS: pin to the digest published by release.yml.
+          # SET THIS: pin to the digest published by release-keycloak.yml.
           image: ghcr.io/OWNER/castle-keycloak:26.7.2
           # --optimized skips the boot-time build (the image is already built).
           # Build-time options (KC_DB, health, metrics) are baked into the image;

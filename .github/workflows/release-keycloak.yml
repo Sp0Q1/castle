@@ -1,0 +1,96 @@
+name: Release keycloak image
+
+# The optimized Keycloak image (deploy/k8s/keycloak/Dockerfile), built the same
+# way as the app image (release.yml) so keycloak-prod.yaml can pin an immutable
+# digest from our own registry — no boot-time build, read-only rootfs.
+#
+# Split out of release.yml so it does NOT rebuild on every main push: the Keycloak
+# context changes rarely, while the app image carries the ":main tracks main"
+# guarantee and must rebuild every push. The `paths:` filter below is what gates
+# this build — and because a workflow-level `paths:` in release.yml would ALSO gate
+# the app `publish` job, the Keycloak build has to live in its own file to be gated
+# independently. It still rebuilds on demand via workflow_dispatch.
+#
+# Provenance + an SBOM are embedded by buildx into the image index (so `packages:
+# write` alone covers it — no GitHub attestations API is used). Cosign image
+# signing was removed for the same reason as the app image: ghcr's OCI 1.1
+# referrers API is non-functional (see release.yml). Do not re-add it here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/k8s/keycloak/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # ghcr requires a lowercase path; github.repository is <owner>/<repo>.
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish-keycloak:
+    name: Build, push (keycloak)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr (provenance + SBOM are embedded here too)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to ghcr
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr requires lowercase; see the note in release.yml's app job.
+      - name: Normalize image ref
+        id: image
+        run: echo "ref=${IMAGE,,}-keycloak" >> "$GITHUB_OUTPUT"
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.image.outputs.ref }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: deploy/k8s/keycloak
+          file: deploy/k8s/keycloak/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=keycloak
+          cache-to: type=gha,mode=max,scope=keycloak
+          provenance: true
+          sbom: true
+
+      - name: Report what was published
+        run: |
+          {
+            echo "### Published (keycloak)"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo "digest: ${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo "Provenance + SBOM attested. Pin keycloak-prod.yaml to the digest above."
+          } >> "$GITHUB_STEP_SUMMARY"

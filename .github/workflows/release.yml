@@ -1,18 +1,24 @@
 name: Release image
 
-# Builds and PUBLISHES the castle image — the piece that makes a real kubectl
+# Builds and PUBLISHES the castle app image — the piece that makes a real kubectl
 # deploy possible. security.yml builds the same image with `load: true` to scan
 # it and never pushes; this one pushes and attaches provenance + an SBOM.
+#
+# The optimized Keycloak image has its own workflow (release-keycloak.yml): its
+# context changes rarely, so it is rebuilt only when deploy/k8s/keycloak/** changes
+# rather than on every push here.
 #
 # Triggers:
 #   push to main   -> ghcr.io/<owner>/castle:main and :sha-<short>
 #   tag v*         -> :<version> and :latest   (the refs a real deploy pins to)
 #
-# Each build carries SLSA provenance + an SBOM attestation (embedded by buildx)
-# and is addressable by an immutable digest. Cosign image signing was removed:
-# ghcr's OCI 1.1 referrers API is non-functional, so cosign signatures pushed
-# there can't be verified (`cosign verify` -> "no signatures found"). Reinstate
-# it only alongside a registry that fully supports referrers.
+# Each build carries SLSA provenance + an SBOM attestation (embedded by buildx
+# into the image index, so `packages: write` alone covers it — no GitHub
+# attestations API is used) and is addressable by an immutable digest. Cosign
+# image signing was removed: ghcr's OCI 1.1 referrers API is non-functional, so
+# cosign signatures pushed there can't be verified (`cosign verify` -> "no
+# signatures found"). Reinstate it only alongside a registry that fully supports
+# referrers.
 
 on:
   push:
@@ -24,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -38,8 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # push to ghcr
-      attestations: write
+      packages: write # push to ghcr (provenance + SBOM are embedded here too)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -108,67 +113,4 @@ jobs:
             echo "digest: ${{ steps.build.outputs.digest }}"
             echo '```'
             echo "Provenance + SBOM attested. Pin deploys to the digest above."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # The optimized Keycloak image (deploy/k8s/keycloak/Dockerfile). Built the same
-  # way as the app image so keycloak-prod.yaml can pin an immutable digest from
-  # our own registry — no boot-time build, read-only rootfs.
-  publish-keycloak:
-    name: Build, push (keycloak)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write # push to ghcr
-      attestations: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Log in to ghcr
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # ghcr requires lowercase; see the note in the app job above.
-      - name: Normalize image ref
-        id: image
-        run: echo "ref=${IMAGE,,}-keycloak" >> "$GITHUB_OUTPUT"
-
-      - name: Compute tags
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ steps.image.outputs.ref }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=sha,prefix=sha-
-
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: deploy/k8s/keycloak
-          file: deploy/k8s/keycloak/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=keycloak
-          cache-to: type=gha,mode=max,scope=keycloak
-          provenance: true
-          sbom: true
-
-      - name: Report what was published
-        run: |
-          {
-            echo "### Published (keycloak)"
-            echo '```'
-            echo "${{ steps.meta.outputs.tags }}"
-            echo "digest: ${{ steps.build.outputs.digest }}"
-            echo '```'
-            echo "Provenance + SBOM attested. Pin keycloak-prod.yaml to the digest above."
           } >> "$GITHUB_STEP_SUMMARY"
