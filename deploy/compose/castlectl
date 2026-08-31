@@ -113,7 +113,17 @@ pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
 # secrets and the certs themselves. domains.txt is just dehydrated's INPUT list
 # (what to issue), not a claim about what exists.
 has_cert(){ [[ -f "$CERTS/$(host_of "$1")/fullchain.pem" ]]; }
-container_exists(){ $ENGINE ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; }
+# Direct per-container lookup, NOT a parse of `ps -a`. The old
+# `ps -a --format {{.Names}} | grep -qx` listed EVERY container and swallowed
+# errors (2>/dev/null), so a transient `podman ps` hiccup — store contention while
+# a mass `upgrade` recreates many pods at once — returned empty output that grep
+# read as "not found". That false-negative skipped running instances, mislabelled
+# them () and made `list` disagree with reality. `container exists` (podman) /
+# `container inspect` (docker) is a clean 0/1 for a single name, no listing.
+container_exists(){
+  if [[ "$ENGINE" == *podman ]]; then "$ENGINE" container exists "$1"
+  else "$ENGINE" container inspect "$1" >/dev/null 2>&1; fi
+}
 kind_of(){ # tenant | canary | "" — derived from the engine, not a local file
   container_exists "castle-$1" && { echo tenant; return; }
   container_exists "oauth2-proxy-$1" && { echo canary; return; }
