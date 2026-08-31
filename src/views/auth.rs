@@ -24,7 +24,7 @@ impl LoginResponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CurrentResponse {
-    pub id: i32,
+    pub id: i64,
     pub pid: String,
     pub name: String,
     pub email: String,

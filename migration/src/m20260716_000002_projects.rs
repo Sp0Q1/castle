@@ -18,7 +18,7 @@ impl MigrationTrait for Migration {
                 ("status", ColType::StringWithDefault("active".to_string())),
             ],
             &[
-                // created_by INTEGER NOT NULL, FK -> users(id) (the manager who opened it)
+                // created_by BIGINT NOT NULL, FK -> users(id) (the manager who opened it)
                 ("users", "created_by"),
             ],
         )

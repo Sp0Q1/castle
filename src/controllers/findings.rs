@@ -75,14 +75,14 @@ fn validate_finding_text(
     Ok(())
 }
 
-async fn load_project(ctx: &AppContext, id: i32) -> Result<projects::Model> {
+async fn load_project(ctx: &AppContext, id: i64) -> Result<projects::Model> {
     projects::Entity::find_by_id(id)
         .one(&ctx.db)
         .await?
         .ok_or_else(|| Error::NotFound)
 }
 
-async fn load_finding(ctx: &AppContext, id: i32) -> Result<findings::Model> {
+async fn load_finding(ctx: &AppContext, id: i64) -> Result<findings::Model> {
     findings::Entity::find_by_id(id)
         .one(&ctx.db)
         .await?
@@ -98,7 +98,7 @@ fn is_privileged(user: &users::Model, membership: &Option<project_members::Model
 #[debug_handler]
 pub async fn create(
     CurrentUser(user): CurrentUser,
-    Path(project_id): Path<i32>,
+    Path(project_id): Path<i64>,
     State(ctx): State<AppContext>,
     Json(params): Json<CreateFindingParams>,
 ) -> Result<Response> {
@@ -166,7 +166,7 @@ pub async fn create(
 #[debug_handler]
 pub async fn list(
     CurrentUser(user): CurrentUser,
-    Path(project_id): Path<i32>,
+    Path(project_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
@@ -188,7 +188,7 @@ pub async fn list(
 #[debug_handler]
 pub async fn show(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
@@ -229,7 +229,7 @@ pub async fn show(
 #[debug_handler]
 pub async fn update(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
     Json(params): Json<UpdateFindingParams>,
 ) -> Result<Response> {
@@ -302,7 +302,7 @@ pub async fn update(
 #[debug_handler]
 pub async fn publish(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
@@ -324,7 +324,7 @@ pub async fn publish(
 #[debug_handler]
 pub async fn unpublish(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
@@ -347,7 +347,7 @@ pub async fn unpublish(
 #[debug_handler]
 pub async fn remove(
     CurrentUser(user): CurrentUser,
-    Path(finding_id): Path<i32>,
+    Path(finding_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;

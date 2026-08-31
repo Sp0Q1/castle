@@ -9,7 +9,7 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key)]
-    pub id: i32,
+    pub id: i64,
     pub pid: Uuid,
     pub title: String,
     #[sea_orm(column_type = "Text")]
@@ -23,8 +23,8 @@ pub struct Model {
     pub severity: String,
     pub status: String,
     pub finding_type: String,
-    pub project_id: i32,
-    pub author_id: i32,
+    pub project_id: i64,
+    pub author_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

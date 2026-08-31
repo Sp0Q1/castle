@@ -17,8 +17,8 @@ impl MigrationTrait for Migration {
                 ("role", ColType::StringWithDefault("staff".to_string())),
             ],
             &[
-                ("projects", ""), // project_id INTEGER NOT NULL, FK -> projects(id)
-                ("users", ""),    // user_id    INTEGER NOT NULL, FK -> users(id)
+                ("projects", ""), // project_id BIGINT NOT NULL, FK -> projects(id)
+                ("users", ""),    // user_id    BIGINT NOT NULL, FK -> users(id)
             ],
         )
         .await?;

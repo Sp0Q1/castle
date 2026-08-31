@@ -9,11 +9,11 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key)]
-    pub id: i32,
+    pub id: i64,
     #[sea_orm(column_type = "Text")]
     pub body: String,
-    pub finding_id: i32,
-    pub user_id: i32,
+    pub finding_id: i64,
+    pub user_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

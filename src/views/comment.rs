@@ -5,7 +5,7 @@ use crate::views::user::UserSummary;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CommentResponse {
-    pub id: i32,
+    pub id: i64,
     pub body: String,
     pub author: UserSummary,
     pub created_at: String,

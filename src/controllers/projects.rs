@@ -28,7 +28,7 @@ pub struct OnboardParams {
 }
 
 /// Loads a project by id or returns 404.
-async fn load_project(ctx: &AppContext, id: i32) -> Result<projects::Model> {
+async fn load_project(ctx: &AppContext, id: i64) -> Result<projects::Model> {
     projects::Entity::find_by_id(id)
         .one(&ctx.db)
         .await?
@@ -37,7 +37,7 @@ async fn load_project(ctx: &AppContext, id: i32) -> Result<projects::Model> {
 
 /// Whether `user` may view `project_id`: management sees every project, everyone
 /// else only the projects they have been onboarded to.
-async fn can_view(ctx: &AppContext, user: &users::Model, project_id: i32) -> Result<bool> {
+async fn can_view(ctx: &AppContext, user: &users::Model, project_id: i64) -> Result<bool> {
     if user.is_manager() {
         return Ok(true);
     }
@@ -96,7 +96,7 @@ pub async fn list(
             .filter(project_members::Column::UserId.eq(user.id))
             .all(&ctx.db)
             .await?;
-        let ids: Vec<i32> = memberships.iter().map(|m| m.project_id).collect();
+        let ids: Vec<i64> = memberships.iter().map(|m| m.project_id).collect();
         if ids.is_empty() {
             Vec::new()
         } else {
@@ -114,7 +114,7 @@ pub async fn list(
 #[debug_handler]
 pub async fn show(
     CurrentUser(user): CurrentUser,
-    Path(project_id): Path<i32>,
+    Path(project_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
@@ -127,7 +127,7 @@ pub async fn show(
 #[debug_handler]
 pub async fn onboard(
     CurrentUser(user): CurrentUser,
-    Path(project_id): Path<i32>,
+    Path(project_id): Path<i64>,
     State(ctx): State<AppContext>,
     Json(params): Json<OnboardParams>,
 ) -> Result<Response> {
@@ -167,7 +167,7 @@ pub async fn onboard(
 #[debug_handler]
 pub async fn list_members(
     CurrentUser(user): CurrentUser,
-    Path(project_id): Path<i32>,
+    Path(project_id): Path<i64>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;

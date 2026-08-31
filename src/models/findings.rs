@@ -41,7 +41,7 @@ impl Model {
     ///
     /// # Errors
     /// When the finding is missing or the query fails.
-    pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> ModelResult<Self> {
+    pub async fn find_by_id(db: &DatabaseConnection, id: i64) -> ModelResult<Self> {
         let finding = Entity::find_by_id(id).one(db).await?;
         finding.ok_or_else(|| ModelError::EntityNotFound)
     }
@@ -52,7 +52,7 @@ impl Model {
     /// When the query fails.
     pub async fn list_for_project(
         db: &DatabaseConnection,
-        project_id: i32,
+        project_id: i64,
     ) -> ModelResult<Vec<Self>> {
         let findings = Entity::find()
             .filter(Column::ProjectId.eq(project_id))

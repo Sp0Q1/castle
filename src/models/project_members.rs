@@ -29,8 +29,8 @@ impl Model {
     /// When the query fails.
     pub async fn find_membership(
         db: &DatabaseConnection,
-        project_id: i32,
-        user_id: i32,
+        project_id: i64,
+        user_id: i64,
     ) -> ModelResult<Option<Self>> {
         let member = Entity::find()
             .filter(Column::ProjectId.eq(project_id))
@@ -46,8 +46,8 @@ impl Model {
     /// When the query fails.
     pub async fn is_member(
         db: &DatabaseConnection,
-        project_id: i32,
-        user_id: i32,
+        project_id: i64,
+        user_id: i64,
     ) -> ModelResult<bool> {
         Ok(Self::find_membership(db, project_id, user_id)
             .await?
@@ -60,7 +60,7 @@ impl Model {
     /// When the query fails.
     pub async fn list_for_project(
         db: &DatabaseConnection,
-        project_id: i32,
+        project_id: i64,
     ) -> ModelResult<Vec<Self>> {
         let members = Entity::find()
             .filter(Column::ProjectId.eq(project_id))

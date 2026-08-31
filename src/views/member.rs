@@ -5,7 +5,7 @@ use crate::views::user::UserSummary;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MemberResponse {
-    pub id: i32,
+    pub id: i64,
     /// The capacity the user was onboarded in: "staff" or "client".
     pub role: String,
     pub user: UserSummary,

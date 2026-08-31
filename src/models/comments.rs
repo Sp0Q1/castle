@@ -29,7 +29,7 @@ impl Model {
     /// When the query fails.
     pub async fn list_for_finding(
         db: &DatabaseConnection,
-        finding_id: i32,
+        finding_id: i64,
     ) -> ModelResult<Vec<Self>> {
         let comments = Entity::find()
             .filter(Column::FindingId.eq(finding_id))
