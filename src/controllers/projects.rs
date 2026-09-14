@@ -51,7 +51,9 @@ pub async fn create(
     Json(params): Json<CreateProjectParams>,
 ) -> Result<Response> {
     if !user.is_manager() {
-        return unauthorized("only management can create projects");
+        return Err(crate::security::forbidden(
+            "only management can create projects",
+        ));
     }
 
     validation::required_text("name", &params.name, MAX_TITLE)?;
@@ -118,8 +120,10 @@ pub async fn show(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
+    // Hide from non-members as 404, so a forbidden project can't be told apart
+    // from a nonexistent one.
     if !can_view(&ctx, &user, project.id).await? {
-        return unauthorized("you do not have access to this project");
+        return Err(Error::NotFound);
     }
     format::json(ProjectResponse::new(&project))
 }
@@ -132,7 +136,9 @@ pub async fn onboard(
     Json(params): Json<OnboardParams>,
 ) -> Result<Response> {
     if !user.is_manager() {
-        return unauthorized("only management can onboard members");
+        return Err(crate::security::forbidden(
+            "only management can onboard members",
+        ));
     }
     let project = load_project(&ctx, project_id).await?;
 
@@ -171,8 +177,10 @@ pub async fn list_members(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
+    // Hide from non-members as 404, so a forbidden project can't be told apart
+    // from a nonexistent one.
     if !can_view(&ctx, &user, project.id).await? {
-        return unauthorized("you do not have access to this project");
+        return Err(Error::NotFound);
     }
 
     let members = project_members::Model::list_for_project(&ctx.db, project.id).await?;

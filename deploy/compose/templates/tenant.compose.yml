@@ -90,6 +90,21 @@ services:
       # cookie, and returns to the app root — which then shows a fresh login.
     volumes:
       - castle_uploads:/app/uploads:z
+    healthcheck:
+      # Liveness so a boot can be told apart from a crash-loop (up -d returns at
+      # container-create, long before loco is serving): /api/auth/mode is the one
+      # route oauth2-proxy leaves unauthenticated and it 200s with {"mode":...},
+      # so a 200 here proves the app is actually up, not just that the port opened.
+      # The runtime image is debian-slim — no curl/wget, and its /bin/sh is dash
+      # (no /dev/tcp) — and podman-compose flattens an exec-form ["CMD",...] test
+      # back through /bin/sh, so invoke bash explicitly to get its /dev/tcp: the
+      # same raw-socket HTTP probe keycloak uses. start_period covers the first
+      # boot's auto_migrate.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/5150 && echo -e \"GET /api/auth/mode HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
@@ -117,3 +132,8 @@ services:
       retries: 5
     security_opt:
       - no-new-privileges:true
+    # Starting as uid 70 skips the entrypoint's root->postgres gosu drop, and `:U`
+    # pre-chowns the volume, so Postgres needs no capabilities — drop them all like
+    # every other service. (Verified: a fresh initdb and normal operation both come
+    # up clean under cap_drop:[ALL] + no-new-privileges.)
+    cap_drop: [ALL]

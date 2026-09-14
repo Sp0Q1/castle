@@ -82,12 +82,53 @@ pub struct Settings {
 impl Settings {
     #[must_use]
     pub fn from_ctx(ctx: &AppContext) -> Self {
+        // `settings` is validated at boot (`try_from_config`, called from
+        // `App::boot`), so parsing the same value here cannot fail in a running
+        // app — the default is unreachable, not a silent fallback to jwt.
         ctx.config
             .settings
             .as_ref()
             .and_then(|v| serde_json::from_value::<Self>(v.clone()).ok())
             .unwrap_or_default()
     }
+
+    /// Strictly parse the `settings:` block, erroring on malformed config.
+    ///
+    /// Called at boot so a bad value (e.g. `honeypot: 0` instead of a bool, which
+    /// makes the *whole* struct fail to deserialize) **stops the app** instead of
+    /// silently reverting to the defaults — which would downgrade a proxy-mode
+    /// tenant to its own jwt login surface and turn a decoy into a real server.
+    /// Fail closed at the auth boundary, the way `JWT_SECRET` has no default.
+    ///
+    /// # Errors
+    /// If `settings:` is present but does not deserialize into [`Settings`].
+    pub fn try_from_config(config: &loco_rs::config::Config) -> Result<Self> {
+        match &config.settings {
+            None => Ok(Self::default()),
+            Some(v) => serde_json::from_value::<Self>(v.clone())
+                .map_err(|e| Error::Message(format!("invalid `settings:` config: {e}"))),
+        }
+    }
+}
+
+/// 403 for an authenticated user who lacks the required role — distinct from the
+/// 401 an *unauthenticated* request gets, and from the 404 used to hide a
+/// resource a non-member must not even learn exists.
+#[must_use]
+pub fn forbidden(message: &str) -> Error {
+    Error::CustomError(
+        axum::http::StatusCode::FORBIDDEN,
+        loco_rs::controller::ErrorDetail::new("forbidden", message),
+    )
+}
+
+/// Constant-time equality for the proxy shared secret, so a byte-by-byte timing
+/// oracle can't recover it across many requests. Length may leak — it isn't
+/// secret; only the bytes are.
+#[must_use]
+fn secret_eq(got: &str, expected: &str) -> bool {
+    let (a, b) = (got.as_bytes(), expected.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 impl ProxySettings {
@@ -142,8 +183,12 @@ where
                 ) {
                     // An empty configured secret means "not set" — don't enforce.
                     if !expected.is_empty() {
-                        let got = parts.headers.get(name).and_then(|v| v.to_str().ok());
-                        if got != Some(expected.as_str()) {
+                        let ok = parts
+                            .headers
+                            .get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|got| secret_eq(got, expected));
+                        if !ok {
                             return Err(Error::Unauthorized(
                                 "request did not arrive through the authenticating proxy"
                                     .to_string(),

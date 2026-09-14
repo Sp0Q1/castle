@@ -121,6 +121,10 @@ services:
       retries: 5
     security_opt:
       - no-new-privileges:true
+    # Starting as uid 70 skips the gosu drop and `:U` pre-chowns the volume, so
+    # Postgres needs no capabilities — drop them all like every other service.
+    # (Verified: a fresh initdb and normal operation come up clean with no caps.)
+    cap_drop: [ALL]
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.2
@@ -155,5 +159,9 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+    # Keycloak is a JVM app that binds only the unprivileged 8080/9000 and runs as
+    # a non-root user already, so it needs no Linux capabilities — drop them all
+    # like every other service.
+    cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
