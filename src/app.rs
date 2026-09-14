@@ -42,6 +42,25 @@ impl Hooks for App {
         environment: &Environment,
         config: Config,
     ) -> Result<BootResult> {
+        // Fail closed: a malformed `settings:` block stops boot rather than
+        // silently reverting to jwt mode (the least-safe default) in a
+        // proxy-mode tenant — see `Settings::try_from_config`.
+        let settings = crate::security::Settings::try_from_config(&config)?;
+        // Proxy mode trusts x-forwarded-* headers. If the defense-in-depth shared
+        // secret isn't set the app leans on network isolation alone — say so
+        // loudly instead of leaving it a silent no-op.
+        if matches!(settings.auth_mode, crate::security::AuthMode::Proxy)
+            && settings
+                .proxy
+                .shared_secret
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
+            tracing::warn!(
+                "proxy auth mode without CASTLE_PROXY_SECRET: identity headers are trusted on \
+                 network isolation alone — set a shared secret for defense-in-depth"
+            );
+        }
         create_app::<Self, Migrator>(mode, environment, config).await
     }
 

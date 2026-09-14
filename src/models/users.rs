@@ -9,7 +9,7 @@ pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
 use super::_entities::project_members;
 
-pub const MAGIC_LINK_LENGTH: i8 = 32;
+pub const MAGIC_LINK_LENGTH: usize = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -238,6 +238,9 @@ impl Model {
             email: ActiveValue::set(params.email.clone()),
             password: ActiveValue::set(password_hash),
             name: ActiveValue::set(params.name.clone()),
+            // Least privilege: a self-service registrant is a client, never the
+            // writer role (`..Default` would otherwise take the DB `staff` default).
+            role: ActiveValue::set(UserRole::Client.as_str().to_string()),
             ..Default::default()
         }
         .insert(&txn)
@@ -340,7 +343,7 @@ impl ActiveModel {
     /// # Errors
     /// - Returns an error if database update fails
     pub async fn create_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
-        let random_str = hash::random_string(MAGIC_LINK_LENGTH as usize);
+        let random_str = hash::random_string(MAGIC_LINK_LENGTH);
         let expired = Local::now() + Duration::minutes(MAGIC_LINK_EXPIRATION_MIN.into());
 
         self.magic_link_token = ActiveValue::set(Some(random_str));
@@ -385,14 +388,15 @@ impl UserRole {
         }
     }
 
-    /// Parses a stored role string, defaulting to [`Self::Staff`] for unknown
-    /// values (matching the database default).
+    /// Parses a stored role string, defaulting to the least-privileged
+    /// [`Self::Client`] for unknown/absent values — a bad or missing role must
+    /// never silently grant the writer (`staff`) capacity.
     #[must_use]
     pub fn parse(value: &str) -> Self {
         match value {
             "manager" => Self::Manager,
-            "client" => Self::Client,
-            _ => Self::Staff,
+            "staff" => Self::Staff,
+            _ => Self::Client,
         }
     }
 }
@@ -533,9 +537,13 @@ impl Model {
             role: ActiveValue::set(role.as_str().to_string()),
             status: ActiveValue::set(status.to_string()),
             ..Default::default()
+        };
+        // Two concurrent first-logins for the same new SSO user both reach here;
+        // if we lose the race to the unique-email constraint, read back the row
+        // the winner inserted rather than surfacing the violation as a 500.
+        match user.insert(db).await {
+            Ok(u) => Ok(u),
+            Err(e) => Self::find_by_email(db, email).await.map_err(|_| e.into()),
         }
-        .insert(db)
-        .await?;
-        Ok(user)
     }
 }
