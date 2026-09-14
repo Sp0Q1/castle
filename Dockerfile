@@ -5,7 +5,7 @@
 # fingerprint-identical from the outside.
 
 # 1) Frontend (React SPA) -> frontend/dist, served by loco at runtime.
-FROM node:26-slim AS frontend
+FROM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1efd32454239 AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -14,7 +14,7 @@ RUN npm run build
 
 # 2) Backend (Rust) -> release binary. Migrations are linked in via the
 #    `migration` crate, so no migration files are needed at runtime.
-FROM rust:1.98-slim-bookworm AS backend
+FROM rust:1.98-slim-bookworm@sha256:6ac25dcaa81e06721043f9a815b6000c87ba2f56bf7b82a3ad0e65ae71067e0d AS backend
 WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libssl-dev \
@@ -49,8 +49,17 @@ RUN touch src/lib.rs src/bin/main.rs src/bin/tool.rs migration/src/lib.rs \
  && cargo build --release --bin castle-cli
 
 # 3) Runtime.
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS runtime
+# The digest above pins the *starting* layer for reproducibility, but Debian
+# point releases (e.g. the libpcre2 fix in 10.42-1+deb12u1) land in the archive
+# before the base image is rebuilt — so without an upgrade a known-fixed HIGH
+# ships until the tag catches up, and CI's Trivy gate (rightly) goes red. Apply
+# pending security updates at build time. Deliberate hadolint DL3005 waiver: the
+# artifact is still deployed by immutable digest, and the Trivy gate is what
+# actually guarantees no known HIGH/CRITICAL — not byte-identical rebuilds.
+# hadolint ignore=DL3005
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends ca-certificates libssl3 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 castle
