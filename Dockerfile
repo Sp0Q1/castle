@@ -14,7 +14,7 @@ RUN npm run build
 
 # 2) Backend (Rust) -> release binary. Migrations are linked in via the
 #    `migration` crate, so no migration files are needed at runtime.
-FROM rust:1.98-slim-bookworm@sha256:6ac25dcaa81e06721043f9a815b6000c87ba2f56bf7b82a3ad0e65ae71067e0d AS backend
+FROM rust:1.98-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS backend
 WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libssl-dev \
