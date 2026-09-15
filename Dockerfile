@@ -49,7 +49,7 @@ RUN touch src/lib.rs src/bin/main.rs src/bin/tool.rs migration/src/lib.rs \
  && cargo build --release --bin castle-cli
 
 # 3) Runtime.
-FROM debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS runtime
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 # The digest above pins the *starting* layer for reproducibility, but Debian
 # point releases (e.g. the libpcre2 fix in 10.42-1+deb12u1) land in the archive
 # before the base image is rebuilt — so without an upgrade a known-fixed HIGH
