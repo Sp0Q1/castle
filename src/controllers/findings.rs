@@ -249,16 +249,15 @@ pub async fn show(
         .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let comment_models = comments::Model::list_for_finding(&ctx.db, finding.id).await?;
-    let mut comment_responses = Vec::with_capacity(comment_models.len());
-    for comment in &comment_models {
-        if let Some(commenter) = users::Entity::find_by_id(comment.user_id)
-            .one(&ctx.db)
-            .await?
-        {
-            comment_responses.push(CommentResponse::new(comment, &commenter));
-        }
-    }
+    let comments = comments::Model::list_for_finding_with_authors(&ctx.db, finding.id).await?;
+    let comment_responses: Vec<CommentResponse> = comments
+        .iter()
+        .filter_map(|(comment, author)| {
+            author
+                .as_ref()
+                .map(|author| CommentResponse::new(comment, author))
+        })
+        .collect();
 
     format::json(FindingDetailResponse::new(
         &finding,
@@ -405,8 +404,9 @@ pub async fn remove(
         "only project staff can delete findings",
     )?;
 
-    // Remove dependent comments first so nothing is orphaned (robust even when
-    // SQLite foreign-key cascade enforcement is off).
+    // Comments are removed explicitly rather than by ON DELETE CASCADE: SQLite
+    // cannot alter a constraint in place, so declaring one now would rebuild the
+    // table and leave migrated deployments differing from fresh ones.
     comments::Entity::delete_many()
         .filter(comments::Column::FindingId.eq(finding.id))
         .exec(&ctx.db)

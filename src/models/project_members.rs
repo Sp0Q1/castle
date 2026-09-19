@@ -1,6 +1,7 @@
 use loco_rs::prelude::*;
 
 pub use super::_entities::project_members::{ActiveModel, Column, Entity, Model};
+use super::_entities::users;
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::project_members::ActiveModel {
@@ -52,16 +53,17 @@ impl Model {
             .is_some())
     }
 
-    /// Lists every membership row for a project.
+    /// Lists every membership row for a project, each with the user it names.
     ///
     /// # Errors
     /// When the query fails.
-    pub async fn list_for_project(
+    pub async fn list_for_project_with_users(
         db: &DatabaseConnection,
         project_id: i64,
-    ) -> ModelResult<Vec<Self>> {
+    ) -> ModelResult<Vec<(Self, Option<users::Model>)>> {
         let members = Entity::find()
             .filter(Column::ProjectId.eq(project_id))
+            .find_also_related(users::Entity)
             .all(db)
             .await?;
         Ok(members)

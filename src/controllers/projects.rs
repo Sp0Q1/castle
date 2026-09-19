@@ -183,16 +183,11 @@ pub async fn list_members(
         return Err(Error::NotFound);
     }
 
-    let members = project_members::Model::list_for_project(&ctx.db, project.id).await?;
-    let mut response = Vec::with_capacity(members.len());
-    for member in &members {
-        if let Some(member_user) = users::Entity::find_by_id(member.user_id)
-            .one(&ctx.db)
-            .await?
-        {
-            response.push(MemberResponse::new(member, &member_user));
-        }
-    }
+    let members = project_members::Model::list_for_project_with_users(&ctx.db, project.id).await?;
+    let response: Vec<MemberResponse> = members
+        .iter()
+        .filter_map(|(member, user)| user.as_ref().map(|user| MemberResponse::new(member, user)))
+        .collect();
 
     format::json(response)
 }
