@@ -83,6 +83,15 @@ async fn make_finding(
 /// The files live under `target/`, which is already ignored, and each is deleted
 /// before it is reused so a crashed run cannot poison the next one.
 fn fresh_db() {
+    // Only sqlite needs this. CI points DATABASE_URL at a real Postgres so that
+    // loose sqlite typing cannot hide an INT4/INT8 mismatch again (PR #65);
+    // overwriting it here unconditionally sent those runs back to sqlite and
+    // quietly retired the guarantee. Postgres has no shared write-lock to dodge,
+    // and `dangerously_recreate` rebuilds the schema on each serial boot.
+    if std::env::var("DATABASE_URL").is_ok_and(|url| !url.starts_with("sqlite:")) {
+        return;
+    }
+
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
 
