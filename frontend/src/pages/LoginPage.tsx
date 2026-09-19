@@ -1,66 +1,56 @@
-import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import {
+  type ActionFunctionArgs,
+  Form,
+  Link,
+  redirect,
+  useActionData,
+  useNavigation,
+} from "react-router-dom";
+import { errorMessage } from "../api/client";
+import { login } from "../auth/session";
 
-export function LoginPage() {
-  const { login, user } = useAuth();
-  const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  if (user) {
-    return <Navigate to="/" replace />;
+export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
+  try {
+    await login(String(form.get("email")), String(form.get("password")));
+  } catch (err) {
+    return { error: errorMessage(err, "Login failed") };
   }
+  return redirect("/");
+}
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      await login(email, password);
-      navigate("/");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setBusy(false);
-    }
-  };
+function LoginPage() {
+  const data = useActionData<{ error: string }>();
+  const busy = useNavigation().state === "submitting";
 
   return (
     <div className="auth-card card">
       <h1>Sign in</h1>
       <p className="muted">Castle — security reporting portal</p>
-      <form onSubmit={onSubmit}>
+      <Form method="post">
         <label>
           Email
-          <input
-            type="email"
-            value={email}
-            autoComplete="username"
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <input type="email" name="email" autoComplete="username" required />
         </label>
         <label>
           Password
           <input
             type="password"
-            value={password}
+            name="password"
             autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
             required
           />
         </label>
-        {error && <div className="alert">{error}</div>}
+        {data?.error && <div className="alert">{data.error}</div>}
         <button type="submit" className="btn btn-primary" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
-      </form>
+      </Form>
       <p className="muted">
         No account? <Link to="/register">Register</Link>
       </p>
     </div>
   );
 }
+
+export { LoginPage as Component };

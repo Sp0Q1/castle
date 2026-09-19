@@ -30,7 +30,7 @@ a {
 	color: var(--primary);
 	text-decoration: none;
 }
-a:hover {
+a:not(.btn):hover {
 	text-decoration: underline;
 }
 
@@ -228,6 +228,7 @@ textarea {
 	padding: 9px 16px;
 	font: inherit;
 	font-weight: 600;
+	text-decoration: none;
 	cursor: pointer;
 	align-self: flex-start;
 }

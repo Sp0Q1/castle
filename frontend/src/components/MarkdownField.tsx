@@ -1,11 +1,12 @@
 import MDEditor from "@uiw/react-md-editor";
 import { type ClipboardEvent, type DragEvent, useState } from "react";
-import { api } from "../api/client";
+import { api, errorMessage } from "../api/client";
 import { markdownComponents, safeRehypePlugins } from "./Markdown";
 
 interface Props {
-  value: string;
-  onChange: (value: string) => void;
+  /** Field name: the markdown is submitted through a hidden input. */
+  name: string;
+  defaultValue?: string;
   height?: number;
   placeholder?: string;
 }
@@ -16,11 +17,12 @@ interface Props {
  * `![](url)` is inserted at the caret.
  */
 export function MarkdownField({
-  value,
-  onChange,
+  name,
+  defaultValue = "",
   height = 240,
   placeholder,
 }: Props) {
+  const [value, setValue] = useState(defaultValue);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,12 +31,12 @@ export function MarkdownField({
     snippet: string,
   ) => {
     if (!textarea) {
-      onChange(`${value}${snippet}`);
+      setValue(`${value}${snippet}`);
       return;
     }
     const start = textarea.selectionStart ?? value.length;
     const end = textarea.selectionEnd ?? value.length;
-    onChange(value.slice(0, start) + snippet + value.slice(end));
+    setValue(value.slice(0, start) + snippet + value.slice(end));
   };
 
   const uploadImages = async (
@@ -55,7 +57,7 @@ export function MarkdownField({
       }
       insertAtCaret(textarea, `\n${snippets.join("\n")}\n`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "image upload failed");
+      setError(errorMessage(e, "image upload failed"));
     } finally {
       setUploading(false);
     }
@@ -83,11 +85,12 @@ export function MarkdownField({
 
   return (
     <div data-color-mode="dark" className="md-field">
+      <input type="hidden" name={name} value={value} />
       <MDEditor
         value={value}
         height={height}
         preview="edit"
-        onChange={(v) => onChange(v ?? "")}
+        onChange={(v) => setValue(v ?? "")}
         previewOptions={{
           components: markdownComponents,
           rehypePlugins: safeRehypePlugins,

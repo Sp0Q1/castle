@@ -1,18 +1,25 @@
-import { type FormEvent, useEffect, useId, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { api } from "../api/client";
 import {
-  type CreateFindingParams,
+  type ActionFunctionArgs,
+  Link,
+  type LoaderFunctionArgs,
+  useFetcher,
+  useLoaderData,
+} from "react-router-dom";
+import { api, errorMessage } from "../api/client";
+import {
   type Finding,
   type Member,
   type Project,
   SEVERITIES,
 } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
+import { useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
-import { MarkdownField } from "../components/MarkdownField";
+import {
+  FindingFields,
+  findingParams,
+  findingTypes,
+} from "../components/FindingFields";
 import { PieChart, type Slice } from "../components/PieChart";
-import { TypeInput } from "../components/TypeInput";
 
 const SEVERITY_COLORS: Record<string, string> = {
   low: "#7ee196",
@@ -32,102 +39,52 @@ const TYPE_PALETTE = [
   "#b7c2cc",
 ];
 
-const EMPTY_FINDING: CreateFindingParams = {
-  title: "",
-  finding_type: "",
-  description: "",
-  technical_description: "",
-  impact: "",
-  recommendation: "",
-  severity: "medium",
-};
-
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-export function ProjectDetailPage() {
-  const { id } = useParams();
-  const projectId = Number(id);
-  const { user } = useAuth();
+interface Data {
+  project: Project;
+  members: Member[];
+  findings: Finding[];
+}
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export async function loader({ params }: LoaderFunctionArgs): Promise<Data> {
+  const id = Number(params.id);
+  const [project, members, findings] = await Promise.all([
+    api.getProject(id),
+    api.listMembers(id),
+    api.listFindings(id),
+  ]);
+  return { project, members, findings };
+}
 
-  const [inviteEmail, setInviteEmail] = useState("");
-  // Default to the least-privileged role: a mis-onboard should grant read-only
-  // client access, not staff write/publish rights.
-  const [inviteRole, setInviteRole] = useState("client");
-  const [inviteError, setInviteError] = useState<string | null>(null);
-
-  const [finding, setFinding] = useState<CreateFindingParams>(EMPTY_FINDING);
-  const [findingError, setFindingError] = useState<string | null>(null);
-  const typeFieldId = useId();
-  const [busy, setBusy] = useState(false);
-
-  const myMembership = members.find((m) => m.user.pid === user?.pid);
-  const isManager = user?.role === "manager";
-  const canWriteFindings = isManager || myMembership?.role === "staff";
-
-  const load = () => {
-    setLoading(true);
-    Promise.all([
-      api.getProject(projectId),
-      api.listMembers(projectId),
-      api.listFindings(projectId),
-    ])
-      .then(([p, m, f]) => {
-        setProject(p);
-        setMembers(m);
-        setFindings(f);
-      })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load"),
-      )
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, [projectId]);
-
-  const onInvite = async (e: FormEvent) => {
-    e.preventDefault();
-    setInviteError(null);
-    setBusy(true);
-    try {
-      await api.onboard(projectId, inviteEmail, inviteRole);
-      setInviteEmail("");
-      load();
-    } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Failed to onboard");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onCreateFinding = async (e: FormEvent) => {
-    e.preventDefault();
-    setFindingError(null);
-    setBusy(true);
-    try {
-      await api.createFinding(projectId, finding);
-      setFinding(EMPTY_FINDING);
-      load();
-    } catch (err) {
-      setFindingError(
-        err instanceof Error ? err.message : "Failed to create finding",
+export async function action({ params, request }: ActionFunctionArgs) {
+  const id = Number(params.id);
+  const form = await request.formData();
+  try {
+    if (form.get("intent") === "onboard") {
+      await api.onboard(
+        id,
+        String(form.get("email")),
+        String(form.get("role")),
       );
-    } finally {
-      setBusy(false);
+    } else {
+      await api.createFinding(id, findingParams(form));
     }
-  };
+  } catch (err) {
+    return { error: errorMessage(err, "Failed to save") };
+  }
+  return null;
+}
 
-  const set = (patch: Partial<CreateFindingParams>) =>
-    setFinding((f) => ({ ...f, ...patch }));
+function ProjectDetailPage() {
+  const { project, members, findings } = useLoaderData<Data>();
+  const user = useUser();
+  const newFinding = useFetcher<{ error: string }>();
+  const onboard = useFetcher<{ error: string }>();
 
-  if (loading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="alert">{error}</div>;
-  if (!project) return <p className="muted">Not found.</p>;
+  const myMembership = members.find((m) => m.user.pid === user.pid);
+  const isManager = user.role === "manager";
+  const canWriteFindings = isManager || myMembership?.role === "staff";
 
   const severitySlices: Slice[] = SEVERITIES.map((sev) => ({
     label: cap(sev),
@@ -147,14 +104,6 @@ export function ProjectDetailPage() {
       color: TYPE_PALETTE[i % TYPE_PALETTE.length],
     }),
   );
-
-  const typeSuggestions = [
-    ...new Set(
-      findings
-        .map((f) => f.finding_type.trim())
-        .filter((t): t is string => t.length > 0),
-    ),
-  ];
 
   return (
     <div className="stack">
@@ -210,71 +159,27 @@ export function ProjectDetailPage() {
           </ul>
 
           {canWriteFindings && (
-            <form className="card" onSubmit={onCreateFinding}>
+            // Keyed on the list it creates into, so a saved draft empties the form.
+            <newFinding.Form
+              className="card"
+              method="post"
+              key={findings.length}
+            >
               <h3>New finding</h3>
-              <label>
-                Title
-                <input
-                  value={finding.title}
-                  onChange={(e) => set({ title: e.target.value })}
-                  required
-                />
-              </label>
-              <label htmlFor={typeFieldId}>
-                Type
-                <TypeInput
-                  id={typeFieldId}
-                  value={finding.finding_type ?? ""}
-                  onChange={(v) => set({ finding_type: v })}
-                  suggestions={typeSuggestions}
-                />
-              </label>
-              <label>
-                Severity
-                <select
-                  value={finding.severity}
-                  onChange={(e) => set({ severity: e.target.value })}
-                >
-                  {SEVERITIES.map((s) => (
-                    <option key={s} value={s}>
-                      {cap(s)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="field">
-                <span className="field-label">Description</span>
-                <MarkdownField
-                  value={finding.description}
-                  onChange={(v) => set({ description: v })}
-                />
-              </div>
-              <div className="field">
-                <span className="field-label">Technical description</span>
-                <MarkdownField
-                  value={finding.technical_description}
-                  onChange={(v) => set({ technical_description: v })}
-                />
-              </div>
-              <div className="field">
-                <span className="field-label">Impact</span>
-                <MarkdownField
-                  value={finding.impact}
-                  onChange={(v) => set({ impact: v })}
-                />
-              </div>
-              <div className="field">
-                <span className="field-label">Recommendation</span>
-                <MarkdownField
-                  value={finding.recommendation}
-                  onChange={(v) => set({ recommendation: v })}
-                />
-              </div>
-              {findingError && <div className="alert">{findingError}</div>}
-              <button type="submit" className="btn btn-primary" disabled={busy}>
+              <FindingFields types={findingTypes(findings)} />
+              {newFinding.data?.error && (
+                <div className="alert">{newFinding.data.error}</div>
+              )}
+              <button
+                type="submit"
+                name="intent"
+                value="finding"
+                className="btn btn-primary"
+                disabled={newFinding.state !== "idle"}
+              >
                 Save draft
               </button>
-            </form>
+            </newFinding.Form>
           )}
         </section>
 
@@ -293,35 +198,39 @@ export function ProjectDetailPage() {
           </ul>
 
           {isManager && (
-            <form className="card" onSubmit={onInvite}>
+            <onboard.Form className="card" method="post" key={members.length}>
               <h3>Onboard a member</h3>
               <label>
                 User email
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  required
-                />
+                <input type="email" name="email" required />
               </label>
               <label>
                 Role
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                >
+                {/* Defaults to the least-privileged role: a mis-onboard should grant
+                    read-only client access, not staff write/publish rights. */}
+                <select name="role" defaultValue="client">
                   <option value="staff">staff</option>
                   <option value="client">client</option>
                 </select>
               </label>
-              {inviteError && <div className="alert">{inviteError}</div>}
-              <button type="submit" className="btn btn-primary" disabled={busy}>
+              {onboard.data?.error && (
+                <div className="alert">{onboard.data.error}</div>
+              )}
+              <button
+                type="submit"
+                name="intent"
+                value="onboard"
+                className="btn btn-primary"
+                disabled={onboard.state !== "idle"}
+              >
                 Onboard
               </button>
-            </form>
+            </onboard.Form>
           )}
         </aside>
       </div>
     </div>
   );
 }
+
+export { ProjectDetailPage as Component };

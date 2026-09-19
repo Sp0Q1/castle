@@ -1,4 +1,5 @@
 import type {
+  AuthMode,
   Comment,
   CreateFindingParams,
   CurrentUser,
@@ -20,7 +21,13 @@ export class ApiError extends Error {
   }
 }
 
-// The JWT is held here and set by the auth layer, so callers never pass it.
+/** Both `catch` bindings and route errors are `unknown`, and both end up on screen. */
+export function errorMessage(err: unknown, fallback = "Something went wrong") {
+  return err instanceof Error ? err.message : fallback;
+}
+
+// The JWT is held here and set by the auth layer, so callers never pass it — and
+// loaders and actions, which run outside React, can reach it.
 let authToken: string | null = null;
 export function setAuthToken(token: string | null): void {
   authToken = token;
@@ -28,28 +35,39 @@ export function setAuthToken(token: string | null): void {
 
 const BASE = "/api";
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    ...(options.headers as Record<string, string> | undefined),
-  };
+type Options = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
+};
+
+// Attaches the bearer token (jwt mode — in proxy mode identity rides on the
+// headers oauth2-proxy sets) and turns any non-2xx into an ApiError.
+async function send(url: string, options: Options = {}): Promise<Response> {
+  const headers: Record<string, string> = { ...options.headers };
   if (authToken) {
     headers.authorization = `Bearer ${authToken}`;
   }
-
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
-
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-
+  const res = await fetch(url, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
   if (!res.ok) {
-    const message =
-      (data && (data.description || data.error)) ||
-      res.statusText ||
-      "Request failed";
-    throw new ApiError(res.status, message);
+    const body = await res.json().catch(() => null);
+    throw new ApiError(
+      res.status,
+      body?.description || body?.error || res.statusText || "Request failed",
+    );
   }
-  return data as T;
+  return res;
+}
+
+async function request<T>(path: string, options: Options = {}): Promise<T> {
+  const res = await send(`${BASE}${path}`, {
+    ...options,
+    headers: { "content-type": "application/json", ...options.headers },
+  });
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 export const api = {
@@ -68,9 +86,8 @@ export const api = {
   currentUser: (): Promise<CurrentUser> =>
     request<CurrentUser>("/auth/current"),
 
-  // Public: "jwt" (show the built-in login form) or "proxy" (hand off to the IdP).
-  authMode: (): Promise<{ mode: string }> =>
-    request<{ mode: string }>("/auth/mode"),
+  authMode: (): Promise<{ mode: AuthMode }> =>
+    request<{ mode: AuthMode }>("/auth/mode"),
 
   listProjects: (): Promise<Project[]> => request<Project[]>("/projects"),
 
@@ -136,28 +153,12 @@ export const api = {
     }),
 
   // Uploads a single image (multipart) and returns the URL to embed in markdown.
-  // Uses fetch directly because FormData must set its own multipart content-type.
+  // Not `request`, because FormData must set its own multipart content-type.
   uploadImage: async (file: File): Promise<{ url: string }> => {
     const form = new FormData();
     form.append("file", file);
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers.authorization = `Bearer ${authToken}`;
-    }
-    const res = await fetch(`${BASE}/uploads`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-    const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      throw new ApiError(
-        res.status,
-        (data && (data.description || data.error)) || res.statusText,
-      );
-    }
-    return data as { url: string };
+    const res = await send(`${BASE}/uploads`, { method: "POST", body: form });
+    return res.json();
   },
 
   /**
@@ -169,15 +170,5 @@ export const api = {
    * here — with the header in jwt mode, with the session cookie in proxy mode —
    * and rendered from an object URL (the CSP allows `img-src blob:`).
    */
-  fetchUpload: async (path: string): Promise<Blob> => {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers.authorization = `Bearer ${authToken}`;
-    }
-    const res = await fetch(path, { headers, credentials: "same-origin" });
-    if (!res.ok) {
-      throw new ApiError(res.status, res.statusText || "Image request failed");
-    }
-    return res.blob();
-  },
+  fetchUpload: async (path: string): Promise<Blob> => (await send(path)).blob(),
 };
