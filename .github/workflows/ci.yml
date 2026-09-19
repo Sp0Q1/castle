@@ -31,7 +31,7 @@ jobs:
     # default — is loosely typed and accepts INT4/INT8 interchangeably, which is
     # how a BIGINT-vs-i32 entity mismatch passed CI yet 500'd on the first live
     # tenant (PR #65). Testing on the engine we deploy on catches that class here.
-    # Pin to the same major the deployment runs: compose + k8s use postgres:18 —
+    # Pin to the same major the deployment runs: the compose pins use postgres:18 —
     # keep this in lockstep with those pins.
     services:
       postgres:
@@ -52,7 +52,7 @@ jobs:
 
       # Dependabot's docker ecosystem does not parse a workflow `services:` block,
       # so the Postgres pin above can silently drift from the deployment's — and a
-      # pg-major migration that lands in compose/k8s only would leave CI testing the
+      # pg-major migration that lands in the compose pins only would leave CI testing the
       # OLD major, defeating the "test on the engine we deploy" guarantee. Compare
       # the CI service major against the compose pin and fail loudly if they diverge.
       - name: Guard Postgres major against the deployment pin
@@ -130,66 +130,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-  deploy-manifests:
-    name: Kubernetes manifests (helm, kubeconform)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-
-      - name: Helm lint (tenant chart)
-        run: helm lint deploy/k8s/tenant
-
-      # Renders the chart in each mode the deployment actually uses, so a
-      # template that only breaks under proxy/honeypot/backup values is caught
-      # here rather than at provisioning time.
-      - name: Render every mode
-        run: |
-          set -euo pipefail
-          # Throwaway placeholders so the chart's `required` guards are
-          # satisfied. Real deployments set secrets.external=true and never
-          # pass secrets through values at all — see deploy/k8s/secrets/.
-          dummy="--set tenant=ci
-                 --set secrets.dbPassword=placeholder
-                 --set secrets.jwtSecret=placeholder
-                 --set secrets.oauth2ClientSecret=placeholder
-                 --set secrets.oauth2CookieSecret=placeholder"
-          for args in \
-            "" \
-            "--set oauth2Proxy.enabled=true" \
-            "--set honeypot=true" \
-            "--set backup.enabled=true --set backup.s3.bucket=ci --set backup.s3.endpoint=https://s3.invalid" \
-            "--set secrets.external=true" \
-            "--set database.internal=false --set database.externalUrl=postgres://u:p@db/castle"
-          do
-            echo "::group::helm template $args"
-            # shellcheck disable=SC2086 # $dummy/$args are intentional arg lists
-            helm template ci deploy/k8s/tenant $dummy $args > /dev/null
-            echo "::endgroup::"
-          done
-
-      - name: Install kubeconform
-        run: |
-          set -euo pipefail
-          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
-            | tar -xz -C /usr/local/bin kubeconform
-
-      # Validates rendered objects against the real Kubernetes schemas. Skipped
-      # kinds are CRDs whose schemas are not in the upstream catalogue.
-      - name: Validate rendered manifests
-        run: |
-          set -euo pipefail
-          helm template ci deploy/k8s/tenant \
-              --set tenant=ci \
-              --set secrets.dbPassword=placeholder \
-              --set secrets.jwtSecret=placeholder \
-              --set secrets.oauth2ClientSecret=placeholder \
-              --set secrets.oauth2CookieSecret=placeholder \
-            | kubeconform -strict -summary \
-                -kubernetes-version 1.31.0 \
-                -skip SealedSecret,PrometheusRule,ServiceMonitor
 
   actionlint:
     name: Workflow lint
