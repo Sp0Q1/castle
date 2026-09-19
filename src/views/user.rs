@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::models::_entities::users;
 
@@ -7,7 +7,7 @@ use crate::models::_entities::users;
 /// Deliberately omits sensitive columns (`password`, `api_key`, verification
 /// and reset tokens) so user records can be referenced from findings, comments
 /// and memberships without leaking credentials.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct UserSummary {
     pub id: i64,
     pub pid: String,

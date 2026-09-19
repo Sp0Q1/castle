@@ -2,8 +2,6 @@ use loco_rs::prelude::*;
 
 pub use super::_entities::project_members::{ActiveModel, Column, Entity, Model};
 
-pub type ProjectMembers = Entity;
-
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::project_members::ActiveModel {
     async fn before_save<C>(self, _db: &C, insert: bool) -> std::result::Result<Self, DbErr>

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use loco_rs::{
     app::{AppContext, Hooks},
-    bgworker::{BackgroundWorker, Queue},
+    bgworker::Queue,
     boot::{create_app, BootResult, StartMode},
     config::Config,
     controller::AppRoutes,
@@ -17,7 +17,6 @@ use crate::{
     controllers,
     models::_entities::{comments, findings, project_members, projects, users},
     tasks,
-    workers::downloader::DownloadWorker,
 };
 
 pub struct App;
@@ -84,8 +83,9 @@ impl Hooks for App {
             .add_route(controllers::comments::routes())
             .add_route(controllers::uploads::routes())
     }
-    async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {
-        queue.register(DownloadWorker::build(ctx)).await?;
+    /// Castle runs no background jobs — every operation it performs is
+    /// request-scoped — but `Hooks` requires the registration point.
+    async fn connect_workers(_ctx: &AppContext, _queue: &Queue) -> Result<()> {
         Ok(())
     }
 

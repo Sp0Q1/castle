@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::models::_entities::users;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
     pub pid: String,
@@ -22,7 +22,7 @@ impl LoginResponse {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CurrentResponse {
     pub id: i64,
     pub pid: String,

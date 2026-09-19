@@ -3,8 +3,6 @@ use uuid::Uuid;
 
 pub use super::_entities::findings::{ActiveModel, Column, Entity, Model};
 
-pub type Findings = Entity;
-
 /// A finding is only exposed to clients once it has been published.
 pub const STATUS_DRAFT: &str = "draft";
 pub const STATUS_PUBLISHED: &str = "published";
@@ -27,25 +25,6 @@ impl ActiveModelBehavior for super::_entities::findings::ActiveModel {
 
 // read-oriented logic
 impl Model {
-    /// Finds a finding by its public id (`pid`).
-    ///
-    /// # Errors
-    /// When the pid is malformed, the finding is missing, or the query fails.
-    pub async fn find_by_pid(db: &DatabaseConnection, pid: &str) -> ModelResult<Self> {
-        let uuid = Uuid::parse_str(pid).map_err(|e| ModelError::Any(e.into()))?;
-        let finding = Entity::find().filter(Column::Pid.eq(uuid)).one(db).await?;
-        finding.ok_or_else(|| ModelError::EntityNotFound)
-    }
-
-    /// Loads a finding by its numeric id.
-    ///
-    /// # Errors
-    /// When the finding is missing or the query fails.
-    pub async fn find_by_id(db: &DatabaseConnection, id: i64) -> ModelResult<Self> {
-        let finding = Entity::find_by_id(id).one(db).await?;
-        finding.ok_or_else(|| ModelError::EntityNotFound)
-    }
-
     /// Lists the findings that belong to a project.
     ///
     /// # Errors

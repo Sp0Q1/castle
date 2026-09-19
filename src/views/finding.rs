@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-use crate::models::_entities::findings;
+use crate::models::_entities::{findings, users};
 use crate::views::comment::CommentResponse;
 use crate::views::user::UserSummary;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct FindingResponse {
     pub id: i64,
     pub pid: String,
@@ -58,7 +58,7 @@ impl FindingDetailResponse {
     #[must_use]
     pub fn new(
         finding: &findings::Model,
-        author: &crate::models::_entities::users::Model,
+        author: &users::Model,
         comments: Vec<CommentResponse>,
     ) -> Self {
         Self {
