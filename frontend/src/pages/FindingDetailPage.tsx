@@ -1,28 +1,80 @@
-import { type FormEvent, useEffect, useId, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api/client";
 import {
-  type FindingDetail,
-  type Member,
-  type Project,
-  SEVERITIES,
-} from "../api/types";
-import { useAuth } from "../auth/AuthContext";
+  type ActionFunctionArgs,
+  Form,
+  Link,
+  type LoaderFunctionArgs,
+  redirect,
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useNavigation,
+  useSearchParams,
+} from "react-router-dom";
+import { api, errorMessage } from "../api/client";
+import type { Finding, FindingDetail, Member, Project } from "../api/types";
+import { useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
+import {
+  FindingFields,
+  findingParams,
+  findingTypes,
+} from "../components/FindingFields";
 import { Markdown } from "../components/Markdown";
 import { MarkdownField } from "../components/MarkdownField";
-import { TypeInput } from "../components/TypeInput";
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+interface Data {
+  finding: FindingDetail;
+  project: Project | null;
+  members: Member[];
+  types: string[];
+}
 
-interface Draft {
-  title: string;
-  finding_type: string;
-  description: string;
-  technical_description: string;
-  impact: string;
-  recommendation: string;
-  severity: string;
+export async function loader({
+  params,
+  request,
+}: LoaderFunctionArgs): Promise<Data> {
+  const finding = await api.getFinding(Number(params.id));
+  const editing = new URL(request.url).searchParams.has("edit");
+  const [project, members, siblings] = await Promise.all([
+    api.getProject(finding.project_id).catch(() => null),
+    // Needed to mirror the backend's edit/publish permission (staff member).
+    api.listMembers(finding.project_id).catch((): Member[] => []),
+    editing
+      ? api.listFindings(finding.project_id).catch((): Finding[] => [])
+      : [],
+  ]);
+  return { finding, project, members, types: findingTypes(siblings) };
+}
+
+export async function action({ params, request }: ActionFunctionArgs) {
+  const id = Number(params.id);
+  const form = await request.formData();
+  try {
+    switch (form.get("intent")) {
+      case "publish":
+        await api.publishFinding(id);
+        break;
+      case "unpublish":
+        await api.unpublishFinding(id);
+        break;
+      case "delete":
+        await api.deleteFinding(id);
+        return redirect(`/projects/${form.get("project")}`);
+      case "comment": {
+        const body = String(form.get("body")).trim();
+        if (body) {
+          await api.addComment(id, body);
+        }
+        break;
+      }
+      default:
+        await api.updateFinding(id, findingParams(form));
+        return redirect(`/findings/${id}`);
+    }
+  } catch (err) {
+    return { error: errorMessage(err, "Failed to save") };
+  }
+  return null;
 }
 
 function Section({ title, body }: { title: string; body: string }) {
@@ -34,169 +86,23 @@ function Section({ title, body }: { title: string; body: string }) {
   );
 }
 
-export function FindingDetailPage() {
-  const { id } = useParams();
-  const findingId = Number(id);
-  const { user } = useAuth();
-  const navigate = useNavigate();
+function FindingDetailPage() {
+  const { finding, project, members, types } = useLoaderData<Data>();
+  const user = useUser();
+  const [searchParams] = useSearchParams();
+  const editing = searchParams.has("edit");
+  const edit = useActionData<{ error: string }>();
+  const saving = useNavigation().state !== "idle";
+  const actions = useFetcher<{ error: string }>();
+  const composer = useFetcher<{ error: string }>();
 
-  const [finding, setFinding] = useState<FindingDetail | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [typeSuggestions, setTypeSuggestions] = useState<string[]>([]);
-  const [editError, setEditError] = useState<string | null>(null);
-  const typeFieldId = useId();
-
-  const [comment, setComment] = useState("");
-  const [commentError, setCommentError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = () => {
-    setLoading(true);
-    setError(null);
-    (async () => {
-      try {
-        const f = await api.getFinding(findingId);
-        setFinding(f);
-        setProject(await api.getProject(f.project_id).catch(() => null));
-        // Needed to mirror the backend's edit/publish permission (staff member).
-        const m = await api
-          .listMembers(f.project_id)
-          .catch(() => [] as Member[]);
-        setMembers(m);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  };
-
-  useEffect(load, [findingId]);
-
-  const myMembership = members.find((m) => m.user.pid === user?.pid);
+  const myMembership = members.find((m) => m.user.pid === user.pid);
   // Same rule the API enforces: author, a "staff" member of the project, or a manager.
   const canModify =
-    !!user &&
-    !!finding &&
-    (user.role === "manager" ||
-      finding.author_id === user.id ||
-      myMembership?.role === "staff");
-  const canPublish = finding?.status === "draft" && canModify;
-  const canUnpublish = finding?.status === "published" && canModify;
-
-  const startEdit = async () => {
-    if (!finding) return;
-    setDraft({
-      title: finding.title,
-      finding_type: finding.finding_type,
-      description: finding.description,
-      technical_description: finding.technical_description,
-      impact: finding.impact,
-      recommendation: finding.recommendation,
-      severity: finding.severity,
-    });
-    setEditError(null);
-    setEditing(true);
-    const fs = await api.listFindings(finding.project_id).catch(() => []);
-    setTypeSuggestions([
-      ...new Set(
-        fs
-          .map((f) => f.finding_type.trim())
-          .filter((t): t is string => t.length > 0),
-      ),
-    ]);
-  };
-
-  const setD = (patch: Partial<Draft>) =>
-    setDraft((d) => (d ? { ...d, ...patch } : d));
-
-  const saveEdit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!draft) return;
-    setEditError(null);
-    setBusy(true);
-    try {
-      await api.updateFinding(findingId, draft);
-      setEditing(false);
-      load();
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onPublish = async () => {
-    setBusy(true);
-    try {
-      await api.publishFinding(findingId);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to publish");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onUnpublish = async () => {
-    setBusy(true);
-    try {
-      await api.unpublishFinding(findingId);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to unpublish");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onDelete = async () => {
-    if (!finding) return;
-    if (
-      !window.confirm(
-        "Delete this finding and its comments? This cannot be undone.",
-      )
-    ) {
-      return;
-    }
-    setBusy(true);
-    try {
-      await api.deleteFinding(findingId);
-      navigate(`/projects/${finding.project_id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onComment = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!comment.trim()) {
-      return;
-    }
-    setCommentError(null);
-    setBusy(true);
-    try {
-      await api.addComment(findingId, comment);
-      setComment("");
-      load();
-    } catch (err) {
-      setCommentError(err instanceof Error ? err.message : "Failed to comment");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (loading) return <p className="muted">Loading…</p>;
-  if (error) return <div className="alert">{error}</div>;
-  if (!finding) return <p className="muted">Not found.</p>;
+    user.role === "manager" ||
+    finding.author_id === user.id ||
+    myMembership?.role === "staff";
+  const busy = actions.state !== "idle";
 
   return (
     <div className="stack">
@@ -225,32 +131,30 @@ export function FindingDetailPage() {
           <span className="muted">by {finding.author.name}</span>
         </div>
         {!editing && (
-          <div className="actions">
+          <actions.Form method="post" className="actions">
+            <input type="hidden" name="project" value={finding.project_id} />
             {canModify && (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={startEdit}
-                disabled={busy}
-              >
+              <Link to="?edit" className="btn btn-ghost">
                 Edit
-              </button>
+              </Link>
             )}
-            {canPublish && (
+            {canModify && finding.status === "draft" && (
               <button
-                type="button"
+                type="submit"
+                name="intent"
+                value="publish"
                 className="btn btn-primary"
-                onClick={onPublish}
                 disabled={busy}
               >
                 Publish to client
               </button>
             )}
-            {canUnpublish && (
+            {canModify && finding.status === "published" && (
               <button
-                type="button"
+                type="submit"
+                name="intent"
+                value="unpublish"
                 className="btn btn-ghost"
-                onClick={onUnpublish}
                 disabled={busy}
               >
                 Unpublish
@@ -258,94 +162,49 @@ export function FindingDetailPage() {
             )}
             {canModify && (
               <button
-                type="button"
+                type="submit"
+                name="intent"
+                value="delete"
                 className="btn btn-danger"
-                onClick={onDelete}
                 disabled={busy}
+                onClick={(e) => {
+                  if (
+                    !window.confirm(
+                      "Delete this finding and its comments? This cannot be undone.",
+                    )
+                  ) {
+                    e.preventDefault();
+                  }
+                }}
               >
                 Delete
               </button>
             )}
-          </div>
+          </actions.Form>
+        )}
+        {actions.data?.error && (
+          <div className="alert">{actions.data.error}</div>
         )}
       </div>
 
-      {editing && draft ? (
-        <form className="card" onSubmit={saveEdit}>
+      {editing ? (
+        <Form className="card" method="post">
           <h3>Edit finding</h3>
-          <label>
-            Title
-            <input
-              value={draft.title}
-              onChange={(e) => setD({ title: e.target.value })}
-              required
-            />
-          </label>
-          <label htmlFor={typeFieldId}>
-            Type
-            <TypeInput
-              id={typeFieldId}
-              value={draft.finding_type}
-              onChange={(v) => setD({ finding_type: v })}
-              suggestions={typeSuggestions}
-            />
-          </label>
-          <label>
-            Severity
-            <select
-              value={draft.severity}
-              onChange={(e) => setD({ severity: e.target.value })}
-            >
-              {SEVERITIES.map((s) => (
-                <option key={s} value={s}>
-                  {cap(s)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="field">
-            <span className="field-label">Description</span>
-            <MarkdownField
-              value={draft.description}
-              onChange={(v) => setD({ description: v })}
-            />
-          </div>
-          <div className="field">
-            <span className="field-label">Technical description</span>
-            <MarkdownField
-              value={draft.technical_description}
-              onChange={(v) => setD({ technical_description: v })}
-            />
-          </div>
-          <div className="field">
-            <span className="field-label">Impact</span>
-            <MarkdownField
-              value={draft.impact}
-              onChange={(v) => setD({ impact: v })}
-            />
-          </div>
-          <div className="field">
-            <span className="field-label">Recommendation</span>
-            <MarkdownField
-              value={draft.recommendation}
-              onChange={(v) => setD({ recommendation: v })}
-            />
-          </div>
-          {editError && <div className="alert">{editError}</div>}
+          <FindingFields finding={finding} types={types} />
+          {edit?.error && <div className="alert">{edit.error}</div>}
           <div className="actions">
-            <button type="submit" className="btn btn-primary" disabled={busy}>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
               Save changes
             </button>
-            <button
-              type="button"
+            <Link
+              to={`/findings/${finding.id}`}
               className="btn btn-ghost"
-              onClick={() => setEditing(false)}
-              disabled={busy}
+              replace
             >
               Cancel
-            </button>
+            </Link>
           </div>
-        </form>
+        </Form>
       ) : (
         <article className="card">
           <Section title="Description" body={finding.description} />
@@ -377,22 +236,36 @@ export function FindingDetailPage() {
           )}
         </ul>
 
-        <form className="card" onSubmit={onComment}>
+        {/* Keyed on the thread it posts into, so a posted comment empties the composer. */}
+        <composer.Form
+          className="card"
+          method="post"
+          key={finding.comments.length}
+        >
           <div className="field">
             <span className="field-label">Add a comment</span>
             <MarkdownField
-              value={comment}
-              onChange={setComment}
+              name="body"
               height={160}
               placeholder="Markdown supported — drag or paste an image"
             />
           </div>
-          {commentError && <div className="alert">{commentError}</div>}
-          <button type="submit" className="btn btn-primary" disabled={busy}>
+          {composer.data?.error && (
+            <div className="alert">{composer.data.error}</div>
+          )}
+          <button
+            type="submit"
+            name="intent"
+            value="comment"
+            className="btn btn-primary"
+            disabled={composer.state !== "idle"}
+          >
             Post comment
           </button>
-        </form>
+        </composer.Form>
       </section>
     </div>
   );
 }
+
+export { FindingDetailPage as Component };

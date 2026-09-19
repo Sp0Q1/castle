@@ -1,115 +1,107 @@
-import { lazy, type ReactNode, Suspense } from "react";
 import {
-  BrowserRouter,
+  createBrowserRouter,
   Link,
-  Navigate,
-  Route,
-  Routes,
+  Outlet,
+  redirect,
+  useLoaderData,
   useNavigate,
+  useNavigation,
+  useRouteError,
 } from "react-router-dom";
-import { AuthProvider, useAuth } from "./auth/AuthContext";
-import { LoginPage } from "./pages/LoginPage";
-import { ProjectsPage } from "./pages/ProjectsPage";
-import { RegisterPage } from "./pages/RegisterPage";
+import { errorMessage } from "./api/client";
+import type { AuthMode, CurrentUser } from "./api/types";
+import { redirectIfSignedIn, requireUser, signOut } from "./auth/session";
 
-// The project and finding pages pull in the markdown editor (heavy), so load
-// them on demand — login and the projects list stay lightweight.
-const ProjectDetailPage = lazy(() =>
-  import("./pages/ProjectDetailPage").then((m) => ({
-    default: m.ProjectDetailPage,
-  })),
-);
-const FindingDetailPage = lazy(() =>
-  import("./pages/FindingDetailPage").then((m) => ({
-    default: m.FindingDetailPage,
-  })),
-);
-
-function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) {
-    return <p className="muted">Loading…</p>;
-  }
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-  return <>{children}</>;
-}
-
-function Header() {
-  const { user, logout } = useAuth();
+function Layout() {
+  const user = useLoaderData<CurrentUser>();
+  const { state } = useNavigation();
   const navigate = useNavigate();
-  if (!user) {
-    return null;
-  }
   return (
-    <header className="navbar fixed-top">
-      <div className="container">
-        <Link to="/" className="brand">
-          🏰 Castle
-        </Link>
-        <nav className="navbar-nav">
-          {user && (
+    <>
+      <header className="navbar fixed-top">
+        <div className="container">
+          <Link to="/" className="brand">
+            🏰 Castle
+          </Link>
+          <nav className="navbar-nav">
             <span className="whoami">
               {user.name}
               <span className={`badge role-${user.role}`}>{user.role}</span>
             </span>
-          )}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => {
-              logout();
-              navigate("/login");
-            }}
-          >
-            Sign out
-          </button>
-        </nav>
-      </div>
-    </header>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => signOut(user, navigate)}
+            >
+              Sign out
+            </button>
+          </nav>
+        </div>
+      </header>
+      <main className="container page" aria-busy={state === "loading"}>
+        <Outlet />
+      </main>
+    </>
   );
 }
 
-export function App() {
-  return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Header />
+function RouteError() {
+  const error = useRouteError();
+  return <div className="alert">{errorMessage(error)}</div>;
+}
+
+/**
+ * The pages are `lazy` so the markdown editor and mermaid land in chunks that are
+ * only fetched when a page that uses them is opened.
+ *
+ * In proxy mode Keycloak owns signing in, so the built-in forms are not routed at
+ * all — the root loader hands unauthenticated visitors to oauth2-proxy instead.
+ */
+export function createRouter(mode: AuthMode) {
+  return createBrowserRouter([
+    {
+      id: "root",
+      path: "/",
+      loader: requireUser,
+      element: <Layout />,
+      errorElement: <RouteError />,
+      hydrateFallbackElement: (
         <main className="container page">
-          <Suspense fallback={<p className="muted">Loading…</p>}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <ProjectsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/projects/:id"
-                element={
-                  <ProtectedRoute>
-                    <ProjectDetailPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/findings/:id"
-                element={
-                  <ProtectedRoute>
-                    <FindingDetailPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
+          <p className="muted">Loading…</p>
         </main>
-      </AuthProvider>
-    </BrowserRouter>
-  );
+      ),
+      children: [
+        {
+          index: true,
+          lazy: () => import("./pages/ProjectsPage"),
+          errorElement: <RouteError />,
+        },
+        {
+          path: "projects/:id",
+          lazy: () => import("./pages/ProjectDetailPage"),
+          errorElement: <RouteError />,
+        },
+        {
+          path: "findings/:id",
+          lazy: () => import("./pages/FindingDetailPage"),
+          errorElement: <RouteError />,
+        },
+      ],
+    },
+    ...(mode === "jwt"
+      ? [
+          {
+            path: "/login",
+            loader: redirectIfSignedIn,
+            lazy: () => import("./pages/LoginPage"),
+          },
+          {
+            path: "/register",
+            loader: redirectIfSignedIn,
+            lazy: () => import("./pages/RegisterPage"),
+          },
+        ]
+      : []),
+    { path: "*", loader: () => redirect("/") },
+  ]);
 }

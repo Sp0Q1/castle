@@ -1,8 +1,8 @@
 import { useId } from "react";
 
 interface Props {
-  value: string;
-  onChange: (value: string) => void;
+  name: string;
+  defaultValue?: string;
   suggestions: string[];
   /** Applied to the real <input> so an external <label htmlFor> can bind to it. */
   id?: string;
@@ -12,15 +12,15 @@ interface Props {
  * A one-line type input backed by a datalist of types already used on the same
  * project, so teams can reuse existing classifications.
  */
-export function TypeInput({ value, onChange, suggestions, id }: Props) {
+export function TypeInput({ name, defaultValue, suggestions, id }: Props) {
   const listId = useId();
   return (
     <>
       <input
         id={id}
+        name={name}
         list={listId}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        defaultValue={defaultValue}
         placeholder="e.g. SQL Injection"
       />
       <datalist id={listId}>
