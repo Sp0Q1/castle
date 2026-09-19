@@ -3,8 +3,6 @@ use sea_orm::QueryOrder;
 
 pub use super::_entities::comments::{ActiveModel, Column, Entity, Model};
 
-pub type Comments = Entity;
-
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::comments::ActiveModel {
     async fn before_save<C>(self, _db: &C, insert: bool) -> std::result::Result<Self, DbErr>
