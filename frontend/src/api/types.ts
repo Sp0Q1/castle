@@ -1,5 +1,8 @@
 export type Role = "manager" | "staff" | "client";
 
+/** GET /api/auth/mode — "jwt" has built-in login/register, "proxy" defers to the IdP. */
+export type AuthMode = "jwt" | "proxy";
+
 /** GET /api/auth/current */
 export interface CurrentUser {
   id: number;

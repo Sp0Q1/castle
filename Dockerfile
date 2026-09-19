@@ -26,14 +26,13 @@ RUN apt-get update \
 # dependencies from scratch — which is what made the CI image build take five
 # minutes on every run, dwarfing the scan it exists to feed.
 #
-# The stubs must be real enough for cargo to resolve the workspace: both binary
-# targets and both lib targets have to exist, or cargo refuses before it gets as
+# The stubs must be real enough for cargo to resolve the workspace: the binary
+# target and both lib targets have to exist, or cargo refuses before it gets as
 # far as building dependencies.
 COPY Cargo.toml Cargo.lock ./
 COPY migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin migration/src \
  && echo 'fn main() {}' > src/bin/main.rs \
- && echo 'fn main() {}' > src/bin/tool.rs \
  && : > src/lib.rs \
  && : > migration/src/lib.rs \
  && cargo build --release --bin castle-cli
@@ -45,7 +44,7 @@ COPY migration/ migration/
 # cargo decides staleness by mtime, and COPY preserves the source mtimes — which
 # can be older than the stub artifacts just built. Without this the stub .rlib is
 # considered current and the real code never gets compiled into the binary.
-RUN touch src/lib.rs src/bin/main.rs src/bin/tool.rs migration/src/lib.rs \
+RUN touch src/lib.rs src/bin/main.rs migration/src/lib.rs \
  && cargo build --release --bin castle-cli
 
 # 3) Runtime.

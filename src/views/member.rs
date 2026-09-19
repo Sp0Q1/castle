@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::models::_entities::{project_members, users};
 use crate::views::user::UserSummary;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MemberResponse {
     pub id: i64,
     /// The capacity the user holds on the project: "staff" or "client", or

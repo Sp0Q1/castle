@@ -107,9 +107,12 @@ pub async fn upload(
         let Some(ext) = sniff_image(&data) else {
             continue;
         };
-        std::fs::create_dir_all(UPLOAD_DIR).map_err(|e| Error::string(&e.to_string()))?;
+        tokio::fs::create_dir_all(UPLOAD_DIR)
+            .await
+            .map_err(|e| Error::string(&e.to_string()))?;
         let name = format!("{}.{ext}", Uuid::new_v4());
-        std::fs::write(FsPath::new(UPLOAD_DIR).join(&name), &data)
+        tokio::fs::write(FsPath::new(UPLOAD_DIR).join(&name), &data)
+            .await
             .map_err(|e| Error::string(&e.to_string()))?;
         return format::json(UploadResponse {
             url: format!("/api/uploads/{name}"),
@@ -131,7 +134,7 @@ pub async fn serve(
     if !is_safe_name(&name) {
         return Err(Error::NotFound);
     }
-    let Ok(bytes) = std::fs::read(FsPath::new(UPLOAD_DIR).join(&name)) else {
+    let Ok(bytes) = tokio::fs::read(FsPath::new(UPLOAD_DIR).join(&name)).await else {
         return Err(Error::NotFound);
     };
     Ok((

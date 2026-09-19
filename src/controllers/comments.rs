@@ -50,16 +50,15 @@ pub async fn list(
 ) -> Result<Response> {
     let finding = load_viewable_finding(&ctx, &user, finding_id).await?;
 
-    let comment_models = comments::Model::list_for_finding(&ctx.db, finding.id).await?;
-    let mut response = Vec::with_capacity(comment_models.len());
-    for comment in &comment_models {
-        if let Some(commenter) = users::Entity::find_by_id(comment.user_id)
-            .one(&ctx.db)
-            .await?
-        {
-            response.push(CommentResponse::new(comment, &commenter));
-        }
-    }
+    let comments = comments::Model::list_for_finding_with_authors(&ctx.db, finding.id).await?;
+    let response: Vec<CommentResponse> = comments
+        .iter()
+        .filter_map(|(comment, author)| {
+            author
+                .as_ref()
+                .map(|author| CommentResponse::new(comment, author))
+        })
+        .collect();
 
     format::json(response)
 }

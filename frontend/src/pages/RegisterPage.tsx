@@ -1,35 +1,36 @@
-import { type FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import {
+  type ActionFunctionArgs,
+  Form,
+  Link,
+  useActionData,
+  useNavigation,
+} from "react-router-dom";
+import { api, errorMessage } from "../api/client";
 
-export function RegisterPage() {
-  const { register, user } = useAuth();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const [busy, setBusy] = useState(false);
+interface Result {
+  error?: string;
+  done?: boolean;
+}
 
-  if (user) {
-    return <Navigate to="/" replace />;
+export async function action({ request }: ActionFunctionArgs): Promise<Result> {
+  const form = await request.formData();
+  try {
+    await api.register(
+      String(form.get("email")),
+      String(form.get("password")),
+      String(form.get("name")),
+    );
+  } catch (err) {
+    return { error: errorMessage(err, "Registration failed") };
   }
+  return { done: true };
+}
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      await register(email, password, name);
-      setDone(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed");
-    } finally {
-      setBusy(false);
-    }
-  };
+function RegisterPage() {
+  const data = useActionData<Result>();
+  const busy = useNavigation().state === "submitting";
 
-  if (done) {
+  if (data?.done) {
     return (
       <div className="auth-card card">
         <h1>Account created</h1>
@@ -47,43 +48,34 @@ export function RegisterPage() {
   return (
     <div className="auth-card card">
       <h1>Register</h1>
-      <form onSubmit={onSubmit}>
+      <Form method="post">
         <label>
           Name
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+          <input name="name" required />
         </label>
         <label>
           Email
-          <input
-            type="email"
-            value={email}
-            autoComplete="username"
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <input type="email" name="email" autoComplete="username" required />
         </label>
         <label>
           Password
           <input
             type="password"
-            value={password}
+            name="password"
             autoComplete="new-password"
-            onChange={(e) => setPassword(e.target.value)}
             required
           />
         </label>
-        {error && <div className="alert">{error}</div>}
+        {data?.error && <div className="alert">{data.error}</div>}
         <button type="submit" className="btn btn-primary" disabled={busy}>
           {busy ? "Creating…" : "Create account"}
         </button>
-      </form>
+      </Form>
       <p className="muted">
         Already have an account? <Link to="/login">Sign in</Link>
       </p>
     </div>
   );
 }
+
+export { RegisterPage as Component };

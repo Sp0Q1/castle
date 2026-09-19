@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "../api/client";
 
 // Lazy-load mermaid (it is large) and initialize it once, so it lands in a
 // separate chunk fetched only when a diagram is actually rendered.
@@ -60,7 +61,11 @@ function toSafeSvgNode(svg: string): Node | null {
   return document.importNode(root, true);
 }
 
-// Unique, valid id for each render (mermaid namespaces internal ids by this).
+// mermaid namespaces the ids and CSS it generates by this, and clears any element
+// already carrying it before rendering. The sanitized SVG we mount keeps that id
+// (its embedded stylesheet selects on it), so a *stable* id would have mermaid
+// delete the diagram currently on screen every time the source changed — which is
+// every keystroke in the live preview. A fresh id per render sidesteps it.
 let counter = 0;
 
 export function Mermaid({ code }: { code: string }) {
@@ -84,8 +89,7 @@ export function Mermaid({ code }: { code: string }) {
         setError(null);
       })
       .catch((e: unknown) => {
-        if (active)
-          setError(e instanceof Error ? e.message : "invalid diagram");
+        if (active) setError(errorMessage(e, "invalid diagram"));
       });
     return () => {
       active = false;

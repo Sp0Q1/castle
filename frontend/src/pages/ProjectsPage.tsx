@@ -1,52 +1,35 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import {
+  type ActionFunctionArgs,
+  Link,
+  useFetcher,
+  useLoaderData,
+} from "react-router-dom";
+import { api, errorMessage } from "../api/client";
 import type { Project } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
+import { useUser } from "../auth/session";
 
-export function ProjectsPage() {
-  const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function loader(): Promise<Project[]> {
+  return api.listProjects();
+}
 
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
+  try {
+    await api.createProject(
+      String(form.get("name")),
+      String(form.get("description")).trim() || null,
+    );
+  } catch (err) {
+    return { error: errorMessage(err, "Failed to create project") };
+  }
+  return null;
+}
 
-  const isManager = user?.role === "manager";
-
-  const load = () => {
-    setLoading(true);
-    api
-      .listProjects()
-      .then(setProjects)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load"),
-      )
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
-
-  const onCreate = async (e: FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    setBusy(true);
-    try {
-      await api.createProject(name, description.trim() ? description : null);
-      setName("");
-      setDescription("");
-      load();
-    } catch (err) {
-      setFormError(
-        err instanceof Error ? err.message : "Failed to create project",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
+function ProjectsPage() {
+  const projects = useLoaderData<Project[]>();
+  const isManager = useUser().role === "manager";
+  const fetcher = useFetcher<{ error: string }>();
+  const busy = fetcher.state !== "idle";
 
   return (
     <div className="stack">
@@ -60,36 +43,27 @@ export function ProjectsPage() {
       </div>
 
       {isManager && (
-        <form className="card" onSubmit={onCreate}>
+        // Keyed on the list it creates into, so a successful create empties the form.
+        <fetcher.Form className="card" method="post" key={projects.length}>
           <h2>New project</h2>
           <label>
             Name
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
+            <input name="name" required />
           </label>
           <label>
             Description
-            <textarea
-              value={description}
-              rows={2}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+            <textarea name="description" rows={2} />
           </label>
-          {formError && <div className="alert">{formError}</div>}
+          {fetcher.data?.error && (
+            <div className="alert">{fetcher.data.error}</div>
+          )}
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? "Creating…" : "Create project"}
           </button>
-        </form>
+        </fetcher.Form>
       )}
 
-      {loading && <p className="muted">Loading…</p>}
-      {error && <div className="alert">{error}</div>}
-      {!loading && !error && projects.length === 0 && (
-        <p className="muted">No projects yet.</p>
-      )}
+      {projects.length === 0 && <p className="muted">No projects yet.</p>}
 
       <ul className="list">
         {projects.map((p) => (
@@ -107,3 +81,5 @@ export function ProjectsPage() {
     </div>
   );
 }
+
+export { ProjectsPage as Component };

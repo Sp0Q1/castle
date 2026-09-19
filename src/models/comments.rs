@@ -2,8 +2,7 @@ use loco_rs::prelude::*;
 use sea_orm::QueryOrder;
 
 pub use super::_entities::comments::{ActiveModel, Column, Entity, Model};
-
-pub type Comments = Entity;
+use super::_entities::users;
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::comments::ActiveModel {
@@ -23,17 +22,18 @@ impl ActiveModelBehavior for super::_entities::comments::ActiveModel {
 
 // read-oriented logic
 impl Model {
-    /// Lists the comments on a finding, oldest first.
+    /// Lists the comments on a finding, oldest first, each with its author.
     ///
     /// # Errors
     /// When the query fails.
-    pub async fn list_for_finding(
+    pub async fn list_for_finding_with_authors(
         db: &DatabaseConnection,
         finding_id: i64,
-    ) -> ModelResult<Vec<Self>> {
+    ) -> ModelResult<Vec<(Self, Option<users::Model>)>> {
         let comments = Entity::find()
             .filter(Column::FindingId.eq(finding_id))
             .order_by_asc(Column::CreatedAt)
+            .find_also_related(users::Entity)
             .all(db)
             .await?;
         Ok(comments)

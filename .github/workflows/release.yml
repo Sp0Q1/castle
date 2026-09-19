@@ -1,12 +1,8 @@
 name: Release image
 
-# Builds and PUBLISHES the castle app image — the piece that makes a real kubectl
-# deploy possible. security.yml builds the same image with `load: true` to scan
-# it and never pushes; this one pushes and attaches provenance + an SBOM.
-#
-# The optimized Keycloak image has its own workflow (release-keycloak.yml): its
-# context changes rarely, so it is rebuilt only when deploy/k8s/keycloak/** changes
-# rather than on every push here.
+# Builds and PUBLISHES the castle app image — the artifact every tenant runs.
+# security.yml builds the same image with `load: true` to scan it and never
+# pushes; this one pushes and attaches provenance + an SBOM.
 #
 # Triggers:
 #   push to main   -> ghcr.io/<owner>/castle:main and :sha-<short>

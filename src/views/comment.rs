@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::models::_entities::{comments, users};
 use crate::views::user::UserSummary;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CommentResponse {
     pub id: i64,
     pub body: String,
