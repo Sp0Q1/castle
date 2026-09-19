@@ -23,9 +23,7 @@ Two things it does **not** paper over:
   migration — see **Migrating a Postgres major** below. Dependabot surfaces a pg
   major as a PR: that's your cue to plan the migration, not to blind-merge it.
 - **Keycloak major upgrades** (e.g. 26 → 27): bump the image, but read the release
-  notes first — Keycloak migrates its own schema, but majors can change config. If
-  you built the optimized image (deploy/k8s/keycloak/Dockerfile), rebuild it on the
-  new base.
+  notes first — Keycloak migrates its own schema, but majors can change config.
 
 Always `./castlectl backup` before a schema-changing release, and test it on a
 staging box.
@@ -48,7 +46,7 @@ for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
     | gzip > "/root/tenant-$cn.sql.gz"
 done
 
-# 2. Pull the new pins (postgres:NN-alpine bumped across compose + k8s).
+# 2. Pull the new pins (postgres:NN-alpine bumped in the compose files).
 git pull
 
 # 3. Recreate keycloak-db on the new major with an empty volume, then load the dump.

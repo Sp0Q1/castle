@@ -1,8 +1,7 @@
 # Castle on a single VPS — Compose + Caddy (no Kubernetes)
 
 The lightweight deployment: one LUKS-encrypted VPS, rootless Podman (or Docker)
-+ Compose, Caddy at the edge. Same containers and image as the k8s path — this
-just drops the orchestrator. See `../k8s/` for the scale-up path.
++ Compose, Caddy at the edge.
 
 ## Why this exists
 
@@ -84,10 +83,10 @@ caddy/
   sites/                  generated per-codename vhosts + sso
   certs/                  pre-issued certs (git-ignored)
 castlectl                 provisioner: issue-pool · allocate · promote · deprovision · list
+keycloak-realm.sh         creates a tenant's (or an empty canary's) Keycloak realm
+codenames.txt             the pool every tenant and decoy is named from
 .env.example             configuration
 ```
-
-`keycloak-realm.sh` and `codenames.txt` are reused unchanged from `../k8s/`.
 
 ## Host setup (once, before anything else)
 

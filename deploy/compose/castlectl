@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # castlectl (compose edition) — provision castle on a single VPS with Podman/
-# Docker Compose + Caddy. The non-Kubernetes counterpart of ../k8s/castlectl.sh;
-# same ideas (codename pool, per-tenant Keycloak realm, one shared client
-# secret, codename-only — the cluster/host never learns a client's real name).
+# Docker Compose + Caddy: codename pool, per-tenant Keycloak realm, one shared
+# client secret, codename-only — the host never learns a client's real name.
 #
 #   castlectl issue-certs [N]       bulk-issue certs for the IdP + N codenames in
 #                                   ONE CA batch (the only CT event). No Keycloak
@@ -38,9 +37,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE" || die "cannot cd to $HERE"
 [[ -f .env ]] && set -a && . ./.env && set +a
 
-K8S="$HERE/../k8s"
-POOL="${POOL:-$K8S/codenames.txt}"           # shared with the k8s path
-REALM_SH="${REALM_SH:-$K8S/keycloak-realm.sh}"
+POOL="${POOL:-$HERE/codenames.txt}"
+REALM_SH="${REALM_SH:-$HERE/keycloak-realm.sh}"
 TPL="$HERE/templates"
 SITES="$HERE/caddy/sites"
 CERTS="$HERE/caddy/certs"
