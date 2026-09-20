@@ -10,10 +10,14 @@
 use castle::{
     app::App,
     models::_entities::{findings, project_members, projects, users},
+    models::findings::{FindingStatus, Severity},
+    models::project_members::MemberRole,
     models::users::RegisterParams,
 };
 use loco_rs::testing::prelude::*;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, EntityTrait,
+};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,7 +55,7 @@ async fn make_finding(
     project_id: i64,
     author_id: i64,
     title: &str,
-    status: &str,
+    status: FindingStatus,
 ) -> findings::Model {
     findings::ActiveModel {
         project_id: Set(project_id),
@@ -61,7 +65,7 @@ async fn make_finding(
         technical_description: Set("t".to_string()),
         impact: Set("i".to_string()),
         recommendation: Set("r".to_string()),
-        status: Set(status.to_string()),
+        status: Set(status),
         ..Default::default()
     }
     .insert(db)
@@ -131,11 +135,14 @@ async fn seed(ctx: &loco_rs::app::AppContext) -> Fixture {
     .await
     .expect("create project");
 
-    for (user_id, role) in [(staff.id, "staff"), (client.id, "client")] {
+    for (user_id, role) in [
+        (staff.id, MemberRole::Staff),
+        (client.id, MemberRole::Client),
+    ] {
         project_members::ActiveModel {
             project_id: Set(project.id),
             user_id: Set(user_id),
-            role: Set(role.to_string()),
+            role: Set(role),
             ..Default::default()
         }
         .insert(db)
@@ -143,8 +150,22 @@ async fn seed(ctx: &loco_rs::app::AppContext) -> Fixture {
         .expect("add member");
     }
 
-    let draft = make_finding(db, project.id, staff.id, "Draft finding", "draft").await;
-    let published = make_finding(db, project.id, staff.id, "Published finding", "published").await;
+    let draft = make_finding(
+        db,
+        project.id,
+        staff.id,
+        "Draft finding",
+        FindingStatus::Draft,
+    )
+    .await;
+    let published = make_finding(
+        db,
+        project.id,
+        staff.id,
+        "Published finding",
+        FindingStatus::Published,
+    )
+    .await;
 
     let jwt = ctx.config.get_jwt_config().expect("jwt config");
     let token = |u: &users::Model| {
@@ -383,6 +404,212 @@ async fn oversized_fields_are_rejected_over_http() {
             }))
             .await;
         assert_eq!(response.status_code(), 400);
+    })
+    .await;
+}
+
+/// A severity outside the scale is refused outright rather than stored, or
+/// quietly replaced by the column default.
+#[tokio::test]
+#[serial]
+async fn an_unknown_severity_is_rejected() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (h, v) = bearer(&f.staff_token);
+
+        let response = request
+            .post(&format!("/api/projects/{}/findings", f.project_id))
+            .add_header(h, &v)
+            .json(&serde_json::json!({
+                "title": "Bad severity",
+                "description": "d",
+                "technical_description": "t",
+                "impact": "i",
+                "recommendation": "r",
+                "severity": "critical"
+            }))
+            .await;
+        assert_eq!(response.status_code(), 400);
+        assert!(
+            response.text().contains("severity must be one of"),
+            "the rejection should name the accepted values: {}",
+            response.text()
+        );
+
+        let listed = request
+            .get(&format!("/api/projects/{}/findings", f.project_id))
+            .add_header(h, &v)
+            .await;
+        let titles: Vec<String> = listed
+            .json::<serde_json::Value>()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["title"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(
+            !titles.iter().any(|t| t == "Bad severity"),
+            "a finding with an invalid severity was stored anyway: {titles:?}"
+        );
+    })
+    .await;
+}
+
+/// Onboarding grants staff or client capacity only. "manager" is not a value the
+/// endpoint can accept, so a manager cannot be minted through it.
+#[tokio::test]
+#[serial]
+async fn onboarding_cannot_mint_a_manager() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (h, v) = bearer(&f.manager_token);
+
+        let response = request
+            .post(&format!("/api/projects/{}/members", f.project_id))
+            .add_header(h, &v)
+            .json(&serde_json::json!({
+                "user_email": "newcomer@test.com",
+                "role": "manager"
+            }))
+            .await;
+        assert_eq!(response.status_code(), 400);
+        assert!(
+            response.text().contains("role must be one of"),
+            "the rejection should name the accepted roles: {}",
+            response.text()
+        );
+
+        let members = request
+            .get(&format!("/api/projects/{}/members", f.project_id))
+            .add_header(h, &v)
+            .await;
+        let body: serde_json::Value = members.json();
+        assert!(
+            !body
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["user"]["email"] == "newcomer@test.com"),
+            "onboarding with role=manager created a membership: {body}"
+        );
+    })
+    .await;
+}
+
+/// The typed columns must still serialize as the lowercase strings the SPA
+/// reads — changing the enum representation would silently break every client.
+#[tokio::test]
+#[serial]
+async fn severity_and_status_stay_lowercase_strings_on_the_wire() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (h, v) = bearer(&f.staff_token);
+
+        let created = request
+            .post(&format!("/api/projects/{}/findings", f.project_id))
+            .add_header(h, &v)
+            .json(&serde_json::json!({
+                "title": "Wire format",
+                "description": "d",
+                "technical_description": "t",
+                "impact": "i",
+                "recommendation": "r",
+                "severity": "elevated"
+            }))
+            .await;
+        assert_eq!(created.status_code(), 200);
+        let body: serde_json::Value = created.json();
+        assert_eq!(body["severity"], "elevated");
+        assert_eq!(body["status"], "draft");
+
+        let published = request
+            .post(&format!(
+                "/api/findings/{}/publish",
+                body["id"].as_i64().unwrap()
+            ))
+            .add_header(h, &v)
+            .await;
+        assert_eq!(published.json::<serde_json::Value>()["status"], "published");
+
+        let members = request
+            .get(&format!("/api/projects/{}/members", f.project_id))
+            .add_header(h, &v)
+            .await;
+        let roles: Vec<String> = members
+            .json::<serde_json::Value>()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(
+            roles
+                .iter()
+                .all(|r| ["manager", "staff", "client"].contains(&r.as_str())),
+            "member roles changed shape on the wire: {roles:?}"
+        );
+    })
+    .await;
+}
+
+/// Rows written before these columns were typed must still load. The enums are
+/// stored as the same lowercase strings they always were, so a live database
+/// needs no migration — this fails the moment that stops being true.
+#[tokio::test]
+#[serial]
+async fn rows_written_as_plain_strings_still_load() {
+    fresh_db();
+    request::<App, _, _>(|_request, ctx| async move {
+        let f = seed(&ctx).await;
+        let db = &ctx.db;
+
+        for sql in [
+            format!(
+                "UPDATE findings SET severity = 'extreme', status = 'published' WHERE id = {}",
+                f.draft_id
+            ),
+            format!(
+                "UPDATE project_members SET role = 'manager' WHERE project_id = {}",
+                f.project_id
+            ),
+            "UPDATE users SET status = 'invited' WHERE email = 'client@test.com'".to_string(),
+        ] {
+            db.execute_unprepared(&sql)
+                .await
+                .expect("write legacy value");
+        }
+
+        let finding = findings::Entity::find_by_id(f.draft_id)
+            .one(db)
+            .await
+            .expect("load finding")
+            .expect("finding exists");
+        assert_eq!(finding.severity, Severity::Extreme);
+        assert_eq!(finding.status, FindingStatus::Published);
+
+        let members = project_members::Entity::find()
+            .all(db)
+            .await
+            .expect("load members");
+        assert!(
+            !members.is_empty() && members.iter().all(|m| m.role == MemberRole::Manager),
+            "membership roles did not load from their stored strings"
+        );
+
+        let invited = users::Entity::find()
+            .all(db)
+            .await
+            .expect("load users")
+            .into_iter()
+            .filter(|u| u.status == castle::models::users::UserStatus::Invited)
+            .count();
+        assert_eq!(
+            invited, 1,
+            "user status did not load from its stored string"
+        );
     })
     .await;
 }

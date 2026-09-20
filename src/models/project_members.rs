@@ -1,7 +1,59 @@
 use loco_rs::prelude::*;
+use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter, StringLen};
+use serde::{Deserialize, Serialize};
 
 pub use super::_entities::project_members::{ActiveModel, Column, Entity, Model};
 use super::_entities::users;
+
+/// The capacity a user holds *on one project*, which is what finding
+/// authorization keys off — distinct from their platform-wide
+/// [`crate::models::users::UserRole`], which an IdP group decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "lowercase")]
+pub enum MemberRole {
+    /// The manager who opened the project, recorded so ownership is visible.
+    #[sea_orm(string_value = "manager")]
+    Manager,
+    /// May author, edit and publish findings.
+    #[sea_orm(string_value = "staff")]
+    Staff,
+    /// May read published findings and comment.
+    #[sea_orm(string_value = "client")]
+    Client,
+}
+
+/// The capacities a manager may onboard someone in. Onboarding cannot mint
+/// another manager, so that is not representable here rather than checked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnboardRole {
+    Staff,
+    Client,
+}
+
+impl OnboardRole {
+    /// Parses a caller-supplied onboarding role.
+    ///
+    /// # Errors
+    /// When `value` names anything other than the capacities a manager may grant.
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        match value {
+            "staff" => Ok(Self::Staff),
+            "client" => Ok(Self::Client),
+            _ => Err("role must be one of: staff, client".to_string()),
+        }
+    }
+}
+
+impl From<OnboardRole> for MemberRole {
+    fn from(role: OnboardRole) -> Self {
+        match role {
+            OnboardRole::Staff => Self::Staff,
+            OnboardRole::Client => Self::Client,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for super::_entities::project_members::ActiveModel {
