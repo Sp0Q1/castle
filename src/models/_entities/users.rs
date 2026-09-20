@@ -25,7 +25,7 @@ pub struct Model {
     pub magic_link_token: Option<String>,
     pub magic_link_expiration: Option<DateTimeWithTimeZone>,
     pub role: String,
-    pub status: String,
+    pub status: crate::models::users::UserStatus,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

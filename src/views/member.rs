@@ -1,15 +1,13 @@
 use serde::Serialize;
 
 use crate::models::_entities::{project_members, users};
+use crate::models::project_members::MemberRole;
 use crate::views::user::UserSummary;
 
 #[derive(Debug, Serialize)]
 pub struct MemberResponse {
     pub id: i64,
-    /// The capacity the user holds on the project: "staff" or "client", or
-    /// "manager" for the manager who created it (recorded as a member so
-    /// ownership is visible).
-    pub role: String,
+    pub role: MemberRole,
     pub user: UserSummary,
     pub created_at: String,
 }
@@ -19,7 +17,7 @@ impl MemberResponse {
     pub fn new(member: &project_members::Model, user: &users::Model) -> Self {
         Self {
             id: member.id,
-            role: member.role.clone(),
+            role: member.role,
             user: UserSummary::new(user),
             created_at: member.created_at.to_rfc3339(),
         }

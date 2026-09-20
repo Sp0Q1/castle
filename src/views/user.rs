@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::models::_entities::users;
+use crate::models::users::UserStatus;
 
 /// A safe projection of a user for embedding in API responses.
 ///
@@ -14,7 +15,7 @@ pub struct UserSummary {
     pub name: String,
     pub email: String,
     pub role: String,
-    pub status: String,
+    pub status: UserStatus,
 }
 
 impl UserSummary {
@@ -26,7 +27,7 @@ impl UserSummary {
             name: user.name.clone(),
             email: user.email.clone(),
             role: user.role.clone(),
-            status: user.status.clone(),
+            status: user.status,
         }
     }
 }

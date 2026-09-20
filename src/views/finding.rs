@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::models::_entities::{findings, users};
+use crate::models::findings::{FindingStatus, Severity};
 use crate::views::comment::CommentResponse;
 use crate::views::user::UserSummary;
 
@@ -16,8 +17,8 @@ pub struct FindingResponse {
     pub technical_description: String,
     pub impact: String,
     pub recommendation: String,
-    pub severity: String,
-    pub status: String,
+    pub severity: Severity,
+    pub status: FindingStatus,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -36,8 +37,8 @@ impl FindingResponse {
             technical_description: finding.technical_description.clone(),
             impact: finding.impact.clone(),
             recommendation: finding.recommendation.clone(),
-            severity: finding.severity.clone(),
-            status: finding.status.clone(),
+            severity: finding.severity,
+            status: finding.status,
             created_at: finding.created_at.to_rfc3339(),
             updated_at: finding.updated_at.to_rfc3339(),
         }

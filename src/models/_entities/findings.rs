@@ -20,8 +20,8 @@ pub struct Model {
     pub impact: String,
     #[sea_orm(column_type = "Text")]
     pub recommendation: String,
-    pub severity: String,
-    pub status: String,
+    pub severity: crate::models::findings::Severity,
+    pub status: crate::models::findings::FindingStatus,
     pub finding_type: String,
     pub project_id: i64,
     pub author_id: i64,
