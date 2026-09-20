@@ -9,6 +9,8 @@ use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{comments, findings, project_members, projects, users};
+use crate::models::findings::{FindingStatus, Severity};
+use crate::models::project_members::MemberRole;
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_LABEL, MAX_SECTION, MAX_TITLE};
 use crate::views::comment::CommentResponse;
@@ -23,7 +25,7 @@ pub struct CreateFindingParams {
     pub technical_description: String,
     pub impact: String,
     pub recommendation: String,
-    /// low | medium | elevated | high | extreme (defaults to "medium").
+    /// Defaults to `medium` when absent.
     #[serde(default)]
     pub severity: Option<String>,
 }
@@ -44,10 +46,6 @@ pub struct UpdateFindingParams {
     pub recommendation: Option<String>,
     #[serde(default)]
     pub severity: Option<String>,
-}
-
-fn is_valid_severity(value: &str) -> bool {
-    matches!(value, "low" | "medium" | "elevated" | "high" | "extreme")
 }
 
 /// Bounds every user-supplied text field, shared by create and update. Only
@@ -91,7 +89,10 @@ async fn load_finding(ctx: &AppContext, id: i64) -> Result<findings::Model> {
 /// Staff (a "staff" member of the project, or any manager) may read drafts;
 /// clients may not.
 fn is_privileged(user: &users::Model, membership: &Option<project_members::Model>) -> bool {
-    user.is_manager() || membership.as_ref().is_some_and(|m| m.role == "staff")
+    user.is_manager()
+        || membership
+            .as_ref()
+            .is_some_and(|m| m.role == MemberRole::Staff)
 }
 
 /// Write authorization for a finding's project: a platform manager or a project
@@ -107,7 +108,11 @@ fn require_write(
     if !(user.is_manager() || membership.is_some()) {
         return Err(Error::NotFound);
     }
-    if user.is_manager() || membership.as_ref().is_some_and(|m| m.role == "staff") {
+    if user.is_manager()
+        || membership
+            .as_ref()
+            .is_some_and(|m| m.role == MemberRole::Staff)
+    {
         Ok(())
     } else {
         Err(crate::security::forbidden(action))
@@ -159,11 +164,11 @@ pub async fn create(
         severity,
     } = params;
 
-    if let Some(severity) = &severity {
-        if !is_valid_severity(severity) {
-            return bad_request("severity must be one of: low, medium, elevated, high, extreme");
-        }
-    }
+    let severity = severity
+        .as_deref()
+        .map(Severity::parse)
+        .transpose()
+        .map_err(Error::BadRequest)?;
 
     validate_finding_text(
         Some(&title),
@@ -284,11 +289,12 @@ pub async fn update(
         "only project staff can edit findings",
     )?;
 
-    if let Some(severity) = &params.severity {
-        if !is_valid_severity(severity) {
-            return bad_request("severity must be one of: low, medium, elevated, high, extreme");
-        }
-    }
+    let severity = params
+        .severity
+        .as_deref()
+        .map(Severity::parse)
+        .transpose()
+        .map_err(Error::BadRequest)?;
 
     validate_finding_text(
         params.title.as_deref(),
@@ -312,7 +318,7 @@ pub async fn update(
         technical_description,
         impact,
         recommendation,
-        severity,
+        severity: _,
     } = params;
     if let Some(value) = title {
         item.title = Set(value);
@@ -358,7 +364,7 @@ pub async fn publish(
     )?;
 
     let mut item = finding.into_active_model();
-    item.status = Set(crate::models::findings::STATUS_PUBLISHED.to_string());
+    item.status = Set(FindingStatus::Published);
     let finding = item.update(&ctx.db).await?;
     format::json(FindingResponse::new(&finding))
 }
@@ -382,7 +388,7 @@ pub async fn unpublish(
 
     // Reverting to draft hides it from clients again.
     let mut item = finding.into_active_model();
-    item.status = Set(crate::models::findings::STATUS_DRAFT.to_string());
+    item.status = Set(FindingStatus::Draft);
     let finding = item.update(&ctx.db).await?;
     format::json(FindingResponse::new(&finding))
 }

@@ -7,6 +7,7 @@ use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{project_members, projects, users};
+use crate::models::project_members::{MemberRole, OnboardRole};
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_DESCRIPTION, MAX_EMAIL, MAX_TITLE};
 use crate::views::member::MemberResponse;
@@ -23,7 +24,7 @@ pub struct CreateProjectParams {
 pub struct OnboardParams {
     /// Email of the existing user to add to the project.
     pub user_email: String,
-    /// Capacity to onboard them in: "staff" or "client".
+    /// Capacity to onboard them in.
     pub role: String,
 }
 
@@ -77,7 +78,7 @@ pub async fn create(
     project_members::ActiveModel {
         project_id: Set(project.id),
         user_id: Set(user.id),
-        role: Set("manager".to_string()),
+        role: Set(MemberRole::Manager),
         ..Default::default()
     }
     .insert(&ctx.db)
@@ -143,11 +144,7 @@ pub async fn onboard(
     let project = load_project(&ctx, project_id).await?;
 
     validation::required_text("user_email", &params.user_email, MAX_EMAIL)?;
-
-    let role = match params.role.as_str() {
-        "staff" | "client" => params.role.clone(),
-        _ => return bad_request("role must be either 'staff' or 'client'"),
-    };
+    let role = OnboardRole::parse(&params.role).map_err(Error::BadRequest)?;
 
     // Create an "invited" placeholder if the user has not signed in yet; it is
     // reconciled to their real identity on first SSO login (matched by email).
@@ -161,7 +158,7 @@ pub async fn onboard(
     let member = project_members::ActiveModel {
         project_id: Set(project.id),
         user_id: Set(target.id),
-        role: Set(role),
+        role: Set(role.into()),
         ..Default::default()
     }
     .insert(&ctx.db)

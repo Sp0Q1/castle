@@ -10,7 +10,7 @@ pub struct Model {
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key)]
     pub id: i64,
-    pub role: String,
+    pub role: crate::models::project_members::MemberRole,
     pub project_id: i64,
     pub user_id: i64,
 }

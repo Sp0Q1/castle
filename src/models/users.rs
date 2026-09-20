@@ -8,6 +8,8 @@ use uuid::Uuid;
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
 use super::_entities::project_members;
+use super::project_members::MemberRole;
+use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter, StringLen};
 
 pub const MAGIC_LINK_LENGTH: usize = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
@@ -365,6 +367,19 @@ impl ActiveModel {
     }
 }
 
+/// Where a user is in their lifecycle. `Invited` is a placeholder created when a
+/// manager onboards an email that has never signed in; first SSO login reconciles
+/// it to the real identity and flips it to `Active`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "lowercase")]
+pub enum UserStatus {
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "invited")]
+    Invited,
+}
+
 /// The role a user holds across the platform. Stored on `users.role` as a
 /// lowercase string; use [`Model::role`] to read it in typed form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,14 +461,14 @@ impl Model {
                     .filter(|n| !n.is_empty())
                     .is_some_and(|n| user.name != n);
                 if user.role.as_str() == role.as_str()
-                    && user.status.as_str() == "active"
+                    && user.status == UserStatus::Active
                     && !name_changed
                 {
                     return Ok(user);
                 }
                 let mut active = user.into_active_model();
                 active.role = ActiveValue::set(role.as_str().to_string());
-                active.status = ActiveValue::set("active".to_string());
+                active.status = ActiveValue::set(UserStatus::Active);
                 if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
                     active.name = ActiveValue::set(n.to_string());
                 }
@@ -467,7 +482,7 @@ impl Model {
                 Ok(updated)
             }
             Err(ModelError::EntityNotFound) => {
-                Self::insert_shadow(db, email, name, role, "active").await
+                Self::insert_shadow(db, email, name, role, UserStatus::Active).await
             }
             Err(e) => Err(e),
         }
@@ -488,13 +503,13 @@ impl Model {
         }
         let stale = project_members::Entity::find()
             .filter(project_members::Column::UserId.eq(user.id))
-            .filter(project_members::Column::Role.ne(UserRole::Client.as_str()))
+            .filter(project_members::Column::Role.ne(MemberRole::Client))
             .all(db)
             .await
             .map_err(ModelError::from)?;
         for membership in stale {
             let mut active = membership.into_active_model();
-            active.role = ActiveValue::set(UserRole::Client.as_str().to_string());
+            active.role = ActiveValue::set(MemberRole::Client);
             active.update(db).await.map_err(ModelError::from)?;
         }
         Ok(())
@@ -509,7 +524,7 @@ impl Model {
         match Self::find_by_email(db, email).await {
             Ok(user) => Ok(user),
             Err(ModelError::EntityNotFound) => {
-                Self::insert_shadow(db, email, None, UserRole::Client, "invited").await
+                Self::insert_shadow(db, email, None, UserRole::Client, UserStatus::Invited).await
             }
             Err(e) => Err(e),
         }
@@ -520,7 +535,7 @@ impl Model {
         email: &str,
         name: Option<&str>,
         role: UserRole,
-        status: &str,
+        status: UserStatus,
     ) -> ModelResult<Self> {
         // No usable password: these users authenticate via the IdP/proxy, never here.
         let random = hash::hash_password(&Uuid::new_v4().to_string())
@@ -535,7 +550,7 @@ impl Model {
             name: ActiveValue::set(display),
             password: ActiveValue::set(random),
             role: ActiveValue::set(role.as_str().to_string()),
-            status: ActiveValue::set(status.to_string()),
+            status: ActiveValue::set(status),
             ..Default::default()
         };
         // Two concurrent first-logins for the same new SSO user both reach here;
