@@ -34,15 +34,19 @@ EOF
 }
 
 deploy_challenge() {
-  local domain="$1" value="$3" rr="_acme-challenge.${1}."
+  local value="$3" rr="_acme-challenge.${1}."
   # delete-then-add so a retried issuance replaces rather than stacks records.
   _nsupdate "update delete ${rr} TXT
 update add ${rr} ${TTL} IN TXT \"${value}\""
   # Don't hand control back to Let's Encrypt until our own authoritative server
   # actually answers with the token — otherwise validation can race the update.
-  local i
-  for i in $(seq 1 20); do
-    if dig +short "@${DNS_SERVER}" -p "${DNS_PORT}" TXT "$rr" | grep -qF "$value"; then
+  #
+  # -e is load-bearing: the challenge value is base64url, so roughly one in sixty
+  # four starts with "-" and grep would read it as an option instead of a pattern
+  # ("invalid context length argument"). The check then never matched, the wait
+  # timed out, and the whole pool renewal aborted on a cert that was fine.
+  for _ in $(seq 1 20); do
+    if dig +short "@${DNS_SERVER}" -p "${DNS_PORT}" TXT "$rr" | grep -qF -e "$value"; then
       return 0
     fi
     sleep 1
