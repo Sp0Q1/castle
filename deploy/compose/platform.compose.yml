@@ -127,7 +127,7 @@ services:
     cap_drop: [ALL]
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.3-1
+    image: quay.io/keycloak/keycloak:26.7.4-0
     restart: unless-stopped
     # `start` = production mode (not start-dev). Implicit build at boot from the
     # env below; bake an optimized image later to skip it.
