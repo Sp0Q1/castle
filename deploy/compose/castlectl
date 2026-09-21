@@ -292,6 +292,25 @@ resolve_digest(){ # <image-ref>  ->  <repo>@sha256:...
   $ENGINE image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$1" 2>/dev/null
 }
 
+# The reference a container is actually running, so upgrade can report whether
+# anything moved instead of assuming it did. `upgrade` printed the same
+# "recreated with current image" line either way, which let a digest-pinned
+# CASTLE_IMAGE hold a tenant on a months-old build while every run said ok.
+running_ref(){ # <container> -> <image ref it was created from>
+  $ENGINE inspect --format '{{.ImageName}}' "$1" 2>/dev/null
+}
+
+# A short, readable form of an image reference for the upgrade report. Tenants
+# are normally rendered pinned to a digest, but one first created by `promote`
+# while CASTLE_IMAGE was a tag is running from that tag — so fall back to the
+# reference itself rather than printing twelve characters of "ghcr.io/...".
+short_ref(){ # <image-ref> -> 12 chars of its digest, or the ref if it has none
+  case "$1" in
+    *@sha256:*) printf '%.12s' "${1##*@sha256:}" ;;
+    *)          printf '%s' "$1" ;;
+  esac
+}
+
 # Run a compose command for a codename with its secrets exported, so compose
 # substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
 # (URL-safe in DATABASE_URL); JWT stays base64 (loco decodes it).
@@ -513,18 +532,27 @@ upgrade(){ # [<codename>]  (default: every running codename)
     run_or_die "pull failed for $CASTLE_IMAGE" "$ENGINE" pull "$CASTLE_IMAGE"
     app_img="$(resolve_digest "$CASTLE_IMAGE")"
     [[ "$app_img" == *@sha256:* ]] || die "could not resolve a digest for $CASTLE_IMAGE (is it pulled?)"
+    # A digest in CASTLE_IMAGE is deliberate for a rollback, so this is a notice
+    # and not a refusal — but it deploys exactly that build and can never pick up
+    # a newer one, which is worth saying out loud every time.
+    if [[ "$CASTLE_IMAGE" == *@sha256:* ]]; then
+      echo "  note: CASTLE_IMAGE is pinned to $(short_ref "$CASTLE_IMAGE") and cannot move."
+      echo "        Set it to a tag (e.g. ghcr.io/sp0q1/castle:main) to track main again."
+    fi
   fi
 
   # One bad instance must NOT abort the fleet or skip reload_caddy: collect the
   # failures, keep going, then summarize and exit nonzero at the end if any failed.
   local -a fails=()
-  local kind target hc out
+  local kind target hc out before
   for cn in "${targets[@]}"; do
     kind="$(kind_of "$cn")"
     if [[ "$kind" == tenant ]]; then
       render_instance "$cn" "$TPL/tenant.compose.yml" "$app_img"; target="castle-$cn"; hc=health
+      before="$(running_ref "$target")"
     else
       render_instance "$cn" "$TPL/canary.compose.yml";            target="oauth2-proxy-$cn"; hc=running
+      before=""
     fi
     if ! out="$(compose_instance "$cn" pull 2>&1)"; then
       fails+=("$cn ($kind): image pull failed — ${out##*"$NL"}"); continue
@@ -534,7 +562,13 @@ upgrade(){ # [<codename>]  (default: every running codename)
     fi
     # up -d only created the container; verify the app actually came up.
     if wait_healthy "$target" "$hc"; then
-      echo "  $cn ($kind) recreated with current image (data kept)"
+      if [[ "$kind" == tenant && "$before" == "$app_img" ]]; then
+        echo "  $cn ($kind) already on $(short_ref "$app_img") — image unchanged"
+      elif [[ "$kind" == tenant && -n "$before" ]]; then
+        echo "  $cn ($kind) $(short_ref "$before") -> $(short_ref "$app_img") (data kept)"
+      else
+        echo "  $cn ($kind) recreated with current image (data kept)"
+      fi
     else
       fails+=("$cn ($kind): $target not healthy after up -d (see: $ENGINE logs $target)")
     fi
