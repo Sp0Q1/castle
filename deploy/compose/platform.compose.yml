@@ -35,7 +35,7 @@ services:
   # Run `castlectl dns-init` first to generate DDNS_TSIG_SECRET, and delegate
   # $BASE_DOMAIN to this box (NS + glue) at your registrar. See docs/self-hosted-dns.md.
   dns:
-    image: docker.io/internetsystemsconsortium/bind9:9.20
+    image: docker.io/internetsystemsconsortium/bind9:9.21
     restart: unless-stopped
     profiles: ["self-dns"]
     # Host networking, NOT published ports: BIND binds the host's real :53 via
