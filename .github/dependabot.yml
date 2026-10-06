@@ -101,3 +101,9 @@ updates:
     # its PR is a "plan the migration" signal, not a blind-merge: do the deliberate
     # dump/restore in deploy/compose/docs/backup-and-upgrade.md, then bump the pins.
     # The compose file carries the same warning next to the image.
+    ignore:
+      # BIND's odd minors are development branches (9.21 follows stable 9.20 the
+      # way 9.19 preceded it); the authoritative server for the whole pool stays
+      # on the stable line. Lift when 9.22 ships.
+      - dependency-name: internetsystemsconsortium/bind9
+        versions: ["9.21"]
