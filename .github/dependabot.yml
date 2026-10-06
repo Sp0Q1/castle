@@ -102,8 +102,10 @@ updates:
     # dump/restore in deploy/compose/docs/backup-and-upgrade.md, then bump the pins.
     # The compose file carries the same warning next to the image.
     ignore:
-      # BIND's odd minors are development branches (9.21 follows stable 9.20 the
-      # way 9.19 preceded it); the authoritative server for the whole pool stays
-      # on the stable line. Lift when 9.22 ships.
+      # BIND's odd minors (9.19, 9.21, ...) are development branches and the
+      # even ones are stable. Dependabot cannot express that rule, so minor
+      # bumps for BIND are not offered at all: the pool's authoritative server
+      # moves to the next stable line (9.22) by hand, which is a deliberate
+      # upgrade anyway. Patch releases ride the floating 9.20 tag.
       - dependency-name: internetsystemsconsortium/bind9
-        versions: ["9.21"]
+        update-types: ["version-update:semver-minor"]
