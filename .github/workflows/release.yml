@@ -87,6 +87,12 @@ jobs:
           # is a fast source-only rebuild rather than a full dependency compile.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # ...except the runtime stage, which is always rebuilt. It is cheap (apt
+          # and a few COPYs) and it is where `apt-get upgrade` applies Debian's
+          # security fixes. Served from cache, that layer stays frozen on the day
+          # the cache was written, and the image is published with whatever was
+          # current then while the Dockerfile says it upgrades on every build.
+          no-cache-filters: runtime
           # provenance + sbom become attestations embedded in the image index.
           provenance: true
           sbom: true

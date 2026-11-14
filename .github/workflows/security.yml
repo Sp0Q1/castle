@@ -167,6 +167,13 @@ jobs:
           tags: castle:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # The runtime stage is never taken from cache: it holds the
+          # `apt-get upgrade` that applies Debian's security fixes, and a cached
+          # copy of that layer is frozen on the day it was written. With the
+          # cache, this job spent weeks reporting fixable HIGH findings in apt
+          # and openssl that a rebuild was supposed to clear and could not. The
+          # expensive stages (the Rust and frontend builds) stay cached.
+          no-cache-filters: runtime
 
       # Proves the image actually works before anything else looks at it.
       #
