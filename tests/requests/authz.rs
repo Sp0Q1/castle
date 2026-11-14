@@ -86,7 +86,7 @@ async fn make_finding(
 ///
 /// The files live under `target/`, which is already ignored, and each is deleted
 /// before it is reused so a crashed run cannot poison the next one.
-fn fresh_db() {
+pub(super) fn fresh_db() {
     // Only sqlite needs this. CI points DATABASE_URL at a real Postgres so that
     // loose sqlite typing cannot hide an INT4/INT8 mismatch again (PR #65);
     // overwriting it here unconditionally sent those runs back to sqlite and
