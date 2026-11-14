@@ -13,26 +13,14 @@
 
 [advisories]
 ignore = [
-  # rsa 0.9 — Marvin timing sidechannel, no fixed version exists upstream.
-  #
-  # Not compiled at all: `cargo tree -i rsa` is empty. It appears in Cargo.lock
-  # only because sqlx declares sqlx-mysql as an optional dependency, and the
-  # lockfile records the union of all optional features. Castle builds sea-orm
-  # with sqlx-postgres and sqlx-sqlite only, so no MySQL driver — and no RSA
-  # implementation — is in the binary.
-  #
-  # REMOVE if a MySQL backend is ever enabled, at which point this becomes a
-  # real finding that needs a real answer.
-  "RUSTSEC-2023-0071",
-
   # rkyv 0.7 — insufficient archive validation, out-of-bounds reads in archives
   # containing Rc/Arc (RUSTSEC-2026-0235).
   #
   # Not compiled at all: `cargo tree -i rkyv` is empty on every target. It is an
   # OPTIONAL dependency of rust_decimal (its rkyv-serialization feature), which
-  # nothing enables — rust_decimal is pulled by sea-orm and by loco-rs's
-  # byte-unit, but neither turns on the `rkyv` feature, so no rkyv code is in the
-  # binary. The lockfile records it only because it is a declared optional dep.
+  # nothing enables — rust_decimal is pulled by sea-orm, which does not turn on
+  # the `rkyv` feature, so no rkyv code is in the binary. The lockfile records it
+  # only because it is a declared optional dep.
   #
   # Not fixable here: rust_decimal 1.42.1 is the newest published and pins
   # rkyv ^0.7, so 0.8.17 is unreachable from this tree. REMOVE when rust_decimal
