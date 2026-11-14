@@ -39,4 +39,42 @@ ignore = [
   # ships a release on rkyv >=0.8.17 (or drops the optional rkyv) — Dependabot
   # will open that PR.
   "RUSTSEC-2026-0235",
+
+  # libsqlite3-sys 0.37 — the bundled C SQLite (before 3.54.0) can return
+  # uninitialised page-cache memory when it opens a database whose sibling
+  # `-wal` file was written by a less trusted party (CVE-2026-119375).
+  #
+  # Unlike the entries above, this one IS compiled: sea-orm is built with
+  # sqlx-sqlite so that `cargo run` and `cargo test` work without a database
+  # server. It is not reachable where it matters. Every deployed instance runs
+  # on Postgres — the tenant template passes a postgres:// URL, and
+  # config/production.yaml has no SQLite fallback, so a production process
+  # cannot open a SQLite file even by misconfiguration. Development and the
+  # test suite open only database files this process created itself; castle
+  # never opens a database, or a WAL, that anyone else wrote.
+  #
+  # Not fixable here: the fix is libsqlite3-sys >= 0.39.0, and sqlx-sqlite
+  # 0.9.0 — the newest sqlx — requires < 0.38.0.
+  #
+  # REMOVE when sqlx ships a release that admits libsqlite3-sys >= 0.39.0;
+  # `cargo update -p libsqlite3-sys` will then move it. RE-EVALUATE at once if
+  # SQLite is ever used for a deployed instance, or if castle is ever handed a
+  # database file to open.
+  "RUSTSEC-2026-0459",
+
+  # unsafe-libyaml 0.2 — unmaintained: the repository was archived in March
+  # 2024. An informational notice, not a vulnerability report, but CI runs
+  # `cargo audit --deny warnings`, so it fails the build like one.
+  #
+  # Compiled, through loco-rs -> serde_yaml_ng: it is the parser loco uses to
+  # read config/*.yaml at boot, and the seed fixture. It only ever parses files
+  # that ship inside our own image. Nothing a request carries reaches a YAML
+  # parser — castle's API speaks JSON and multipart only.
+  #
+  # Not fixable here: the dependency is loco's, and no release of loco reads
+  # its configuration with anything else.
+  #
+  # REMOVE when loco-rs moves to a maintained YAML parser. RE-EVALUATE if
+  # castle ever parses YAML that did not come from this repository.
+  "RUSTSEC-2024-0449",
 ]
