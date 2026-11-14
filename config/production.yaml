@@ -63,8 +63,13 @@ mailer:
 
 # Database Configuration
 database:
-  # The connection URI should be supplied via the environment in production.
-  uri: <%= get_env(name="DATABASE_URL", default="sqlite://castle_production.sqlite?mode=rwc") %>
+  # NO DEFAULT ON PURPOSE, like JWT_SECRET below. The default used to be a local
+  # SQLite file, so an instance started without DATABASE_URL would come up
+  # looking healthy and serve from a database nobody provisioned, backs up or
+  # can find. With no default the config fails to render and the app refuses to
+  # start. Every deployed instance runs on Postgres; SQLite is for development
+  # and the test suite only.
+  uri: <%= get_env(name="DATABASE_URL") %>
   enable_logging: false
   # Milliseconds. 500ms is fine for local sqlite but too tight for a networked
   # Postgres first-connect (pool times out -> crashloop); use realistic values.
