@@ -92,13 +92,14 @@ GET    /api/findings/{finding_id}/comments
 POST   /api/findings/{finding_id}/comments         # { body }
 
 POST   /api/uploads                                # multipart image -> { url }
-GET    /api/uploads/{name}                         # unauthenticated; unguessable name
+GET    /api/uploads/{name}                         # authenticated, like the rest
 ```
 
 The long fields and comment bodies are markdown; images pasted into the editor
 go through `POST /api/uploads` and are embedded as `![](/api/uploads/<name>)`.
-The serve endpoint is unauthenticated because an `<img>` cannot send a token,
-and relies on the unguessable name.
+Serving an upload requires authentication too. An `<img>` cannot send a token,
+so the SPA fetches each image through its API client and renders it from an
+object URL instead of pointing the browser at the endpoint.
 
 ## Running it locally
 
@@ -114,7 +115,7 @@ npm --prefix frontend install && npm --prefix frontend run dev   # SPA, proxies 
 `manager@`, `staff@` and `client@example.com` all use the password `12341234`.
 
 Tests run against SQLite by default and against Postgres when `DATABASE_URL`
-points at one; CI runs both.
+points at one. CI runs them on Postgres, the engine every deployment uses.
 
 ## Frontend
 
