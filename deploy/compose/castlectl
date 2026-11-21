@@ -620,6 +620,13 @@ upgrade(){ # [<codename>]  (default: every running codename)
       else
         echo "  $cn ($kind) recreated with current image (data kept)"
       fi
+      # The proxy now runs as the templates have it. Its realm's client is
+      # brought to what `keycloak-realm.sh create` makes today, after the proxy
+      # and never before it, so a requirement only ever reaches a realm whose
+      # proxy already meets it. Tenant and canary alike.
+      out="$(KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" EXTERNAL_PORT="$EXTERNAL_PORT" \
+        "$REALM_SH" update "$cn" 2>&1)" \
+        || fails+=("$cn ($kind): its realm's client could not be brought up to date — ${out##*"$NL"}")
     else
       fails+=("$cn ($kind): $target not healthy after up -d (see: $ENGINE logs $target)")
     fi
