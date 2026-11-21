@@ -38,6 +38,13 @@ services:
       - --skip-provider-button=true
       - --cookie-secure=true
       - --cookie-csrf-per-request=true
+      # The session is renewed with Keycloak just inside the access token's five
+      # minutes. A user disabled or signed out there loses the portal at the next
+      # renewal, and a changed group reaches castle with it; without this the
+      # cookie alone decides, for as long as it lives.
+      - --cookie-refresh=4m
+      # The realm's longest session (ssoSessionMaxLifespan), not the default week.
+      - --cookie-expire=10h
       # Split-horizon: browser is sent to the public IdP URL; token/keys are
       # fetched over the in-container network. Identical to a real tenant.
       - --skip-oidc-discovery=true
