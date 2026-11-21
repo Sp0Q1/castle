@@ -8,28 +8,33 @@ their Keycloak groups on every request.
 
 ```
    browser ──▶ Caddy ──▶ oauth2-proxy ──(OIDC)──▶ Keycloak
-                             │  (sets X-Forwarded-Email / -Groups / -Preferred-Username)
+                             │  (sets X-Forwarded-Email / -Groups / -Preferred-Username,
+                             │   and the secret it shares with its castle)
                              ▼
-                           castle  (its tenant's network only, no published port)
+                           castle  (its tenant's internal network, no published port)
 ```
 
-## The rule that makes this safe
+## What castle believes, and from whom
 
-In proxy mode the identity headers are **trusted unconditionally**. If castle's
-port were reachable without going through oauth2-proxy, anyone could send
-`X-Forwarded-Email: manager@you.com` and be that manager. Therefore:
+Castle takes who is asking from request headers, so everything rests on who
+can set them. Three things keep that to the proxy, and the Compose templates
+do all three:
 
-1. **Castle is reachable by its own proxy and nothing else.** No published
-   port, and a network it shares only with that proxy and its database. The
-   Compose templates are built this way; anything else that runs castle has to
-   keep it.
-2. **The edge decides what the proxy believes.** oauth2-proxy runs with
+1. **The proxy proves itself to castle.** oauth2-proxy runs with
+   `--pass-basic-auth=true` and a password (`OAUTH2_PROXY_BASIC_AUTH_PASSWORD`),
+   so everything it forwards carries that password in a Basic `Authorization`
+   header, in place of whatever the browser sent under that name. Castle gets
+   the same value as `CASTLE_PROXY_SECRET`. It reads the identity headers only
+   from a request that carries it, answers any other with 401, and does not
+   start in proxy mode without one. `castlectl` generates one per codename.
+2. **Castle's network is closed.** No published port, and a network marked
+   `internal` that only its proxy and its database join. podman routes between
+   ordinary bridge networks, so the mark is what keeps the rest of the host
+   out.
+3. **The edge decides what the proxy believes.** oauth2-proxy runs with
    `--reverse-proxy=true` and takes `X-Forwarded-Uri` and `X-Real-IP` from
    whatever is in front of it. The vhost template removes the first and sets
    the second, and no path is exempt from sign-in.
-3. Optionally set `CASTLE_PROXY_SECRET` and have the proxy send
-   `X-Castle-Proxy-Secret`; castle then refuses requests without it. This adds
-   to the network rule and does not replace it.
 
 ## The realm
 
@@ -114,7 +119,7 @@ settings:
     manager_group: castle-managers
     staff_group: castle-staff
     client_group: castle-clients
-    shared_secret_header: x-castle-proxy-secret   # with CASTLE_PROXY_SECRET
+    secret: …                                     # CASTLE_PROXY_SECRET, required
     logout_url: /oauth2/sign_out?rd=/             # CASTLE_LOGOUT_URL
 ```
 
@@ -126,8 +131,8 @@ three header names at those.
 [`compose/templates/tenant.compose.yml`](compose/templates/tenant.compose.yml)
 is the reference for the proxy's flags, and
 [`compose/templates/site.caddy`](compose/templates/site.caddy) for what the edge
-must do. Whatever replaces them has to keep the three points of the rule above,
-a `--cookie-refresh` shorter than the access token's lifetime, and a Keycloak
+must do. Whatever replaces them has to keep the three points above, a
+`--cookie-refresh` shorter than the access token's lifetime, and a Keycloak
 client whose post-logout redirect URI covers the portal's root.
 
 ## Local development
