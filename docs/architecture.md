@@ -97,9 +97,10 @@ sequenceDiagram
   end
 ```
 
-The code is bound to the browser that started the sign-in: Keycloak redeems
-it only for the verifier the proxy kept for that browser (PKCE), and the proxy
-accepts the tokens only with the nonce it sent along.
+The code is bound to the browser that started the sign-in: Keycloak starts no
+sign-in for the client without a challenge and redeems the code only for the
+verifier the proxy kept for that browser (PKCE), and the proxy accepts the
+tokens only with the nonce it sent along.
 
 A session lasts at most ten hours. Because it is refreshed with Keycloak every
 four minutes, disabling a user there, ending their session or changing their

@@ -43,8 +43,9 @@ short:
 - Access tokens live 5 minutes; a session ends after 30 minutes without use and
   after 10 hours in any case.
 - Sign-in and admin events are recorded.
-- One confidential client, `castle`: browser code flow only, one exact
-  redirect URI, and a mapper that puts the user's groups into the token.
+- One confidential client, `castle`: browser code flow only, with a PKCE
+  challenge (S256) required, one exact redirect URI, and a mapper that puts
+  the user's groups into the token.
 - Three groups: `castle-managers`, `castle-staff`, `castle-clients`.
 
 ## People and roles
@@ -86,7 +87,8 @@ role from Keycloak and the capacity from the manager.
   `--insecure-oidc-skip-nonce=false`). Keycloak redeems the code only for the
   verifier the proxy kept for that browser, and the proxy accepts the tokens
   only with that nonce, so a code that reaches another browser is of no use
-  there.
+  there. The realm's client requires the challenge, so Keycloak starts no
+  sign-in for it without one.
 - The session is an encrypted cookie for that one codename. It is refreshed
   with Keycloak every four minutes (`--cookie-refresh=4m`, shorter than the
   access token's five) and ends after ten hours (`--cookie-expire=10h`).
