@@ -25,6 +25,13 @@ services:
     command:
       - --provider=oidc
       - --client-id=castle
+      # A sign-in code is bound to the browser that asked for it, twice over:
+      # Keycloak redeems it only for the verifier this proxy kept for that
+      # browser (PKCE), and the proxy accepts the identity token only with
+      # the nonce it sent along. A code that reaches another browser is of no
+      # use there.
+      - --code-challenge-method=S256
+      - --insecure-oidc-skip-nonce=false
       - --redirect-url=https://__HOSTPORT__/oauth2/callback
       # Nothing behind auth: a canary has no app. static://200 satisfies
       # oauth2-proxy's upstream requirement without a backend container.
