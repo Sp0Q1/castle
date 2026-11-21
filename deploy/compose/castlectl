@@ -278,6 +278,7 @@ render_instance(){ # <codename> <template> [<image>]  (image defaults to $CASTLE
   sed -e "s/__CODENAME__/$cn/g" -e "s/__REALM__/$realm/g" -e "s#__HOST__#$host#g" \
       -e "s#__HOSTPORT__#$hostport#g" \
       -e "s#__KC_PUBLIC__#$KC_PUBLIC_URL#g" -e "s#__IMAGE__#${img}#g" \
+      -e "s#__BRANDING__#$HERE/branding#g" \
       "$tpl" > "$RUN/$cn.compose.yml"
 }
 
@@ -311,6 +312,9 @@ short_ref(){ # <image-ref> -> 12 chars of its digest, or the ref if it has none
   esac
 }
 
+# The deployment's own logo: a file named `logo` in branding/, as castle sees it.
+logo(){ [[ -f "$HERE/branding/logo" ]] && echo /app/branding/logo; }
+
 # Run a compose command for a codename with its secrets exported, so compose
 # substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
 # (URL-safe in DATABASE_URL); JWT stays base64 (loco decodes it).
@@ -320,6 +324,7 @@ compose_instance(){ # <codename> <compose args...>
   OAP_COOKIE_SECRET="$(cookie_for "$cn")" \
   CASTLE_JWT="$(ensure_secret "$cn" jwt 48)" \
   CASTLE_DB_PW="$(ensure_secret "$cn" db 24 hex)" \
+  CASTLE_LOGO="$(logo)" \
     $COMPOSE -p "$(proj_of "$cn")" -f "$RUN/$cn.compose.yml" "$@"
 }
 

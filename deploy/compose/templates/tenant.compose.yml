@@ -89,11 +89,14 @@ services:
       DATABASE_URL: postgres://castle:${CASTLE_DB_PW}@postgres-__CODENAME__:5432/castle
       JWT_SECRET: ${CASTLE_JWT}
       HOST: https://__HOST__
+      # Set by castlectl when branding/logo exists; empty keeps the built-in brand.
+      CASTLE_LOGO: ${CASTLE_LOGO}
       # castle's default logout (/oauth2/sign_out?rd=/) is enough: oauth2-proxy
       # ends the Keycloak session via --backend-logout-url above, clears its own
       # cookie, and returns to the app root — which then shows a fresh login.
     volumes:
       - castle_uploads:/app/uploads:z
+      - __BRANDING__:/app/branding:ro,z
     healthcheck:
       # Liveness so a boot can be told apart from a crash-loop (up -d returns at
       # container-create, long before loco is serving): /api/auth/mode is the one
