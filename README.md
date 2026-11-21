@@ -33,8 +33,8 @@ member without the right role gets 403.
 | Action | Who |
 |--------|-----|
 | Create a project, onboard a member | `manager` |
-| Write, edit, publish, unpublish, delete a finding | the author, a project `staff` member, or a `manager` |
-| Read findings | managers and staff: all; **clients: only `published`** |
+| Write, edit, publish, unpublish, delete a finding | a `manager`, or a `staff` user onboarded to the project as staff |
+| Read findings | those who may write them: all; **every other member: only `published`** |
 | Comment | any project member who can see the finding |
 | View a project | managers; otherwise members of that project |
 

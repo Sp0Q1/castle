@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 pub use super::_entities::project_members::{ActiveModel, Column, Entity, Model};
 use super::_entities::users;
 
-/// The capacity a user holds *on one project*, which is what finding
-/// authorization keys off — distinct from their platform-wide
-/// [`crate::models::users::UserRole`], which an IdP group decides.
+/// The capacity a manager onboarded a user in *on one project* — distinct from
+/// their platform-wide [`crate::models::users::UserRole`], which an IdP group
+/// decides. Finding authorization asks both: see
+/// [`crate::models::users::Model::is_project_staff`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "lowercase")]

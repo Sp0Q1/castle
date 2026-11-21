@@ -442,6 +442,18 @@ impl Model {
     pub fn is_client(&self) -> bool {
         self.role() == UserRole::Client
     }
+
+    /// Whether this user works on a project as staff, given their membership of
+    /// it. It takes the IdP's word that they are staff and a manager's that they
+    /// work on this project: neither alone will do.
+    #[must_use]
+    pub fn is_project_staff(&self, membership: Option<&project_members::Model>) -> bool {
+        match self.role() {
+            UserRole::Manager => true,
+            UserRole::Staff => membership.is_some_and(|m| m.role == MemberRole::Staff),
+            UserRole::Client => false,
+        }
+    }
 }
 
 // SSO / provisioning
@@ -480,11 +492,6 @@ impl Model {
                     active.name = ActiveValue::set(n.to_string());
                 }
                 let updated = active.update(db).await.map_err(ModelError::from)?;
-                // The IdP is authoritative for role. Authorization on findings keys
-                // off `project_members.role`, so a demotion here must also drop any
-                // membership that would still grant a higher capacity — otherwise a
-                // user removed from the staff group keeps write access via the
-                // stale membership row.
                 Self::demote_stale_memberships(db, &updated).await?;
                 Ok(updated)
             }
@@ -495,12 +502,9 @@ impl Model {
         }
     }
 
-    /// Prevents a per-project membership from outranking the platform role.
-    ///
-    /// Called after an SSO reconciliation changes the role: when the IdP demotes
-    /// someone to `client`, any `project_members` row still recording a higher
-    /// capacity (e.g. `staff`) is downgraded, so findings authorization — which
-    /// keys off the membership role — cannot be bypassed by a stale row.
+    /// Downgrades the memberships of someone the IdP has demoted to `client`, so
+    /// the member list shows what [`Self::is_project_staff`] decides and promoting
+    /// them again later does not by itself restore staff capacity on old projects.
     ///
     /// # Errors
     /// When the DB query/update fails.
