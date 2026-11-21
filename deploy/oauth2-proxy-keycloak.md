@@ -62,9 +62,10 @@ short:
 |--------------------|--------------------|
 | `castle-managers` | manager: sees every project of this codename, opens projects, puts people on them |
 | `castle-staff` | staff: works on the projects a manager put them on |
-| `castle-clients`, or no group | client: reads the published findings of their projects and comments |
+| `castle-clients` | client: reads the published findings of their projects and comments |
 
-Roles are Keycloak's to give. Castle reads them on every request and has no
+Someone in none of the three has no role: Keycloak signs them in, and castle
+refuses them without making an account. Roles are Keycloak's to give. Castle reads them on every request and has no
 way to edit them. A group counts by its exact name: castle reads the
 comma-separated list the proxy sends, and a name that is only nearly one of the
 three gives nothing.
@@ -79,7 +80,7 @@ app at first sign-in, add *Configure OTP* to their required actions.
 **Putting them on a project.** A manager opens the project in the portal and
 onboards the person by email, as staff or as client. This works before their
 first sign-in: castle keeps an `invited` placeholder that becomes the real
-account when they arrive. A manager can later change that capacity or remove
+account when the person Keycloak vouches for with that address arrives. A manager can later change that capacity or remove
 the person from the project. What someone may do on a project takes both: the
 role from Keycloak and the capacity from the manager.
 
@@ -93,8 +94,27 @@ role from Keycloak and the capacity from the manager.
 | `podman exec castle-<codename> castle-cli task --environment production user:anonymize email:<email>` | at the next request: the account is disabled, off every project, and carries a placeholder in place of the name and address |
 
 Someone who leaves for good is anonymized, not deleted, so the findings and
-comments they wrote stay in place. Delete them in Keycloak as well, or their
-next sign-in starts a new account.
+comments they wrote stay in place. The account stays bound to them: should
+Keycloak still know the person, they are that disabled account and not a new
+one. Delete them in Keycloak as well.
+
+**An account is a person's, not an address's.** Castle binds an account to the
+id Keycloak has for the person (`sub`, which the proxy sends as
+`X-Forwarded-User`) the first time they arrive. From then on:
+
+- a changed address in Keycloak is the same account, and the address follows
+  when no other account has it;
+- someone else who is later given that address in Keycloak does not get the
+  account: castle refuses them, and nothing changes;
+- disabling or anonymizing the account holds whatever address the person comes
+  with.
+
+An address finds an account only once: for an invitation, and for an account
+from before castle bound them. When a person's Keycloak account was deleted and
+made anew, they have a new id; `castle-cli task user:unbind email:<email>` lets
+their account go to whoever next arrives with its address. After moving a
+tenant to another realm, where everybody has a new id, it is
+`user:unbind all:yes`.
 
 Managers see everyone with an account, with role, status and projects, under
 "People" in the portal; `./castlectl users <codename>` prints what the realm
@@ -132,6 +152,7 @@ Compose templates:
 settings:
   auth_mode: proxy
   proxy:
+    subject_header: x-forwarded-user              # Keycloak's id for the person
     email_header: x-forwarded-email
     name_header: x-forwarded-preferred-username
     groups_header: x-forwarded-groups

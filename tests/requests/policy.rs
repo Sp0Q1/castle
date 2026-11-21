@@ -19,7 +19,7 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use serial_test::serial;
 
 use super::authz::{
-    bearer, fresh_db, from_proxy, make_finding, make_user, seed, ProxyMode, PROXY_SECRET,
+    bearer, fresh_db, from_proxy, id_of, make_finding, make_user, seed, ProxyMode, PROXY_SECRET,
 };
 
 /// Who asks, in the order of every `expect` below.
@@ -424,6 +424,7 @@ async fn everyone_asks_everything(sign_in: SignIn) {
                 (SignIn::Proxy, _, Some((email, group))) => vec![
                     from_proxy(PROXY_SECRET),
                     ("sec-fetch-site", "same-origin".to_string()),
+                    ("x-forwarded-user", id_of(email)),
                     ("x-forwarded-email", email.to_string()),
                     ("x-forwarded-groups", group.to_string()),
                 ],

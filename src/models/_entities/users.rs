@@ -26,6 +26,8 @@ pub struct Model {
     pub magic_link_expiration: Option<DateTimeWithTimeZone>,
     pub role: String,
     pub status: crate::models::users::UserStatus,
+    #[sea_orm(unique)]
+    pub subject: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

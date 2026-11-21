@@ -102,6 +102,7 @@ impl Hooks for App {
         tasks.register(tasks::user_anonymize::AnonymizeUser);
         tasks.register(tasks::user_create::UserCreate);
         tasks.register(tasks::user_status::SetUserStatus);
+        tasks.register(tasks::user_unbind::UnbindUser);
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
         // Truncate children before parents so foreign keys stay satisfied.
