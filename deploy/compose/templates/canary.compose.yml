@@ -37,6 +37,7 @@ services:
       # like a real tenant. Without this it 403s an interstitial (a tell).
       - --skip-provider-button=true
       - --cookie-secure=true
+      - --cookie-samesite=lax
       - --cookie-csrf-per-request=true
       # The session is renewed with Keycloak just inside the access token's five
       # minutes. A user disabled or signed out there loses the portal at the next
