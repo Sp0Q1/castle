@@ -1049,6 +1049,170 @@ async fn identity_headers_count_only_with_the_proxy_secret() {
     .await;
 }
 
+/// What the proxy says is read strictly. A header sent twice or an address
+/// that is none makes the request nobody's; a group counts by its exact name.
+#[tokio::test]
+#[serial]
+async fn the_identity_headers_are_read_strictly() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, _ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
+        let ask = || {
+            request
+                .get("/api/auth/current")
+                .add_header(proxy.0, &proxy.1)
+        };
+
+        let twice = ask()
+            .add_header("x-forwarded-email", "someone@example.com")
+            .add_header("x-forwarded-email", "manager@example.com")
+            .await;
+        assert_eq!(twice.status_code(), 401, "two addresses");
+        let groups_twice = ask()
+            .add_header("x-forwarded-email", "someone@example.com")
+            .add_header("x-forwarded-groups", "castle-clients")
+            .add_header("x-forwarded-groups", "castle-managers")
+            .await;
+        assert_eq!(groups_twice.status_code(), 401, "two groups headers");
+        for not_an_address in ["someone", "a b@example.com", "@example.com", ""] {
+            let refused = ask().add_header("x-forwarded-email", not_an_address).await;
+            assert_eq!(refused.status_code(), 401, "{not_an_address:?}");
+        }
+
+        let role_with = |groups: &'static str| async move {
+            let who: serde_json::Value = ask()
+                .add_header("x-forwarded-email", "someone@example.com")
+                .add_header("x-forwarded-groups", groups)
+                .await
+                .json();
+            who["role"].as_str().expect("a role").to_string()
+        };
+        for nearly in [
+            "x/castle-managers",
+            "/castle-managers",
+            "a castle-managers",
+            "castle-clients, castle-managers",
+            "castle-managers;x",
+            "castle-managers-x",
+            "CASTLE-MANAGERS",
+            "",
+        ] {
+            assert_eq!(role_with(nearly).await, "client", "{nearly:?}");
+        }
+        assert_eq!(role_with("castle-clients,castle-staff").await, "staff");
+        assert_eq!(
+            role_with("other,castle-managers,castle-staff").await,
+            "manager"
+        );
+
+        // The first account is the only one: nothing above made another.
+        let who: serde_json::Value = ask()
+            .add_header("x-forwarded-email", "someone@example.com")
+            .await
+            .json();
+        assert_eq!(who["id"], 1);
+        assert_eq!(who["role"], "client", "no groups header is a client");
+    })
+    .await;
+}
+
+/// A name the account cannot carry is not taken, and the person signs in all
+/// the same, every time.
+#[tokio::test]
+#[serial]
+async fn a_name_that_does_not_fit_is_left_out() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, _ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
+        let (request, proxy) = (&request, &proxy);
+        let named = |name: &'static str| async move {
+            let answer = request
+                .get("/api/auth/current")
+                .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-email", "someone@example.com")
+                .add_header("x-forwarded-preferred-username", name)
+                .await;
+            assert_eq!(answer.status_code(), 200, "{name:?}");
+            let who: serde_json::Value = answer.json();
+            who["name"].as_str().expect("a name").to_string()
+        };
+        assert_eq!(named("x").await, "someone@example.com");
+        assert_eq!(named("x").await, "someone@example.com", "and again");
+        assert_eq!(named("  Someone  ").await, "Someone");
+        assert_eq!(named("é").await, "Someone", "one character, two bytes");
+        assert_eq!(named("").await, "Someone");
+        assert_eq!(named("Zoë").await, "Zoë");
+    })
+    .await;
+}
+
+/// The session is a cookie, which a browser also sends with requests that
+/// another site starts. So a request that changes something has to come from
+/// the portal's own pages, by the browser's word.
+#[tokio::test]
+#[serial]
+async fn a_changing_request_comes_from_the_portal() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
+        let (request, proxy) = (&request, &proxy);
+        let site = ctx.config.server.host.clone();
+        let create = |browser: Vec<(&'static str, String)>| async move {
+            let mut call = request
+                .post("/api/projects")
+                .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-email", "manager@example.com")
+                .add_header("x-forwarded-groups", "castle-managers");
+            for (name, value) in browser {
+                call = call.add_header(name, &value);
+            }
+            call.json(&serde_json::json!({ "name": "Engagement" }))
+                .await
+                .status_code()
+        };
+        let says = |relation: &str| vec![("sec-fetch-site", relation.to_string())];
+
+        assert_eq!(create(says("cross-site")).await, 403);
+        assert_eq!(create(says("same-site")).await, 403);
+        assert_eq!(create(says("none")).await, 403);
+        assert_eq!(create(Vec::new()).await, 403, "the browser says nothing");
+        let elsewhere = vec![("origin", "https://elsewhere.example".to_string())];
+        assert_eq!(
+            create(elsewhere).await,
+            403,
+            "an older browser, another site"
+        );
+        let both = vec![
+            ("sec-fetch-site", "cross-site".to_string()),
+            ("origin", site.clone()),
+        ];
+        assert_eq!(create(both).await, 403, "the origin does not outvote it");
+
+        assert_eq!(create(says("same-origin")).await, 200);
+        assert_eq!(
+            create(vec![("origin", site)]).await,
+            200,
+            "an older browser, this site"
+        );
+
+        // Reading is not changing: a link from elsewhere opens the portal.
+        let read = request
+            .get("/api/projects")
+            .add_header(proxy.0, &proxy.1)
+            .add_header("sec-fetch-site", "cross-site")
+            .add_header("x-forwarded-email", "manager@example.com")
+            .add_header("x-forwarded-groups", "castle-managers")
+            .await;
+        assert_eq!(read.status_code(), 200);
+        let projects: Vec<serde_json::Value> = read.json();
+        assert_eq!(projects.len(), 2, "only the two that came from the portal");
+    })
+    .await;
+}
+
 /// Staff capacity on a project takes the IdP's word and a manager's. An account
 /// the IdP calls a client stays one whatever it is onboarded as, whichever of
 /// the two happened first.
@@ -1070,6 +1234,7 @@ async fn a_membership_does_not_outrank_the_idp() {
             request
                 .post(path)
                 .add_header(proxy.0, &proxy.1)
+                .add_header("sec-fetch-site", "same-origin")
                 .add_header("x-forwarded-email", email)
                 .add_header("x-forwarded-groups", group)
         };
