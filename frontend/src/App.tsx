@@ -30,6 +30,7 @@ function Layout() {
             {logo ? <img src={logo} alt="Castle" /> : "🏰 Castle"}
           </Link>
           <nav className="navbar-nav">
+            {user.role === "manager" && <Link to="/people">People</Link>}
             <span className="whoami">
               {user.name}
               <span className={`badge role-${user.role}`}>{user.role}</span>
@@ -90,6 +91,11 @@ export function createRouter(mode: AuthMode) {
         {
           path: "findings/:id",
           lazy: () => import("./pages/FindingDetailPage"),
+          errorElement: <RouteError />,
+        },
+        {
+          path: "people",
+          lazy: () => import("./pages/PeoplePage"),
           errorElement: <RouteError />,
         },
       ],

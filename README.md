@@ -110,6 +110,8 @@ POST   /api/findings/{finding_id}/unpublish
 GET    /api/findings/{finding_id}/comments
 POST   /api/findings/{finding_id}/comments         # { body }
 
+GET    /api/users                                  # manager: everyone with an account
+
 POST   /api/uploads                                # multipart image -> { url }
 GET    /api/uploads/{name}                         # authenticated, like the rest
 

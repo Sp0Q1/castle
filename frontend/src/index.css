@@ -196,6 +196,18 @@ h3 {
 	margin-top: 6px;
 	flex-wrap: wrap;
 }
+.person-project {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-right: 8px;
+	font-size: 0.9rem;
+}
+.person-state {
+	display: flex;
+	gap: 6px;
+	flex: none;
+}
 .auth-card {
 	max-width: 380px;
 	margin: 24px auto;
@@ -317,9 +329,14 @@ textarea {
 	background: rgba(64, 192, 87, 0.15);
 	color: #7ee196;
 }
-.status-draft {
+.status-draft,
+.status-invited {
 	background: rgba(147, 161, 173, 0.15);
 	color: var(--muted);
+}
+.status-disabled {
+	background: rgba(229, 72, 77, 0.12);
+	color: #ff9ea1;
 }
 .sev-low {
 	background: rgba(64, 192, 87, 0.15);

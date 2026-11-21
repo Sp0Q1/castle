@@ -7,6 +7,7 @@ import type {
   FindingDetail,
   LoginResponse,
   Member,
+  Person,
   Project,
   UpdateFindingParams,
   UserSummary,
@@ -88,6 +89,8 @@ export const api = {
     request<CurrentUser>("/auth/current"),
 
   about: (): Promise<About> => request<About>("/auth/mode"),
+
+  listPeople: (): Promise<Person[]> => request<Person[]>("/users"),
 
   listProjects: (): Promise<Project[]> => request<Project[]>("/projects"),
 
