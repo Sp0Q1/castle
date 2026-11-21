@@ -35,6 +35,14 @@ set -uo pipefail
 die(){ echo "castlectl: $*" >&2; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE" || die "cannot cd to $HERE"
+# A fresh host has no .env: it is in the bundle being restored. Take it from
+# there first, so that everything below finds its configuration.
+if [[ "${1:-}" == restore && ! -f .env && -f "${2:-}" && "${3:-}" == --yes ]]; then
+  [[ -n "${BACKUP_AGE_IDENTITY:-}" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
+  ( umask 077; age -d -i "$BACKUP_AGE_IDENTITY" < "$2" | tar xf - -O ./platform/env > .env ) && [[ -s .env ]] \
+    || { rm -f .env; die "no .env on this host and none in $2 — write one from .env.example first"; }
+  echo "restore: took .env from the bundle"
+fi
 [[ -f .env ]] && set -a && . ./.env && set +a
 
 POOL="${POOL:-$HERE/codenames.txt}"
@@ -716,7 +724,7 @@ restore(){ # <backup-file> [--yes]
         rfails+=("tenant $cn: DB load failed — ${terr##*"$NL"}")
       fi
       if [[ -s "$work/tenants/$cn/uploads.tar" ]]; then
-        if uerr="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" sh -c 'cd /data && tar xf -' < "$work/tenants/$cn/uploads.tar" 2>&1)"; then
+        if uerr="$($ENGINE run --rm -i -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" sh -c 'cd /data && tar xf -' < "$work/tenants/$cn/uploads.tar" 2>&1)"; then
           echo "  tenant $cn: uploads restored"
         else
           rfails+=("tenant $cn: uploads restore failed — ${uerr##*"$NL"}")
