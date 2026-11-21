@@ -44,6 +44,11 @@ tenant gets the same build, and prints the first twelve characters of the
 digest it moved each tenant to. Compare that with the build you meant to
 deploy. Setting `CASTLE_IMAGE` to a digest pins that build, for a rollback.
 
+The templates and the image are made for each other. When `git pull` brings
+new templates, deploy the image built from the same commit, not an older pin:
+an image and a template that disagree on how the proxy and castle talk leave
+the tenant refusing every request until they match again.
+
 Two things an upgrade does **not** paper over:
 
 - **Postgres *major* upgrades are not a tag bump.** A new major won't boot on the

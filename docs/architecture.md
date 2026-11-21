@@ -44,11 +44,14 @@ flowchart TB
 | Network | Joined by | Carries |
 |---------|-----------|---------|
 | `castle_edge` | Caddy, Keycloak, every oauth2-proxy | requests coming in from the edge |
-| `castle_kc` | Caddy, Keycloak and its database, every oauth2-proxy | Keycloak's own traffic and the proxies' calls to it |
-| `castle_tenant_<codename>` | that tenant's oauth2-proxy, castle and Postgres | one tenant's application and data |
+| `castle_kc` | Caddy, Keycloak, every oauth2-proxy | the proxies' calls to Keycloak |
+| `castle_kcdb`, internal | Keycloak and its database | Keycloak's own data |
+| `castle_tenant_<codename>`, internal | that tenant's oauth2-proxy, castle and Postgres | one tenant's application and data |
 
 Only Caddy publishes ports (80 and 443), and BIND when it is used (53). A
-castle and its database are on their tenant's network and nowhere else.
+castle and its database are on their tenant's network and nowhere else. An
+internal network is closed both ways: no other network is routed to it, and
+what sits on it reaches nothing outside.
 
 ## A request
 
@@ -64,14 +67,15 @@ sequenceDiagram
   alt no valid session for this codename
     P-->>B: redirect to the realm's sign-in page
   else valid session
-    P->>A: the request, with the identity headers set by the proxy
+    P->>A: the request, with the identity headers and the shared secret set by the proxy
     A->>D: the user by email, role from the groups, status
     A-->>B: what this user may see, and nothing else
   end
 ```
 
 Castle takes the user's email, name and groups from the headers the proxy
-sets, on every request. The groups give the role (`castle-managers`,
+sets, on every request, and only from a request that carries the secret the
+two share. The groups give the role (`castle-managers`,
 `castle-staff`, anything else is a client); the project memberships that
 management keeps in castle give the rest. The rules are in the
 [README](../README.md#access-control).
@@ -118,11 +122,12 @@ images; which codenames belong to clients; credentials and sessions.
 2. **Edge to proxy.** oauth2-proxy lets a request through only with a valid
    session for that codename's realm. Every codename has its own realm, client
    secret and cookie secret, so a session for one is nothing to another.
-3. **Proxy to castle.** Castle believes the identity headers. That is sound
-   only because nothing but its own proxy can reach it: it publishes no port
-   and shares a network with that proxy and its database alone. This is the
-   rule the rest leans on; `CASTLE_PROXY_SECRET` adds a secret the proxy must
-   present, for deployments that want a second check.
+3. **Proxy to castle.** Castle believes the identity headers of a request that
+   carries the secret it shares with its own proxy, and of no other. Every
+   codename has its own secret; the proxy puts it on everything it forwards,
+   in place of what the browser sent, and castle does not start without one.
+   The network is the second lock: castle publishes no port, and its tenant's
+   network is internal, joined by that proxy and the database alone.
 4. **Castle to data.** Authorization is decided per request in the handlers.
    Someone who is not on a project gets 404 for everything in it.
 5. **The host.** The host, its operator and Keycloak's administrators are
@@ -132,7 +137,7 @@ images; which codenames belong to clients; credentials and sessions.
 
 | Threat | Answer |
 |--------|--------|
-| Identity headers forged from outside | castle is reachable through its proxy only; the proxy sets the identity headers itself; the edge removes `X-Forwarded-Uri` |
+| Forged identity headers | castle reads them only from a request that carries the secret it shares with its own proxy; the proxy sets them itself, in place of what a browser sends; the tenant's network is internal and castle publishes no port; the edge removes `X-Forwarded-Uri` |
 | One client reading another's findings | per tenant: its own castle, database, network, realm and secrets; within a tenant: membership per project |
 | A client reading drafts | drafts and their comments go to project staff only: a manager, or someone who is staff both to Keycloak and on that project |
 | Access outliving the person's role | the role is read on every request, the session is refreshed with Keycloak every four minutes and ends after ten hours, a disabled account is refused at once, and management removes memberships |
@@ -143,7 +148,7 @@ images; which codenames belong to clients; credentials and sessions.
 | A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served with `nosniff` to signed-in users |
 | Finding out which codenames are in use | tenants and canaries answer alike at the edge; certificates for the whole pool are issued and renewed in one batch; promoting a canary changes neither certificate nor DNS; a request by address or unknown name gets a neutral certificate; the bundled DNS allows no zone transfer |
 | A stolen backup | bundles are encrypted on the host to a public key whose private half is kept elsewhere |
-| An instance serving with a broken configuration | the settings are parsed strictly at start, `DATABASE_URL` and `JWT_SECRET` have no default, and a logo that cannot be served stops the start |
+| An instance serving with a broken configuration | the settings are parsed strictly at start, `DATABASE_URL` and `JWT_SECRET` have no default, proxy mode does not start without its proxy's secret, and a logo that cannot be served stops the start |
 | A tampered dependency or image | lockfiles; `cargo audit`, `npm audit`, Trivy, Semgrep and TruffleHog on every pull request and weekly; CI builds the image with provenance and an SBOM; `castlectl upgrade` resolves the image to a digest once, so every instance runs the same build |
 
 ### Limits
