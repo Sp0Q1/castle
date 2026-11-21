@@ -98,6 +98,12 @@ holds.
 
 ## Sessions
 
+- Signing in, the proxy sends the browser to the realm with a PKCE challenge
+  and a nonce (`--code-challenge-method=S256`,
+  `--insecure-oidc-skip-nonce=false`). Keycloak redeems the code only for the
+  verifier the proxy kept for that browser, and the proxy accepts the tokens
+  only with that nonce, so a code that reaches another browser is of no use
+  there.
 - The session is an encrypted cookie for that one codename. It is refreshed
   with Keycloak every four minutes (`--cookie-refresh=4m`, shorter than the
   access token's five) and ends after ten hours (`--cookie-expire=10h`).
