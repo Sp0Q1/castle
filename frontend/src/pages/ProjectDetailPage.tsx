@@ -13,7 +13,7 @@ import {
   SEVERITIES,
   type UserSummary,
 } from "../api/types";
-import { isProjectStaff, useUser } from "../auth/session";
+import { useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import {
   FindingFields,
@@ -108,7 +108,7 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
           </p>
         )}
         {member.role === "staff" &&
-          member.user.role === "client" &&
+          member.access === "client" &&
           member.user.status === "active" && (
             <p className="muted">
               Not staff to the identity provider, so on this project they can do
@@ -173,7 +173,7 @@ function ProjectDetailPage() {
   const onboard = useFetcher<{ error: string }>();
 
   const isManager = user.role === "manager";
-  const canWriteFindings = isProjectStaff(user, members);
+  const canWriteFindings = project.access === "staff";
 
   const severitySlices: Slice[] = SEVERITIES.map((sev) => ({
     label: cap(sev),
