@@ -11,6 +11,21 @@ __HOST__ {
 	# by definition, someone who shouldn't be there. client_ip + uri + status.
 	log
 	tls /certs/__HOST__/fullchain.pem /certs/__HOST__/privkey.pem
+	# The same headers on every answer of every codename, whatever is behind it:
+	# the redirect to sign-in and the proxy's own pages carry them too, and a
+	# tenant cannot be told from a canary by them. What says which software
+	# answered is removed. The policy is the fallback for answers that bring
+	# none; castle sends its own.
+	header {
+		Strict-Transport-Security "max-age=63072000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		?Content-Security-Policy "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+		-Server
+		-Via
+		-X-Powered-By
+	}
 	reverse_proxy oauth2-proxy-__CODENAME__:4180 {
 		# oauth2-proxy runs with --reverse-proxy and believes these two. Caddy
 		# sets Host, Proto and For itself; these it would pass on as the
