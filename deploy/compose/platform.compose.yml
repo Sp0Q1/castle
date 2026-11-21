@@ -19,9 +19,14 @@ networks:
   # compose files can join it as `external`.
   edge:
     name: castle_edge
-  # oauth2-proxies <-> Keycloak (OIDC backchannel), and Keycloak <-> its DB.
+  # oauth2-proxies <-> Keycloak (OIDC backchannel).
   kc:
     name: castle_kc
+  # Keycloak <-> its database, and nothing else: internal, so no other network
+  # is routed to it and the database reaches nothing outside.
+  kcdb:
+    name: castle_kcdb
+    internal: true
 
 volumes:
   keycloak_db: {}
@@ -99,7 +104,7 @@ services:
     # in docs/backup-and-upgrade.md first, then bump. (Minor 18.x bumps are free.)
     image: docker.io/library/postgres:18-alpine
     restart: always
-    networks: [kc]
+    networks: [kcdb]
     # Run AS the postgres user (uid 70), not root. The postgres entrypoint invokes
     # gosu to drop root->postgres ONLY when it starts as root — and gosu spins at
     # 100% CPU under no-new-privileges, never reaching the server. Starting as 70
@@ -132,7 +137,7 @@ services:
     # `start` = production mode (not start-dev). Implicit build at boot from the
     # env below; bake an optimized image later to skip it.
     command: ["start"]
-    networks: [edge, kc]
+    networks: [edge, kc, kcdb]
     depends_on:
       keycloak-db:
         condition: service_healthy
