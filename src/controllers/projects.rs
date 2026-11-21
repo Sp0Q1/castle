@@ -12,7 +12,7 @@ use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{project_members, projects, users};
-use crate::models::project_members::OnboardRole;
+use crate::models::project_members::MemberRole;
 use crate::models::users::{UserRole, UserStatus};
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_DESCRIPTION, MAX_EMAIL, MAX_TITLE};
@@ -55,8 +55,7 @@ async fn load_member(
     project_id: i64,
     member_id: i64,
 ) -> Result<project_members::Model> {
-    project_members::Model::memberships()
-        .filter(project_members::Column::Id.eq(member_id))
+    project_members::Entity::find_by_id(member_id)
         .filter(project_members::Column::ProjectId.eq(project_id))
         .one(&ctx.db)
         .await?
@@ -158,7 +157,7 @@ pub async fn onboard(
     let project = load_project(&ctx, project_id).await?;
 
     validation::required_text("user_email", &params.user_email, MAX_EMAIL)?;
-    let role = OnboardRole::parse(&params.role).map_err(Error::BadRequest)?;
+    let role = MemberRole::parse(&params.role).map_err(Error::BadRequest)?;
 
     // Create an "invited" placeholder if the user has not signed in yet; it is
     // reconciled to their real identity on first SSO login (matched by email).
@@ -175,7 +174,7 @@ pub async fn onboard(
     let member = project_members::ActiveModel {
         project_id: Set(project.id),
         user_id: Set(target.id),
-        role: Set(role.into()),
+        role: Set(role),
         ..Default::default()
     }
     .insert(&ctx.db)
@@ -196,7 +195,7 @@ pub async fn change_member(
             "only management can change a member's role",
         ));
     }
-    let role = OnboardRole::parse(&params.role).map_err(Error::BadRequest)?;
+    let role = MemberRole::parse(&params.role).map_err(Error::BadRequest)?;
     let member = load_member(&ctx, project_id, member_id).await?;
     let target = users::Entity::find_by_id(member.user_id)
         .one(&ctx.db)
@@ -204,7 +203,7 @@ pub async fn change_member(
         .ok_or_else(|| Error::NotFound)?;
 
     let mut member = member.into_active_model();
-    member.role = Set(role.into());
+    member.role = Set(role);
     let member = member.update(&ctx.db).await?;
 
     format::json(MemberResponse::new(&member, &target))
