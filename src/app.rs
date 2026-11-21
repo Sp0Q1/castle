@@ -53,7 +53,8 @@ impl Hooks for App {
         // proxy's secret, stops everything rather than silently reverting to
         // jwt mode or believing whoever reaches the port — see
         // `Settings::try_from_config`.
-        crate::security::Settings::try_from_config(&ctx.config)?;
+        let settings = crate::security::Settings::try_from_config(&ctx.config)?;
+        ctx.shared_store.insert(settings);
         Ok(ctx)
     }
 
