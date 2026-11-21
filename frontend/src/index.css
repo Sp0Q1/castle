@@ -259,6 +259,10 @@ textarea {
 .btn-primary:hover:not(:disabled) {
 	background: var(--primary-hover);
 }
+.btn-small {
+	padding: 4px 10px;
+	font-size: 0.82rem;
+}
 .btn-ghost {
 	background: transparent;
 	border-color: var(--border);

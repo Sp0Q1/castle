@@ -32,11 +32,14 @@ member without the right role gets 403.
 
 | Action | Who |
 |--------|-----|
-| Create a project, onboard a member | `manager` |
+| Create a project; onboard, change or remove a member | `manager` |
 | Write, edit, publish, unpublish, delete a finding | a `manager`, or a `staff` user onboarded to the project as staff |
 | Read findings | those who may write them: all; **every other member: only `published`** |
 | Comment | any project member who can see the finding |
 | View a project | managers; otherwise members of that project |
+
+The role comes from the IdP and is read on every request. The membership is
+management's statement about one project, and only management changes it.
 
 ## Authentication
 
@@ -79,6 +82,8 @@ GET    /api/projects                               # projects visible to you
 GET    /api/projects/{project_id}
 POST   /api/projects/{project_id}/members          # manager: { user_email, role }
 GET    /api/projects/{project_id}/members
+PUT    /api/projects/{project_id}/members/{member_id}     # manager: { role }
+DELETE /api/projects/{project_id}/members/{member_id}     # manager
 
 POST   /api/projects/{project_id}/findings         # staff
 GET    /api/projects/{project_id}/findings         # clients see only published

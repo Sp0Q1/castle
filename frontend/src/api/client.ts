@@ -112,6 +112,21 @@ export const api = {
       body: JSON.stringify({ user_email: userEmail, role }),
     }),
 
+  setMemberRole: (
+    projectId: number,
+    memberId: number,
+    role: string,
+  ): Promise<Member> =>
+    request<Member>(`/projects/${projectId}/members/${memberId}`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
+
+  removeMember: (projectId: number, memberId: number): Promise<void> =>
+    request<void>(`/projects/${projectId}/members/${memberId}`, {
+      method: "DELETE",
+    }),
+
   listFindings: (projectId: number): Promise<Finding[]> =>
     request<Finding[]>(`/projects/${projectId}/findings`),
 

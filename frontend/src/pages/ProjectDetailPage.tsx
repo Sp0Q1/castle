@@ -61,19 +61,84 @@ export async function action({ params, request }: ActionFunctionArgs) {
   const id = Number(params.id);
   const form = await request.formData();
   try {
-    if (form.get("intent") === "onboard") {
-      await api.onboard(
-        id,
-        String(form.get("email")),
-        String(form.get("role")),
-      );
-    } else {
-      await api.createFinding(id, findingParams(form));
+    switch (form.get("intent")) {
+      case "onboard":
+        await api.onboard(
+          id,
+          String(form.get("email")),
+          String(form.get("role")),
+        );
+        break;
+      case "set-role":
+        await api.setMemberRole(
+          id,
+          Number(form.get("member")),
+          String(form.get("role")),
+        );
+        break;
+      case "remove-member":
+        await api.removeMember(id, Number(form.get("member")));
+        break;
+      default:
+        await api.createFinding(id, findingParams(form));
     }
   } catch (err) {
     return { error: errorMessage(err, "Failed to save") };
   }
   return null;
+}
+
+/** One member of the project; management can change their capacity or remove them. */
+function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
+  const change = useFetcher<{ error: string }>();
+  const busy = change.state !== "idle";
+  const other = member.role === "staff" ? "client" : "staff";
+
+  return (
+    <li className="card list-item">
+      <div>
+        <span className="list-title">{member.user.name}</span>
+        <p className="muted">{member.user.email}</p>
+        {manage && (
+          <change.Form method="post" className="actions">
+            <input type="hidden" name="member" value={member.id} />
+            <input type="hidden" name="role" value={other} />
+            {member.role !== "manager" && (
+              <button
+                type="submit"
+                name="intent"
+                value="set-role"
+                className="btn btn-ghost btn-small"
+                disabled={busy}
+              >
+                Make {other}
+              </button>
+            )}
+            <button
+              type="submit"
+              name="intent"
+              value="remove-member"
+              className="btn btn-danger btn-small"
+              disabled={busy}
+              onClick={(e) => {
+                if (
+                  !window.confirm(
+                    `Remove ${member.user.email} from this project?`,
+                  )
+                ) {
+                  e.preventDefault();
+                }
+              }}
+            >
+              Remove
+            </button>
+          </change.Form>
+        )}
+        {change.data?.error && <div className="alert">{change.data.error}</div>}
+      </div>
+      <span className={`badge role-${member.role}`}>{member.role}</span>
+    </li>
+  );
 }
 
 function ProjectDetailPage() {
@@ -186,13 +251,7 @@ function ProjectDetailPage() {
           <h2>Members</h2>
           <ul className="list">
             {members.map((m) => (
-              <li key={m.id} className="card list-item">
-                <div>
-                  <span className="list-title">{m.user.name}</span>
-                  <p className="muted">{m.user.email}</p>
-                </div>
-                <span className={`badge role-${m.role}`}>{m.role}</span>
-              </li>
+              <MemberRow key={m.id} member={m} manage={isManager} />
             ))}
           </ul>
 
