@@ -107,6 +107,14 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
             Now a manager, who sees every project whatever this says.
           </p>
         )}
+        {member.role === "staff" &&
+          member.user.role === "client" &&
+          member.user.status === "active" && (
+            <p className="muted">
+              Not staff to the identity provider, so on this project they can do
+              what a client can.
+            </p>
+          )}
         {manage && (
           <change.Form method="post" className="actions">
             <input type="hidden" name="member" value={member.id} />

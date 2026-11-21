@@ -35,6 +35,8 @@ export interface UserSummary {
   name: string;
   email: string;
   role: string;
+  /** "invited" | "active" | "disabled" */
+  status: string;
 }
 
 export interface Project {
