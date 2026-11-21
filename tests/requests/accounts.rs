@@ -66,6 +66,12 @@ async fn management_sees_everyone_with_an_account() {
             serde_json::json!([{ "id": f.project_id, "name": "Engagement", "role": "staff" }])
         );
         assert_eq!(person("client@test.com")["projects"][0]["role"], "client");
+        // A manager opens every project by role and is listed on none.
+        assert_eq!(person("manager@test.com")["role"], "manager");
+        assert_eq!(
+            person("manager@test.com")["projects"],
+            serde_json::json!([])
+        );
         assert_eq!(
             person("outsider@test.com")["projects"],
             serde_json::json!([])

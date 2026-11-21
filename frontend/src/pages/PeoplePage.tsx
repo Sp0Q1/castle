@@ -28,8 +28,12 @@ function PeoplePage() {
                 {person.email} · since {person.created_at.slice(0, 10)}
               </p>
               <div className="badges">
-                {person.projects.length === 0 && (
-                  <span className="muted">On no project</span>
+                {person.role === "manager" && person.status === "active" ? (
+                  <span className="muted">Every project, as a manager</span>
+                ) : (
+                  person.projects.length === 0 && (
+                    <span className="muted">On no project</span>
+                  )
                 )}
                 {person.projects.map((project) => (
                   <Link
