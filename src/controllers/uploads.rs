@@ -40,7 +40,7 @@ struct UploadResponse {
 /// The client's filename and declared Content-Type are ignored on purpose —
 /// both are attacker-controlled. SVG is intentionally unsupported (see module
 /// docs): it would otherwise allow storing script that executes when served.
-fn sniff_image(data: &[u8]) -> Option<&'static str> {
+pub(super) fn sniff_image(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return Some("png");
     }
