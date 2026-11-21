@@ -11,5 +11,11 @@ __HOST__ {
 	# by definition, someone who shouldn't be there. client_ip + uri + status.
 	log
 	tls /certs/__HOST__/fullchain.pem /certs/__HOST__/privkey.pem
-	reverse_proxy oauth2-proxy-__CODENAME__:4180
+	reverse_proxy oauth2-proxy-__CODENAME__:4180 {
+		# oauth2-proxy runs with --reverse-proxy and believes these two. Caddy
+		# sets Host, Proto and For itself; these it would pass on as the
+		# visitor sent them.
+		header_up -X-Forwarded-Uri
+		header_up X-Real-IP {remote_host}
+	}
 }
