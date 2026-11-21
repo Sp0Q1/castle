@@ -200,7 +200,7 @@ jobs:
           # up in jwt mode instead of refusing.
           out="$(timeout 60 docker run --rm -e CASTLE_AUTH_MODE=Proxy -e JWT_SECRET=smoke \
             -e 'DATABASE_URL=sqlite:///tmp/smoke.sqlite?mode=rwc' castle:ci 2>&1 || true)"
-          grep -q 'invalid `settings:`' <<<"$out" \
+          grep -qF "invalid \`settings:\`" <<<"$out" \
             || { echo "::error::a malformed auth setting did not stop the image"; exit 1; }
           # The SPA is served from disk at runtime, so an image without it is
           # broken in a way no Rust check can see.
