@@ -12,9 +12,9 @@ use castle::{
     models::_entities::{findings, project_members, projects, users},
     models::findings::{FindingStatus, Severity},
     models::project_members::MemberRole,
-    models::users::RegisterParams,
+    models::users::{RegisterParams, UserStatus},
 };
-use loco_rs::testing::prelude::*;
+use loco_rs::{boot::run_task, task, testing::prelude::*};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, EntityTrait,
 };
@@ -726,6 +726,144 @@ async fn unverified_accounts_cannot_log_in() {
             200,
             "verified account with correct password could not log in"
         );
+    })
+    .await;
+}
+
+/// Runs the operator's `user:status` task, the way it is run on a live instance.
+async fn set_status(
+    ctx: &loco_rs::app::AppContext,
+    email: &str,
+    status: &str,
+) -> loco_rs::Result<()> {
+    let vars = task::Vars::from_cli_args(vec![
+        ("email".to_string(), email.to_string()),
+        ("status".to_string(), status.to_string()),
+    ]);
+    run_task::<App>(ctx, Some(&"user:status".to_string()), &vars).await
+}
+
+/// Boots the next app in proxy mode, the way production runs. Dropped, later
+/// boots are back in jwt mode even if the test panicked.
+struct ProxyMode;
+
+impl ProxyMode {
+    fn on() -> Self {
+        std::env::set_var("CASTLE_AUTH_MODE", "proxy");
+        Self
+    }
+}
+
+impl Drop for ProxyMode {
+    fn drop(&mut self) {
+        std::env::remove_var("CASTLE_AUTH_MODE");
+    }
+}
+
+#[tokio::test]
+#[serial]
+async fn a_disabled_account_is_refused_at_once() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (h, v) = bearer(&f.client_token);
+        let paths = [
+            "/api/auth/current".to_string(),
+            "/api/projects".to_string(),
+            format!("/api/findings/{}", f.published_id),
+        ];
+
+        for path in &paths {
+            let response = request.get(path).add_header(h, &v).await;
+            assert_eq!(response.status_code(), 200, "{path} before disabling");
+        }
+
+        set_status(&ctx, "client@test.com", "disabled")
+            .await
+            .expect("disable");
+
+        // The token is as valid as it was a moment ago; the account is not.
+        for path in &paths {
+            let response = request.get(path).add_header(h, &v).await;
+            assert_eq!(response.status_code(), 403, "{path} after disabling");
+        }
+        let response = request
+            .post(&format!("/api/findings/{}/comments", f.published_id))
+            .add_header(h, &v)
+            .json(&serde_json::json!({ "body": "still here" }))
+            .await;
+        assert_eq!(response.status_code(), 403);
+
+        // Nobody else is touched.
+        let (sh, sv) = bearer(&f.staff_token);
+        let response = request.get("/api/auth/current").add_header(sh, &sv).await;
+        assert_eq!(response.status_code(), 200);
+
+        set_status(&ctx, "client@test.com", "active")
+            .await
+            .expect("enable");
+        let response = request.get("/api/auth/current").add_header(h, &v).await;
+        assert_eq!(response.status_code(), 200);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn a_proxy_session_does_not_re_enable_a_disabled_account() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, ctx| async move {
+        let current = || {
+            request
+                .get("/api/auth/current")
+                .add_header("x-forwarded-email", "client@example.com")
+                .add_header("x-forwarded-preferred-username", "client")
+                .add_header("x-forwarded-groups", "castle-clients")
+        };
+
+        // The first request provisions the account, as the first sign-in does.
+        assert_eq!(current().await.status_code(), 200);
+
+        set_status(&ctx, "client@example.com", "disabled")
+            .await
+            .expect("disable");
+
+        // oauth2-proxy still vouches for the session. Castle refuses it, and
+        // being asked again must not flip the account back to active.
+        assert_eq!(current().await.status_code(), 403);
+        assert_eq!(current().await.status_code(), 403);
+        let user = users::Model::find_by_email(&ctx.db, "client@example.com")
+            .await
+            .expect("find user");
+        assert_eq!(user.status, UserStatus::Disabled);
+
+        set_status(&ctx, "client@example.com", "active")
+            .await
+            .expect("enable");
+        assert_eq!(current().await.status_code(), 200);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn the_status_task_refuses_what_it_does_not_understand() {
+    fresh_db();
+    request::<App, _, _>(|_request, ctx| async move {
+        seed(&ctx).await;
+
+        assert!(set_status(&ctx, "client@test.com", "invited")
+            .await
+            .is_err());
+        assert!(set_status(&ctx, "nobody@test.com", "disabled")
+            .await
+            .is_err());
+
+        let user = users::Model::find_by_email(&ctx.db, "client@test.com")
+            .await
+            .expect("find user");
+        assert_eq!(user.status, UserStatus::Active);
     })
     .await;
 }

@@ -92,3 +92,8 @@ auth:
     secret: mK3pQ9xR7tLzY2nB5wCe
     # Token expiration time in seconds
     expiration: 604800 # 7 days
+
+# Tests run in jwt mode unless one sets CASTLE_AUTH_MODE to boot the proxy path
+# that production runs.
+settings:
+  auth_mode: <%= get_env(name="CASTLE_AUTH_MODE", default="jwt") %>
