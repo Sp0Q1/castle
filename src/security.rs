@@ -28,10 +28,11 @@ use validator::ValidateEmail;
 use crate::models::_entities::users;
 use crate::models::users::{UserRole, UserStatus};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+/// How people sign in. There is no default: a configuration that does not say
+/// is not started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
-    #[default]
     Jwt,
     Proxy,
 }
@@ -87,7 +88,7 @@ fn group_name<'de, D: serde::Deserializer<'de>>(
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProxySettings {
     /// Header carrying the authenticated email (oauth2-proxy: `x-forwarded-email`
     /// in full reverse-proxy mode, or `x-auth-request-email`).
@@ -130,17 +131,24 @@ impl Default for ProxySettings {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
+/// The `settings:` block of the configuration, read once when castle starts
+/// ([`Settings::try_from_config`]) and kept for every request. A key it does
+/// not know is an error, so a setting that was renamed or mistyped stops the
+/// start instead of being left out.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     pub auth_mode: AuthMode,
+    #[serde(default)]
     pub proxy: ProxySettings,
     /// Decoy mode: the auth endpoints capture submitted credentials + attacker
     /// metadata and return believable responses, without ever touching a real
     /// DB. Set on canary/honeypot instances only.
+    #[serde(default)]
     pub honeypot: bool,
     /// Path of an image that replaces the built-in brand in the portal's header
     /// (see `controllers::brand`). Empty or absent: the built-in brand.
+    #[serde(default)]
     pub logo: Option<String>,
 }
 
@@ -152,44 +160,49 @@ impl Settings {
         self.logo.as_deref().filter(|path| !path.is_empty())
     }
 
+    /// The settings castle started with. `App::after_context` reads them once
+    /// and keeps them; a context that never went through it reads them here,
+    /// by the same rules.
+    ///
+    /// # Panics
+    /// When there is nothing kept and the configuration is not one castle
+    /// starts with, which `after_context` rules out for anything that serves.
     #[must_use]
     pub fn from_ctx(ctx: &AppContext) -> Self {
-        // `settings` is validated before anything runs (`try_from_config`,
-        // called from `App::after_context`), so parsing the same value here
-        // cannot fail in a running app — the default is unreachable, not a
-        // silent fallback to jwt.
-        ctx.config
-            .settings
-            .as_ref()
-            .and_then(|v| serde_json::from_value::<Self>(v.clone()).ok())
-            .unwrap_or_default()
+        ctx.shared_store.get::<Self>().unwrap_or_else(|| {
+            Self::try_from_config(&ctx.config).expect("the settings are checked at start")
+        })
     }
 
-    /// Strictly parse the `settings:` block, erroring on malformed config.
+    /// Reads the `settings:` block, strictly.
     ///
-    /// Called at boot so a bad value (e.g. `honeypot: 0` instead of a bool, which
-    /// makes the *whole* struct fail to deserialize) **stops the app** instead of
-    /// silently reverting to the defaults — which would downgrade a proxy-mode
-    /// tenant to its own jwt login surface and turn a decoy into a real server.
-    /// Fail closed at the auth boundary, the way `JWT_SECRET` has no default.
+    /// Called when castle starts, so that a value it cannot read **stops the
+    /// app** instead of leaving a default in its place: a mode that is none, a
+    /// key it does not know, a group name that could never match, or proxy
+    /// mode without the secret that tells its own proxy from anything else
+    /// that reaches the port.
     ///
     /// # Errors
-    /// If `settings:` is present but does not deserialize into [`Settings`].
+    /// When there is no `settings:` block or it is not one this reads.
     pub fn try_from_config(config: &loco_rs::config::Config) -> Result<Self> {
-        let settings = match &config.settings {
-            None => Self::default(),
-            Some(v) => serde_json::from_value::<Self>(v.clone())
-                .map_err(|e| Error::Message(format!("invalid `settings:` config: {e}")))?,
+        let invalid = |why: &dyn std::fmt::Display| {
+            Error::Message(format!("invalid `settings:` config: {why}"))
         };
-        // Proxy mode believes identity headers, and only from its own proxy.
-        // Without the secret that proves it there is nothing to tell that proxy
-        // from anything else that can reach the port, so the app does not start.
+        let block = config
+            .settings
+            .as_ref()
+            .ok_or_else(|| invalid(&"there is no `settings:` block"))?;
+        Self::parse(block).map_err(|why| invalid(&why))
+    }
+
+    fn parse(block: &serde_json::Value) -> std::result::Result<Self, String> {
+        let settings = Self::deserialize(block).map_err(|e| e.to_string())?;
         if settings.auth_mode == AuthMode::Proxy && settings.proxy.secret.is_none() {
-            return Err(Error::Message(
-                "invalid `settings:` config: proxy mode needs `proxy.secret` \
-                 (CASTLE_PROXY_SECRET), the secret this instance shares with its proxy"
+            return Err(
+                "proxy mode needs `proxy.secret` (CASTLE_PROXY_SECRET), the secret \
+                        this instance shares with its proxy"
                     .to_string(),
-            ));
+            );
         }
         Ok(settings)
     }
@@ -358,5 +371,99 @@ where
             return Err(forbidden("this account is disabled"));
         }
         Ok(Self(user))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_settings_are_read_strictly() {
+        let read = |block: serde_json::Value| Settings::parse(&block);
+        assert!(read(json!({ "auth_mode": "jwt" })).is_ok());
+        assert!(read(json!({ "auth_mode": "proxy", "proxy": { "secret": "s" } })).is_ok());
+
+        let refused = [
+            (json!({}), "no mode"),
+            (json!({ "auth_mode": "Proxy" }), "a mode that is none"),
+            (
+                json!({ "auth_mode": "proxy" }),
+                "proxy mode without a secret",
+            ),
+            (
+                json!({ "auth_mode": "proxy", "proxy": { "secret": "" } }),
+                "an empty secret",
+            ),
+            (
+                json!({ "auth_mode": "jwt", "honeypots": true }),
+                "a key that is not one",
+            ),
+            (
+                json!({ "auth_mode": "proxy", "proxy": { "secret": "s", "shared_secret": "old" } }),
+                "a proxy key that is not one",
+            ),
+            (
+                json!({ "auth_mode": "proxy", "proxy": { "secret": "s", "manager_group": "" } }),
+                "a group without a name",
+            ),
+            (
+                json!({ "auth_mode": "proxy", "proxy": { "secret": "s", "staff_group": "a,b" } }),
+                "a group name with a comma",
+            ),
+            (
+                json!({ "auth_mode": "jwt", "honeypot": 0 }),
+                "a switch that is no boolean",
+            ),
+        ];
+        for (block, what) in refused {
+            assert!(read(block).is_err(), "{what} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_group_counts_by_its_exact_name() {
+        let proxy = ProxySettings::default();
+        for (groups, role) in [
+            ("castle-managers", UserRole::Manager),
+            ("castle-clients,castle-managers", UserRole::Manager),
+            ("castle-staff,castle-clients", UserRole::Staff),
+            ("castle-clients", UserRole::Client),
+            ("", UserRole::Client),
+            ("castle-managers ", UserRole::Client),
+            ("/castle-managers", UserRole::Client),
+            ("x/castle-managers", UserRole::Client),
+            ("castle-managers;castle-staff", UserRole::Client),
+            ("castle-clients, castle-staff", UserRole::Client),
+        ] {
+            assert_eq!(proxy.role_of(groups), role, "{groups:?}");
+        }
+    }
+
+    #[test]
+    fn a_changing_request_is_this_sites_by_the_browsers_word() {
+        let with = |pairs: &[(&'static str, &'static str)]| {
+            let mut headers = HeaderMap::new();
+            for (name, value) in pairs {
+                headers.append(*name, value.parse().expect("a header value"));
+            }
+            from_this_site(&headers, "https://portal.example/")
+        };
+        assert!(with(&[("sec-fetch-site", "same-origin")]));
+        assert!(with(&[("origin", "https://portal.example")]));
+        assert!(!with(&[]));
+        assert!(!with(&[("sec-fetch-site", "same-site")]));
+        assert!(!with(&[
+            ("sec-fetch-site", "cross-site"),
+            ("origin", "https://portal.example")
+        ]));
+        assert!(!with(&[
+            ("sec-fetch-site", "same-origin"),
+            ("sec-fetch-site", "cross-site")
+        ]));
+        assert!(!with(&[("origin", "https://portal.example.evil.example")]));
+        assert!(!with(&[("origin", "null")]));
     }
 }
