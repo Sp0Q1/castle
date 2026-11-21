@@ -10,8 +10,11 @@
 //!   cannot load anything;
 //! - it is served as an attachment, so opening the URL directly downloads it
 //!   instead of rendering it in this origin;
-//! - `nosniff`, and the app-wide Content-Security-Policy, apply as everywhere.
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
+//! - `nosniff` applies as everywhere, and the file carries a policy of its
+//!   own (`FILE_POLICY`) under which it would run and load nothing.
+use axum::http::header::{
+    CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS,
+};
 use axum::response::IntoResponse;
 use loco_rs::prelude::*;
 
@@ -103,6 +106,7 @@ async fn logo(State(ctx): State<AppContext>) -> Result<Response> {
             (CONTENT_TYPE, kind),
             (X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (CONTENT_DISPOSITION, "attachment"),
+            (CONTENT_SECURITY_POLICY, super::FILE_POLICY),
         ],
         data,
     )
