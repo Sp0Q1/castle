@@ -188,7 +188,11 @@ jobs:
         run: |
           set -euo pipefail
           # A stub binary prints nothing; the real CLI lists its subcommands.
-          docker run --rm castle:ci --help | grep -q '^  start' \
+          # Captured first: piped straight into `grep -q`, docker dies on a
+          # closed pipe when grep exits at its match, and pipefail makes that a
+          # failure of an image that is fine.
+          help="$(docker run --rm castle:ci --help)"
+          grep -q '^  start' <<<"$help" \
             || { echo "::error::image binary does not behave like castle-cli"; exit 1; }
           # The SPA is served from disk at runtime, so an image without it is
           # broken in a way no Rust check can see.
