@@ -98,6 +98,7 @@ impl Hooks for App {
 
     fn register_tasks(tasks: &mut Tasks) {
         // tasks-inject (do not remove)
+        tasks.register(tasks::user_anonymize::AnonymizeUser);
         tasks.register(tasks::user_create::UserCreate);
         tasks.register(tasks::user_status::SetUserStatus);
     }

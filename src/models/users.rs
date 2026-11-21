@@ -569,3 +569,45 @@ impl Model {
         }
     }
 }
+
+// Leaving
+impl Model {
+    /// The name shown for someone who has been anonymized.
+    pub const FORMER_NAME: &'static str = "Former user";
+
+    /// Replaces who this account belonged to with a placeholder, disables it and
+    /// takes it off every project. What they wrote stays, under the placeholder.
+    /// Returns the account and the number of memberships removed.
+    ///
+    /// # Errors
+    /// When a DB query fails.
+    pub async fn anonymize(self, db: &DatabaseConnection) -> ModelResult<(Self, u64)> {
+        let unusable = hash::hash_password(&Uuid::new_v4().to_string())
+            .map_err(|e| ModelError::Any(e.into()))?;
+        let id = self.id;
+        let txn = db.begin().await?;
+
+        let mut user = self.into_active_model();
+        user.email = ActiveValue::set(format!("former-user-{id}@removed.invalid"));
+        user.name = ActiveValue::set(Self::FORMER_NAME.to_string());
+        user.password = ActiveValue::set(unusable);
+        user.api_key = ActiveValue::set(format!("lo-{}", Uuid::new_v4()));
+        user.reset_token = ActiveValue::set(None);
+        user.reset_sent_at = ActiveValue::set(None);
+        user.email_verification_token = ActiveValue::set(None);
+        user.email_verification_sent_at = ActiveValue::set(None);
+        user.magic_link_token = ActiveValue::set(None);
+        user.magic_link_expiration = ActiveValue::set(None);
+        user.status = ActiveValue::set(UserStatus::Disabled);
+        let user = user.update(&txn).await?;
+
+        let removed = project_members::Entity::delete_many()
+            .filter(project_members::Column::UserId.eq(id))
+            .exec(&txn)
+            .await?
+            .rows_affected;
+
+        txn.commit().await?;
+        Ok((user, removed))
+    }
+}
