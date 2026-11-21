@@ -65,4 +65,20 @@ ignore = [
   # REMOVE when loco-rs moves to a maintained YAML parser. RE-EVALUATE if
   # castle ever parses YAML that did not come from this repository.
   "RUSTSEC-2024-0449",
+
+  # chrono 0.4 — unmaintained: its maintainer has soft-deprecated the crate in
+  # favour of jiff (chronotope/chrono#1768). An informational notice like the
+  # one above, not a vulnerability report; a flaw found in chrono later would
+  # be an advisory of its own and fail the build whatever this list says.
+  #
+  # Compiled, and central: sea-orm, sea-query and sqlx map timestamp columns to
+  # chrono types, so every entity's `created_at` / `updated_at` is one.
+  #
+  # Not fixable here: loco-rs depends on chrono unconditionally, so dropping
+  # our own dependency and building sea-orm `with-time` would still leave it
+  # in the build.
+  #
+  # REMOVE when `cargo tree -i chrono` comes back empty, which takes a loco-rs
+  # release that no longer depends on it.
+  "RUSTSEC-2026-0543",
 ]
