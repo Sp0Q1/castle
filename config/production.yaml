@@ -37,6 +37,10 @@ server:
         Content-Security-Policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
         X-Content-Type-Options: "nosniff"
         Referrer-Policy: "no-referrer"
+        # Nothing is reused without asking the server first. In proxy mode that
+        # question goes through oauth2-proxy, so a signed-out browser is sent to
+        # sign in rather than shown the app shell from its cache.
+        Cache-Control: "no-cache"
     # Serve the built React SPA (run `npm --prefix frontend run build` first).
     # API routes under /api take precedence; the fallback serves index.html so
     # client-side routes like /projects/1 resolve to the SPA.
