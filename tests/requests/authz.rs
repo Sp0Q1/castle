@@ -4,8 +4,8 @@
 //! — the property the whole product rests on, since a leak here means one
 //! client reading another's penetration-test results. They drive the real HTTP
 //! surface (router, extractors, handlers, database) rather than calling model
-//! methods directly, because every past bug in this area came from the wiring
-//! between those layers, not from the rules themselves.
+//! methods directly, because the wiring between those layers is where such a
+//! rule is most easily lost.
 
 use castle::{
     app::App,
@@ -376,8 +376,8 @@ async fn unauthenticated_requests_are_rejected() {
             .await;
         assert_eq!(response.status_code(), 401);
 
-        // Uploads are auth-gated too: this is the regression that broke inline
-        // images, and it must stay gated rather than be loosened to fix them.
+        // Uploads are auth-gated too. The portal loads inline images through
+        // its API client for that reason; the gate is not to be loosened.
         let response = request.get("/api/uploads/anything.png").await;
         assert_eq!(response.status_code(), 401);
     })

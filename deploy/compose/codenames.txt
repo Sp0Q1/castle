@@ -1,10 +1,10 @@
 # Pre-generated codename pool.
 #
 # Every tenant — real or decoy — gets a name from this list, and nothing else
-# ever appears in a hostname, namespace, realm name or certificate. The client's
-# real identity lives only in the control-plane mapping (see `castlectl map`),
-# so a certificate-transparency log, a DNS query or a leaked namespace listing
-# reveals a codename and nothing more.
+# ever appears in a hostname, realm name or certificate. Which client a
+# codename belongs to is recorded nowhere on the host, so a
+# certificate-transparency log, a DNS query or a listing of what runs reveals a
+# codename and nothing more.
 #
 # Two properties matter and both are easy to lose:
 #

@@ -15,6 +15,9 @@
 #   castlectl demote <codename>     turn a tenant back into a canary (cert kept)
 #   castlectl deprovision <codename>
 #   castlectl list
+#   castlectl upgrade [<codename>]  recreate running instances from the templates
+#   castlectl backup | restore      an encrypted bundle of everything not re-derivable
+#   castlectl dns-init | dns-sync   the bundled nameserver's key and records
 #
 # Canonical bring-up:
 #   castlectl issue-certs 10
@@ -22,7 +25,7 @@
 #   castlectl provision-pool
 #
 # THE CERT STRATEGY: certs for the whole pool are issued once, together, and
-# Caddy runs with auto_https off — so promoting a canary to a real tenant
+# every pool vhost pins its own — so promoting a canary to a real tenant
 # contacts no CA and leaves no Certificate Transparency trace. An observer sees
 # the pool issued in bulk and never learns which codenames became real, or when.
 #
@@ -724,7 +727,7 @@ restore(){ # <backup-file> [--yes]
       fi
       compose_instance "$cn" start castle >/dev/null 2>&1 || true
     else
-      echo "  tenant $cn not up — run 'castlectl provision-pool', then re-run restore." >&2
+      echo "  tenant $cn not up — run 'castlectl provision-pool' and 'castlectl promote $cn', then re-run restore." >&2
     fi
   done
   # A pass where nothing was reachable (attempted=0) is fine — the multi-pass flow

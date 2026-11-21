@@ -67,12 +67,11 @@ mailer:
 
 # Database Configuration
 database:
-  # NO DEFAULT ON PURPOSE, like JWT_SECRET below. The default used to be a local
-  # SQLite file, so an instance started without DATABASE_URL would come up
-  # looking healthy and serve from a database nobody provisioned, backs up or
-  # can find. With no default the config fails to render and the app refuses to
-  # start. Every deployed instance runs on Postgres; SQLite is for development
-  # and the test suite only.
+  # NO DEFAULT ON PURPOSE, like JWT_SECRET below. With one, an instance started
+  # without DATABASE_URL would come up looking healthy on a database nobody
+  # provisioned, backs up or can find. With none, the config fails to render and
+  # the app refuses to start. Every deployed instance runs on Postgres; SQLite is
+  # for development and the test suite only.
   uri: <%= get_env(name="DATABASE_URL") %>
   enable_logging: false
   # Milliseconds. 500ms is fine for local sqlite but too tight for a networked
@@ -103,12 +102,11 @@ auth:
 settings:
   # "proxy" = run behind oauth2-proxy + Keycloak (this app trusts the proxy's
   # identity headers and manages no passwords). "jwt" = built-in login/register.
-  # Env-overridable so one image can run either mode (the chart sets it from
-  # oauth2Proxy.enabled).
+  # Env-overridable so one image can run either mode.
   auth_mode: <%= get_env(name="CASTLE_AUTH_MODE", default="proxy") %>
   # Decoy mode: capture submitted credentials + attacker metadata to the
   # `castle::honeypot` log target and return believable responses (no real DB).
-  # Set only on canary instances (the chart sets it from .Values.honeypot).
+  # For a decoy that should answer like a castle with its own login.
   honeypot: <%= get_env(name="CASTLE_HONEYPOT", default="false") %>
   # An image file that replaces the built-in brand in the header. Empty: none.
   logo: <%= get_env(name="CASTLE_LOGO", default="") %>
