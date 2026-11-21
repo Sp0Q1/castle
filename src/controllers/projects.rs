@@ -11,8 +11,9 @@
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::access;
 use crate::models::_entities::{project_members, projects, users};
-use crate::models::project_members::MemberRole;
+use crate::models::project_members::{Access, MemberRole};
 use crate::models::users::{UserRole, UserStatus};
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_DESCRIPTION, MAX_EMAIL, MAX_TITLE};
@@ -62,15 +63,6 @@ async fn load_member(
         .ok_or_else(|| Error::NotFound)
 }
 
-/// Whether `user` may view `project_id`: management sees every project, everyone
-/// else only the projects they have been onboarded to.
-async fn can_view(ctx: &AppContext, user: &users::Model, project_id: i64) -> Result<bool> {
-    if user.is_manager() {
-        return Ok(true);
-    }
-    Ok(project_members::Model::is_member(&ctx.db, project_id, user.id).await?)
-}
-
 #[debug_handler]
 pub async fn create(
     CurrentUser(user): CurrentUser,
@@ -97,7 +89,8 @@ pub async fn create(
     .insert(&ctx.db)
     .await?;
 
-    format::json(ProjectResponse::new(&project))
+    let access = Access::of(&user, None).ok_or_else(|| Error::NotFound)?;
+    format::json(ProjectResponse::new(&project, access))
 }
 
 #[debug_handler]
@@ -105,25 +98,20 @@ pub async fn list(
     CurrentUser(user): CurrentUser,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
-    let projects = if user.is_manager() {
-        projects::Entity::find().all(&ctx.db).await?
-    } else {
-        let memberships = project_members::Entity::find()
-            .filter(project_members::Column::UserId.eq(user.id))
-            .all(&ctx.db)
-            .await?;
-        let ids: Vec<i64> = memberships.iter().map(|m| m.project_id).collect();
-        if ids.is_empty() {
-            Vec::new()
-        } else {
-            projects::Entity::find()
-                .filter(projects::Column::Id.is_in(ids))
-                .all(&ctx.db)
-                .await?
-        }
-    };
-
-    let response: Vec<ProjectResponse> = projects.iter().map(ProjectResponse::new).collect();
+    // The projects that exist for this user, each with what they may do on it.
+    let memberships = project_members::Entity::find()
+        .filter(project_members::Column::UserId.eq(user.id))
+        .all(&ctx.db)
+        .await?;
+    let response: Vec<ProjectResponse> = projects::Entity::find()
+        .all(&ctx.db)
+        .await?
+        .iter()
+        .filter_map(|project| {
+            let membership = memberships.iter().find(|m| m.project_id == project.id);
+            Access::of(&user, membership).map(|access| ProjectResponse::new(project, access))
+        })
+        .collect();
     format::json(response)
 }
 
@@ -134,12 +122,8 @@ pub async fn show(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    // Hide from non-members as 404, so a forbidden project can't be told apart
-    // from a nonexistent one.
-    if !can_view(&ctx, &user, project.id).await? {
-        return Err(Error::NotFound);
-    }
-    format::json(ProjectResponse::new(&project))
+    let access = access(&ctx, &user, project.id).await?;
+    format::json(ProjectResponse::new(&project, access))
 }
 
 #[debug_handler]
@@ -235,9 +219,7 @@ pub async fn managers(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    if !can_view(&ctx, &user, project.id).await? {
-        return Err(Error::NotFound);
-    }
+    access(&ctx, &user, project.id).await?;
 
     let managers = users::Entity::find()
         .filter(users::Column::Role.eq(UserRole::Manager.as_str()))
@@ -256,11 +238,7 @@ pub async fn list_members(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    // Hide from non-members as 404, so a forbidden project can't be told apart
-    // from a nonexistent one.
-    if !can_view(&ctx, &user, project.id).await? {
-        return Err(Error::NotFound);
-    }
+    access(&ctx, &user, project.id).await?;
 
     let members = project_members::Model::list_for_project_with_users(&ctx.db, project.id).await?;
     let response: Vec<MemberResponse> = members

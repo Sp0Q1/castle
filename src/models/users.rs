@@ -8,7 +8,6 @@ use uuid::Uuid;
 pub use super::_entities::users::{self, ActiveModel, Entity, Model};
 
 use super::_entities::project_members;
-use super::project_members::MemberRole;
 use sea_orm::entity::prelude::{DeriveActiveEnum, EnumIter, StringLen};
 
 pub const MAGIC_LINK_LENGTH: usize = 32;
@@ -441,18 +440,6 @@ impl Model {
     #[must_use]
     pub fn is_client(&self) -> bool {
         self.role() == UserRole::Client
-    }
-
-    /// Whether this user works on a project as staff, given their membership of
-    /// it. It takes the IdP's word that they are staff and a manager's that they
-    /// work on this project: neither alone will do.
-    #[must_use]
-    pub fn is_project_staff(&self, membership: Option<&project_members::Model>) -> bool {
-        match self.role() {
-            UserRole::Manager => true,
-            UserRole::Staff => membership.is_some_and(|m| m.role == MemberRole::Staff),
-            UserRole::Client => false,
-        }
     }
 }
 

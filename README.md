@@ -49,6 +49,13 @@ management's statement about one project, and only management changes it. A
 manager is on no project: the role opens all of them, so each project lists
 its managers next to its members.
 
+What someone may do on a project is worked out in one place, `Access` in
+`src/models/project_members.rs`, from those two facts. Every handler asks it,
+and a project and each member row carry the answer (`access`: `staff` or
+`client`), so the pages render from it and never work the rule out again.
+`tests/requests/policy.rs` states what each kind of person gets from every
+address and fails for an address without a stated rule.
+
 ## Authentication
 
 Selected by `settings.auth_mode`. The settings block is parsed strictly when
