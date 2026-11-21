@@ -5,7 +5,7 @@ import {
   redirectDocument,
   useRouteLoaderData,
 } from "react-router-dom";
-import { api, setAuthToken } from "../api/client";
+import { ApiError, api, setAuthToken } from "../api/client";
 import type { AuthMode, CurrentUser } from "../api/types";
 
 // jwt (dev) mode only — production runs proxy mode, where the session is an
@@ -66,7 +66,12 @@ export async function requireUser({
 }: LoaderFunctionArgs): Promise<CurrentUser> {
   try {
     return await api.currentUser();
-  } catch {
+  } catch (err) {
+    // Signed in but refused (a disabled account). Signing in again would only
+    // land back here, so let the route's error element say why instead.
+    if (err instanceof ApiError && err.status === 403) {
+      throw err;
+    }
     if (mode === "proxy") {
       const { pathname, search } = new URL(request.url);
       const rd = encodeURIComponent(pathname + search);
