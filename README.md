@@ -84,10 +84,6 @@ someone who has not signed in yet creates an `invited` user that becomes
 `active` on first sign-in. A `disabled` user is refused on every request, in
 both modes, whatever session they still hold.
 
-`settings.honeypot` is a separate switch: with it, the auth endpoints of `jwt`
-mode record what is submitted and authenticate nobody. The decoys of the
-Compose deployment do not use it; they run no castle at all.
-
 ## API
 
 Apart from signing in itself, `/api/auth/mode`, the logo and the three health
@@ -153,7 +149,6 @@ shown as its caption, and nothing is requested for it.
 | `CASTLE_PROXY_SECRET` | required in `proxy` mode: the secret castle shares with its proxy, which sends it with every request |
 | `CASTLE_LOGOUT_URL` | where sign-out sends the browser |
 | `CASTLE_LOGO` | path of an image shown instead of the built-in brand: PNG, JPEG, GIF, WebP or SVG, at most 1 MiB. One that cannot be served stops the server from starting |
-| `CASTLE_HONEYPOT` | `true` turns the instance into a decoy, see above |
 | `HOST`, `PORT` | public URL and listening port |
 
 Accounts are managed from the command line of the instance. A user is never

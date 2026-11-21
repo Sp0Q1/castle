@@ -146,11 +146,6 @@ pub struct Settings {
     pub auth_mode: AuthMode,
     #[serde(default)]
     pub proxy: ProxySettings,
-    /// Decoy mode: the auth endpoints capture submitted credentials + attacker
-    /// metadata and return believable responses, without ever touching a real
-    /// DB. Set on canary/honeypot instances only.
-    #[serde(default)]
-    pub honeypot: bool,
     /// Path of an image that replaces the built-in brand in the portal's header
     /// (see `controllers::brand`). Empty or absent: the built-in brand.
     #[serde(default)]
@@ -463,7 +458,7 @@ mod tests {
                 "an empty secret",
             ),
             (
-                json!({ "auth_mode": "jwt", "honeypots": true }),
+                json!({ "auth_mode": "jwt", "honeypot": true }),
                 "a key that is not one",
             ),
             (
@@ -479,8 +474,8 @@ mod tests {
                 "a group name with a comma",
             ),
             (
-                json!({ "auth_mode": "jwt", "honeypot": 0 }),
-                "a switch that is no boolean",
+                json!({ "auth_mode": "jwt", "logo": 5 }),
+                "a path that is no text",
             ),
         ];
         for (block, what) in refused {
