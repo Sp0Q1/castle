@@ -926,6 +926,15 @@ async fn a_membership_does_not_outrank_the_idp() {
             .json(&finding)
             .await;
         assert_eq!(written.status_code(), 200);
+
+        // For as long as the IdP says so: it is asked at every request, and the
+        // membership stays what management made it.
+        for (group, expected) in [("castle-clients", 403), ("castle-staff", 200)] {
+            let written = post(&findings, "tester@example.com", group)
+                .json(&finding)
+                .await;
+            assert_eq!(written.status_code(), expected, "as {group}");
+        }
     })
     .await;
 }

@@ -491,39 +491,13 @@ impl Model {
                 if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
                     active.name = ActiveValue::set(n.to_string());
                 }
-                let updated = active.update(db).await.map_err(ModelError::from)?;
-                Self::demote_stale_memberships(db, &updated).await?;
-                Ok(updated)
+                active.update(db).await.map_err(ModelError::from)
             }
             Err(ModelError::EntityNotFound) => {
                 Self::insert_shadow(db, email, name, role, UserStatus::Active).await
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Downgrades the memberships of someone the IdP has demoted to `client`, so
-    /// the member list shows what [`Self::is_project_staff`] decides and promoting
-    /// them again later does not by itself restore staff capacity on old projects.
-    ///
-    /// # Errors
-    /// When the DB query/update fails.
-    async fn demote_stale_memberships(db: &DatabaseConnection, user: &Self) -> ModelResult<()> {
-        if user.role.as_str() != UserRole::Client.as_str() {
-            return Ok(());
-        }
-        let stale = project_members::Entity::find()
-            .filter(project_members::Column::UserId.eq(user.id))
-            .filter(project_members::Column::Role.ne(MemberRole::Client))
-            .all(db)
-            .await
-            .map_err(ModelError::from)?;
-        for membership in stale {
-            let mut active = membership.into_active_model();
-            active.role = ActiveValue::set(MemberRole::Client);
-            active.update(db).await.map_err(ModelError::from)?;
-        }
-        Ok(())
     }
 
     /// Finds a user by email, or creates an "invited" placeholder so a manager
