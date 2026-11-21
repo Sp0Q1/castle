@@ -834,6 +834,13 @@ export_tenant(){ # <codename>
   push_bundle "$out"
 }
 
+# One of castle's own tasks, in a tenant's running castle. Without a task name
+# it lists them.
+castle_task(){ # <codename> [<task> [args...]]
+  local cn="$1"; shift
+  "$ENGINE" exec "castle-$cn" castle-cli task --environment production "$@"
+}
+
 import_tenant(){ # <tenant-bundle> <codename>
   local file="${1:-}" cn="${2:-}" work err
   [[ -n "$file" && -f "$file" && -n "$cn" ]] || die "usage: castlectl import <tenant-bundle> <codename>"
@@ -854,6 +861,14 @@ import_tenant(){ # <tenant-bundle> <codename>
     || die "uploads load failed — ${err##*"$NL"} ('$cn' is left half-loaded: demote it with --no-export and import again)"
   compose_instance "$cn" start castle >/dev/null 2>&1
   wait_healthy "castle-$cn" health || die "castle-$cn did not come back (see: $ENGINE logs castle-$cn)"
+  # The accounts came bound to the people of the realm they left. Here everyone
+  # is made anew and has a new id, so each account is let go, to be taken by
+  # whoever this realm vouches for with its address. A castle from before
+  # accounts were bound has no such task, and nothing to let go.
+  if castle_task "$cn" 2>/dev/null | grep -q '^user:unbind'; then
+    err="$(castle_task "$cn" user:unbind all:yes 2>&1)" \
+      || die "the data is in place but the accounts are still bound to the people of the old realm — ${err##*"$NL"}"
+  fi
   echo "  data loaded; adding the people to realm $(realm_of "$cn")"
   realm_sh add-people "$cn" < "$work/people.json" || die "the data is in place but not everyone could be added to the realm"
   echo "imported into '$cn'. Nobody has a password yet: give each person one in Keycloak before they sign in."
