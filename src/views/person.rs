@@ -4,7 +4,7 @@ use crate::models::_entities::{project_members, projects, users};
 use crate::models::project_members::MemberRole;
 use crate::models::users::UserStatus;
 
-/// One project someone is on, and as what.
+/// One project someone was put on, and as what.
 #[derive(Debug, Serialize)]
 pub struct PersonProject {
     pub id: i64,
@@ -13,8 +13,9 @@ pub struct PersonProject {
 }
 
 /// Someone with an account, as management sees them: who they are, the role
-/// the IdP gives them, and the projects they are on. Like every view of a user,
-/// it carries no credential.
+/// the IdP gives them, and the projects they were put on. A manager opens every
+/// project by role and needs no entry here. Like every view of a user, it
+/// carries no credential.
 #[derive(Debug, Serialize)]
 pub struct PersonResponse {
     pub id: i64,
@@ -43,7 +44,10 @@ impl PersonResponse {
             created_at: user.created_at.to_rfc3339(),
             projects: memberships
                 .iter()
-                .filter(|(member, _)| member.user_id == user.id)
+                // An older row naming who opened a project is not a membership.
+                .filter(|(member, _)| {
+                    member.user_id == user.id && member.role != MemberRole::Manager
+                })
                 .filter_map(|(member, project)| {
                     project.as_ref().map(|project| PersonProject {
                         id: project.id,
