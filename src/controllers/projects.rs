@@ -3,15 +3,22 @@
 //!   * create a project ................... management only
 //!   * onboard, change or remove a member . management only
 //!   * view a project ..................... management, or a user onboarded to it
+//!
+//! Management is not on a project: a manager's access comes from the role and
+//! covers every project, so a manager is never a member and cannot be removed
+//! from one. `managers` lists them next to the members, so a project shows
+//! everyone who can open it.
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{project_members, projects, users};
-use crate::models::project_members::{MemberRole, OnboardRole};
+use crate::models::project_members::OnboardRole;
+use crate::models::users::{UserRole, UserStatus};
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_DESCRIPTION, MAX_EMAIL, MAX_TITLE};
 use crate::views::member::MemberResponse;
 use crate::views::project::ProjectResponse;
+use crate::views::user::UserSummary;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateProjectParams {
@@ -48,7 +55,8 @@ async fn load_member(
     project_id: i64,
     member_id: i64,
 ) -> Result<project_members::Model> {
-    project_members::Entity::find_by_id(member_id)
+    project_members::Model::memberships()
+        .filter(project_members::Column::Id.eq(member_id))
         .filter(project_members::Column::ProjectId.eq(project_id))
         .one(&ctx.db)
         .await?
@@ -85,19 +93,6 @@ pub async fn create(
         name: Set(params.name),
         description: Set(params.description),
         created_by: Set(user.id),
-        ..Default::default()
-    }
-    .insert(&ctx.db)
-    .await?;
-
-    // Record the creating manager as a member of their own project, so they show
-    // up in the member list alongside the staff/clients they onboard. This does
-    // not grant access they didn't already have — a manager can reach every
-    // project via their global role — it only makes ownership visible.
-    project_members::ActiveModel {
-        project_id: Set(project.id),
-        user_id: Set(user.id),
-        role: Set(MemberRole::Manager),
         ..Default::default()
     }
     .insert(&ctx.db)
@@ -169,6 +164,9 @@ pub async fn onboard(
     // reconciled to their real identity on first SSO login (matched by email).
     let target =
         users::Model::find_or_invite(&ctx.db, &params.user_email.trim().to_lowercase()).await?;
+    if target.is_manager() {
+        return bad_request("a manager already has access to every project");
+    }
 
     if project_members::Model::is_member(&ctx.db, project.id, target.id).await? {
         return bad_request("that user is already a member of this project");
@@ -230,6 +228,28 @@ pub async fn remove_member(
     format::empty()
 }
 
+/// Who can open this project without being on it: every manager.
+#[debug_handler]
+pub async fn managers(
+    CurrentUser(user): CurrentUser,
+    Path(project_id): Path<i64>,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
+    let project = load_project(&ctx, project_id).await?;
+    if !can_view(&ctx, &user, project.id).await? {
+        return Err(Error::NotFound);
+    }
+
+    let managers = users::Entity::find()
+        .filter(users::Column::Role.eq(UserRole::Manager.as_str()))
+        .filter(users::Column::Status.eq(UserStatus::Active))
+        .order_by_asc(users::Column::Name)
+        .all(&ctx.db)
+        .await?;
+    let response: Vec<UserSummary> = managers.iter().map(UserSummary::new).collect();
+    format::json(response)
+}
+
 #[debug_handler]
 pub async fn list_members(
     CurrentUser(user): CurrentUser,
@@ -260,6 +280,7 @@ pub fn routes() -> Routes {
         .add("/{project_id}", get(show))
         .add("/{project_id}/members", post(onboard))
         .add("/{project_id}/members", get(list_members))
+        .add("/{project_id}/managers", get(managers))
         .add("/{project_id}/members/{member_id}", put(change_member))
         .add("/{project_id}/members/{member_id}", delete(remove_member))
 }

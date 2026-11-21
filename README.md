@@ -39,7 +39,9 @@ member without the right role gets 403.
 | View a project | managers; otherwise members of that project |
 
 The role comes from the IdP and is read on every request. The membership is
-management's statement about one project, and only management changes it.
+management's statement about one project, and only management changes it. A
+manager is on no project: the role opens all of them, so each project lists
+its managers next to its members.
 
 ## Authentication
 
@@ -84,6 +86,7 @@ POST   /api/projects/{project_id}/members          # manager: { user_email, role
 GET    /api/projects/{project_id}/members
 PUT    /api/projects/{project_id}/members/{member_id}     # manager: { role }
 DELETE /api/projects/{project_id}/members/{member_id}     # manager
+GET    /api/projects/{project_id}/managers                # who opens it without being on it
 
 POST   /api/projects/{project_id}/findings         # staff
 GET    /api/projects/{project_id}/findings         # clients see only published

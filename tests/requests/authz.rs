@@ -188,39 +188,96 @@ fn bearer(token: &str) -> (&'static str, String) {
     ("authorization", format!("Bearer {token}"))
 }
 
+/// Management is not on a project. A manager's access is the role's and covers
+/// every project, so no membership stands for it and none can be taken away
+/// while the access stays. Each project says who its managers are.
 #[tokio::test]
 #[serial]
-async fn creating_manager_appears_in_the_member_list() {
+async fn managers_are_listed_and_are_not_members() {
     fresh_db();
     request::<App, _, _>(|request, ctx| async move {
         let f = seed(&ctx).await;
-        let (h, v) = bearer(&f.manager_token);
+        let (mh, mv) = bearer(&f.manager_token);
+        let (sh, sv) = bearer(&f.staff_token);
+        let (oh, ov) = bearer(&f.outsider_token);
 
-        let created = request
+        let created: serde_json::Value = request
             .post("/api/projects")
-            .add_header(h, &v)
+            .add_header(mh, &mv)
             .json(&serde_json::json!({ "name": "Owned project" }))
-            .await;
-        assert_eq!(created.status_code(), 200);
-        let project_id = created.json::<serde_json::Value>()["id"].as_i64().unwrap();
+            .await
+            .json();
+        let owned = format!("/api/projects/{}", created["id"]);
 
-        // The manager who created it is listed as a member (role "manager"),
-        // so ownership is visible alongside onboarded staff/clients.
-        let members = request
-            .get(&format!("/api/projects/{project_id}/members"))
-            .add_header(h, &v)
-            .await;
-        let body: serde_json::Value = members.json();
-        let owner = body
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["user"]["email"] == "manager@test.com");
+        // Opening a project puts nobody on it, and the project names its managers.
+        let members: Vec<serde_json::Value> = request
+            .get(&format!("{owned}/members"))
+            .add_header(mh, &mv)
+            .await
+            .json();
         assert!(
-            owner.is_some(),
-            "creating manager missing from members: {body}"
+            members.is_empty(),
+            "opening a project made a member: {members:?}"
         );
-        assert_eq!(owner.unwrap()["role"], "manager");
+        let managers: Vec<serde_json::Value> = request
+            .get(&format!("{owned}/managers"))
+            .add_header(mh, &mv)
+            .await
+            .json();
+        let emails: Vec<&str> = managers
+            .iter()
+            .filter_map(|m| m["email"].as_str())
+            .collect();
+        assert_eq!(emails, ["manager@test.com"]);
+
+        // A manager cannot be put on a project.
+        let onboarded = request
+            .post(&format!("{owned}/members"))
+            .add_header(mh, &mv)
+            .json(&serde_json::json!({ "user_email": "manager@test.com", "role": "staff" }))
+            .await;
+        assert_eq!(onboarded.status_code(), 400);
+
+        // Whoever is on a project sees its managers; whoever is not learns nothing.
+        let shared = format!("/api/projects/{}", f.project_id);
+        let seen = request
+            .get(&format!("{shared}/managers"))
+            .add_header(sh, &sv)
+            .await;
+        assert_eq!(seen.status_code(), 200);
+        assert!(seen.text().contains("manager@test.com"));
+        let hidden = request
+            .get(&format!("{shared}/managers"))
+            .add_header(oh, &ov)
+            .await;
+        assert_eq!(hidden.status_code(), 404);
+
+        // A row from before, naming who opened a project, is not a membership:
+        // it opens nothing, is not listed and cannot be reached.
+        let outsider = users::Model::find_by_email(&ctx.db, "outsider@test.com")
+            .await
+            .expect("outsider");
+        let marker = project_members::ActiveModel {
+            project_id: Set(f.project_id),
+            user_id: Set(outsider.id),
+            role: Set(MemberRole::Manager),
+            ..Default::default()
+        }
+        .insert(&ctx.db)
+        .await
+        .expect("insert the old kind of row");
+        let opened = request.get(&shared).add_header(oh, &ov).await;
+        assert_eq!(opened.status_code(), 404);
+        let listed = request
+            .get(&format!("{shared}/members"))
+            .add_header(mh, &mv)
+            .await;
+        assert!(!listed.text().contains("outsider@test.com"));
+        let removed = request
+            .delete(&format!("{shared}/members/{}", marker.id))
+            .add_header(mh, &mv)
+            .await;
+        assert_eq!(removed.status_code(), 404);
     })
     .await;
 }

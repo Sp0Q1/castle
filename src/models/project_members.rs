@@ -13,7 +13,9 @@ use super::_entities::users;
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "lowercase")]
 pub enum MemberRole {
-    /// The manager who opened the project, recorded so ownership is visible.
+    /// No longer written and never read as a membership: a manager's access
+    /// comes from the role, on every project. Older rows still say this for
+    /// the manager who opened a project.
     #[sea_orm(string_value = "manager")]
     Manager,
     /// May author, edit and publish findings.
@@ -74,6 +76,13 @@ impl ActiveModelBehavior for super::_entities::project_members::ActiveModel {
 
 // read-oriented logic
 impl Model {
+    /// The rows that put someone on a project. Everything that reads a
+    /// membership starts here.
+    #[must_use]
+    pub fn memberships() -> sea_orm::Select<Entity> {
+        Entity::find().filter(Column::Role.ne(MemberRole::Manager))
+    }
+
     /// Returns the membership row for `user_id` in `project_id`, if the user is
     /// onboarded to that project.
     ///
@@ -84,7 +93,7 @@ impl Model {
         project_id: i64,
         user_id: i64,
     ) -> ModelResult<Option<Self>> {
-        let member = Entity::find()
+        let member = Self::memberships()
             .filter(Column::ProjectId.eq(project_id))
             .filter(Column::UserId.eq(user_id))
             .one(db)
@@ -114,7 +123,7 @@ impl Model {
         db: &DatabaseConnection,
         project_id: i64,
     ) -> ModelResult<Vec<(Self, Option<users::Model>)>> {
-        let members = Entity::find()
+        let members = Self::memberships()
             .filter(Column::ProjectId.eq(project_id))
             .find_also_related(users::Entity)
             .all(db)

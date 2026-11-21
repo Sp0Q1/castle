@@ -11,6 +11,7 @@ import {
   type Member,
   type Project,
   SEVERITIES,
+  type UserSummary,
 } from "../api/types";
 import { isProjectStaff, useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
@@ -43,18 +44,20 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 interface Data {
   project: Project;
+  managers: UserSummary[];
   members: Member[];
   findings: Finding[];
 }
 
 export async function loader({ params }: LoaderFunctionArgs): Promise<Data> {
   const id = Number(params.id);
-  const [project, members, findings] = await Promise.all([
+  const [project, managers, members, findings] = await Promise.all([
     api.getProject(id),
+    api.listManagers(id),
     api.listMembers(id),
     api.listFindings(id),
   ]);
-  return { project, members, findings };
+  return { project, managers, members, findings };
 }
 
 export async function action({ params, request }: ActionFunctionArgs) {
@@ -99,21 +102,24 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
       <div>
         <span className="list-title">{member.user.name}</span>
         <p className="muted">{member.user.email}</p>
+        {member.user.role === "manager" && (
+          <p className="muted">
+            Now a manager, who sees every project whatever this says.
+          </p>
+        )}
         {manage && (
           <change.Form method="post" className="actions">
             <input type="hidden" name="member" value={member.id} />
             <input type="hidden" name="role" value={other} />
-            {member.role !== "manager" && (
-              <button
-                type="submit"
-                name="intent"
-                value="set-role"
-                className="btn btn-ghost btn-small"
-                disabled={busy}
-              >
-                Make {other}
-              </button>
-            )}
+            <button
+              type="submit"
+              name="intent"
+              value="set-role"
+              className="btn btn-ghost btn-small"
+              disabled={busy}
+            >
+              Make {other}
+            </button>
             <button
               type="submit"
               name="intent"
@@ -142,7 +148,7 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
 }
 
 function ProjectDetailPage() {
-  const { project, members, findings } = useLoaderData<Data>();
+  const { project, managers, members, findings } = useLoaderData<Data>();
   const user = useUser();
   const newFinding = useFetcher<{ error: string }>();
   const onboard = useFetcher<{ error: string }>();
@@ -248,8 +254,21 @@ function ProjectDetailPage() {
         </section>
 
         <aside className="stack">
-          <h2>Members</h2>
+          <h2>Who can open this project</h2>
+          <p className="muted">
+            Managers open every project. Everyone else is here because a manager
+            put them on this one.
+          </p>
           <ul className="list">
+            {managers.map((manager) => (
+              <li key={manager.id} className="card list-item">
+                <div>
+                  <span className="list-title">{manager.name}</span>
+                  <p className="muted">{manager.email}</p>
+                </div>
+                <span className="badge role-manager">manager</span>
+              </li>
+            ))}
             {members.map((m) => (
               <MemberRow key={m.id} member={m} manage={isManager} />
             ))}
