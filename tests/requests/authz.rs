@@ -779,7 +779,7 @@ async fn set_status(
 }
 
 /// The secret a proxy-mode instance in these tests shares with its proxy.
-const PROXY_SECRET: &str = "shared-between-the-proxy-and-castle";
+pub(super) const PROXY_SECRET: &str = "shared-between-the-proxy-and-castle";
 
 /// Boots the next app in proxy mode, the way production runs. Dropped, later
 /// boots are back in jwt mode even if the test panicked.
@@ -802,7 +802,7 @@ impl Drop for ProxyMode {
 
 /// The header oauth2-proxy puts on what it forwards: Basic, with the secret as
 /// the password.
-fn from_proxy(secret: &str) -> (&'static str, String) {
+pub(super) fn from_proxy(secret: &str) -> (&'static str, String) {
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     (
         "authorization",

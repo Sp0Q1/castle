@@ -18,7 +18,9 @@ use loco_rs::{app::Hooks, testing::prelude::*};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use serial_test::serial;
 
-use super::authz::{bearer, fresh_db, make_finding, make_user, seed, ProxyMode};
+use super::authz::{
+    bearer, fresh_db, from_proxy, make_finding, make_user, seed, ProxyMode, PROXY_SECRET,
+};
 
 /// Who asks, in the order of every `expect` below.
 const ACTORS: [&str; 7] = [
@@ -29,6 +31,26 @@ const ACTORS: [&str; 7] = [
     "a client on no project",
     "staff on no project",
     "a disabled account",
+];
+
+/// How each of them shows who they are. With castle's own sign-in that is a
+/// token; in a deployment it is what the proxy sends for them: its secret, the
+/// address and the group Keycloak has them in.
+#[derive(Clone, Copy)]
+enum SignIn {
+    Jwt,
+    Proxy,
+}
+
+/// The address and Keycloak group of each of [`ACTORS`], nobody excepted.
+const PEOPLE: [Option<(&str, &str)>; 7] = [
+    None,
+    Some(("manager@test.com", "castle-managers")),
+    Some(("staff@test.com", "castle-staff")),
+    Some(("client@test.com", "castle-clients")),
+    Some(("outsider@test.com", "castle-clients")),
+    Some(("elsewhere@test.com", "castle-staff")),
+    Some(("gone@test.com", "castle-staff")),
 ];
 
 /// What the address is asked about. It is made anew for every call, so one
@@ -348,8 +370,22 @@ fn assert_stated(served: &BTreeSet<(String, String)>, stated: &BTreeSet<(String,
 #[serial]
 async fn every_address_answers_each_kind_of_person_as_stated() {
     fresh_db();
+    everyone_asks_everything(SignIn::Jwt).await;
+}
+
+/// The same table behind the proxy, which is how a deployment runs: who asks
+/// is what the proxy says, and nothing is believed without its secret.
+#[tokio::test]
+#[serial]
+async fn the_same_holds_behind_the_proxy() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    everyone_asks_everything(SignIn::Proxy).await;
+}
+
+async fn everyone_asks_everything(sign_in: SignIn) {
     request::<App, _, _>(|request, ctx| async move {
-        assert_stated(&served(&ctx), &stated(true));
+        assert_stated(&served(&ctx), &stated(matches!(sign_in, SignIn::Jwt)));
 
         let db = &ctx.db;
         let f = seed(&ctx).await;
@@ -382,21 +418,33 @@ async fn every_address_answers_each_kind_of_person_as_stated() {
             Some(token(&other_staff)),
             Some(gone_token),
         ];
+        let shows = |who: usize| -> Vec<(&'static str, String)> {
+            match (sign_in, &tokens[who], PEOPLE[who]) {
+                (SignIn::Jwt, Some(token), _) => vec![bearer(token)],
+                (SignIn::Proxy, _, Some((email, group))) => vec![
+                    from_proxy(PROXY_SECRET),
+                    ("x-forwarded-email", email.to_string()),
+                    ("x-forwarded-groups", group.to_string()),
+                ],
+                _ => Vec::new(),
+            }
+        };
 
         let staff = users::Model::find_by_email(db, "staff@test.com")
             .await
             .expect("staff");
         let spare = make_user(db, "spare@test.com", "Spare", "client").await;
-        let (h, v) = bearer(&f.manager_token);
         let image = [
             b"--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.png\"\r\nContent-Type: image/png\r\n\r\n".as_slice(),
             b"\x89PNG\r\n\x1a\n not much of a picture",
             b"\r\n--b--\r\n",
         ]
         .concat();
-        let uploaded: serde_json::Value = request
-            .post("/api/uploads")
-            .add_header(h, &v)
+        let mut upload = request.post("/api/uploads");
+        for (name, value) in shows(1) {
+            upload = upload.add_header(name, &value);
+        }
+        let uploaded: serde_json::Value = upload
             .content_type("multipart/form-data; boundary=b")
             .bytes(Bytes::from(image.clone()))
             .await
@@ -450,9 +498,8 @@ async fn every_address_answers_each_kind_of_person_as_stated() {
                 }
 
                 let mut call = request.method(rule.method.clone(), &path);
-                if let Some(token) = &tokens[who] {
-                    let (h, v) = bearer(token);
-                    call = call.add_header(h, &v);
+                for (name, value) in shows(who) {
+                    call = call.add_header(name, &value);
                 }
                 call = match rule.body {
                     Some(UPLOAD) => call
