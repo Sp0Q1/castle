@@ -73,8 +73,7 @@ render() {
   #                           the single origin rather than "+" so CORS cannot be
   #                           widened by a stray redirect entry.
   #   post.logout.redirect  — MUST cover the app root or RP-initiated logout dies
-  #                           on Keycloak's "We are sorry..." page. This bit us in
-  #                           the lab; see deploy/oauth2-proxy-keycloak.md.
+  #                           on Keycloak's "We are sorry..." page.
   cat <<JSON
 {
   "realm": "${realm}",

@@ -142,15 +142,13 @@ pub async fn serve(
             (CONTENT_TYPE, mime_for(&name)),
             // Defence in depth: never sniff, never offer as a download.
             //
-            // A stricter per-response `Content-Security-Policy: default-src
-            // 'none'; sandbox` used to be set here, but the global
-            // `secure_headers` middleware calls `headers.insert` on every
-            // response and unconditionally replaced it — the header was dead
-            // code that read as protection. Uploads therefore carry the app-wide
-            // CSP, and the controls that actually constrain them are the auth
-            // gate, the magic-byte check in `sniff_image` (only png/jpeg/gif/
-            // webp are ever written, and SVG is rejected outright) and nosniff,
-            // which stops a browser from reinterpreting those bytes as HTML.
+            // A Content-Security-Policy set here would not survive: the global
+            // `secure_headers` middleware sets its own on every response. Uploads
+            // therefore carry the app-wide CSP, and what constrains them is the
+            // auth gate, the magic-byte check in `sniff_image` (only png/jpeg/
+            // gif/webp are ever written, and SVG is rejected outright) and
+            // nosniff, which stops a browser from reinterpreting those bytes as
+            // HTML.
             (X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (CONTENT_DISPOSITION, "inline"),
         ],

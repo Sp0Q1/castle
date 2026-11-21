@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build for the castle image used by every tenant + the honeypot.
-# The same image runs a real tenant (proxy auth, real DB) or a canary
-# (fake DB, heavy logging) — only config/env differ, which keeps them
-# fingerprint-identical from the outside.
+# Multi-stage build for the castle image every tenant runs. One image serves
+# every mode; only config and environment differ.
 
 # 1) Frontend (React SPA) -> frontend/dist, served by loco at runtime.
 FROM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS frontend
