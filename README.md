@@ -67,8 +67,10 @@ default.
 - **`proxy`** (every deployment): castle runs behind **oauth2-proxy**, which
   does the OIDC flow with **Keycloak** and forwards the identity as request
   headers. Castle handles no credentials: a user is provisioned on first
-  sign-in, and the role is read from their Keycloak groups on every request,
-  so a change there takes effect at once. Only `/api/auth/current` and
+  sign-in and bound to the id Keycloak has for that person, so an account
+  follows the person and not an address. The role is read from their Keycloak
+  groups on every request, so a change there takes effect at once, and someone
+  in none of the three groups is refused. Only `/api/auth/current` and
   `/api/auth/mode` are mounted. Castle reads those headers only from a request
   that carries the secret it shares with its proxy, and does not start in this
   mode without one. They are read strictly (one value each, a group by its
@@ -158,10 +160,13 @@ Accounts are managed from the command line of the instance. A user is never
 deleted: `user:anonymize` replaces the name and address with a placeholder,
 disables the account and takes it off every project, and what they wrote stays.
 On Postgres the database refuses to delete a user that anything points at.
+`user:unbind` lets an account go to whoever Keycloak next vouches for with its
+address, for someone whose Keycloak account was made anew.
 
 ```bash
 castle-cli task user:status email:someone@example.com status:disabled   # or status:active
 castle-cli task user:anonymize email:someone@example.com                # for someone who left
+castle-cli task user:unbind email:someone@example.com                   # or all:yes, after a move to another Keycloak realm
 castle-cli task user:create email:… name:… password:…                   # jwt mode
 ```
 

@@ -68,16 +68,17 @@ sequenceDiagram
     P-->>B: redirect to the realm's sign-in page
   else valid session
     P->>A: the request, with the identity headers and the shared secret set by the proxy
-    A->>D: the user by email, role from the groups, status
+    A->>D: the account bound to that person, role from the groups, status
     A-->>B: what this user may see, and nothing else
   end
 ```
 
-Castle takes the user's email, name and groups from the headers the proxy
-sets, on every request, and only from a request that carries the secret the
-two share. The groups give the role (`castle-managers`,
-`castle-staff`, anything else is a client); the project memberships that
-management keeps in castle give the rest. The rules are in the
+Castle takes who is asking from the headers the proxy sets, on every request,
+and only from a request that carries the secret the two share: Keycloak's id
+for the person, which the account is bound to, their address, name and groups.
+The groups give the role (`castle-managers`, `castle-staff`,
+`castle-clients`; someone in none of them is refused); the project memberships
+that management keeps in castle give the rest. The rules are in the
 [README](../README.md#access-control).
 
 ## A sign-in
@@ -147,6 +148,7 @@ images; which codenames belong to clients; credentials and sessions.
 | One client reading another's findings | per tenant: its own castle, database, network, realm and secrets; within a tenant: membership per project |
 | A client reading drafts | drafts and their comments go to project staff only: a manager, or someone who is staff both to Keycloak and on that project |
 | Access outliving the person's role | the role is read on every request, the session is refreshed with Keycloak every four minutes and ends after ten hours, a disabled account is refused at once, and management removes memberships |
+| An address that changes hands, or a person who changes address | an account is bound to Keycloak's id for the person: a new holder of an old address is refused and gets nothing of the old account, and a disabled or anonymized person stays that under any address |
 | A page that says one thing while the server does another | a manager is on no project and is listed for each one as a manager; only memberships can be changed or removed, with a confirmation; a membership that gives less than it reads is marked |
 | Losing what someone wrote when they leave | a user is never deleted: they are anonymized, and the database refuses to delete a user that anything points at |
 | Guessed passwords | temporary lockout in Keycloak, no self-registration, no self-service password reset; the built-in login of `jwt` mode is throttled |

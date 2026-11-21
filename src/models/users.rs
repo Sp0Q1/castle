@@ -451,46 +451,128 @@ fn display_name(name: &str) -> Option<&str> {
     (2..=100).contains(&name.chars().count()).then_some(name)
 }
 
+/// What the portal makes of a person the identity provider vouches for.
+#[derive(Debug)]
+pub enum Recognized {
+    /// Their account: the one bound to them, one that carried their address
+    /// and was nobody's yet, or a new one.
+    Account(Box<Model>),
+    /// The address they come with belongs to an account that is bound to
+    /// someone else. Nothing was changed.
+    AddressTaken,
+}
+
 // SSO / provisioning
 impl Model {
-    /// Reconciles an SSO identity (keyed by email) into a local user: creates it
-    /// if new, otherwise syncs the display name, the IdP-authoritative role, and
-    /// marks an invited account active. A disabled account is returned as it is:
-    /// signing in must not re-enable it. Called on every authenticated proxy
-    /// request.
+    /// Finds or makes the account of the person the identity provider calls
+    /// `subject`. That id, not the address, says who someone is: an address can
+    /// be changed or given to someone new, the id cannot.
+    ///
+    /// - The account bound to the id is theirs, whatever address they now
+    ///   come with. The address follows when no other account has it.
+    /// - Without one, an account that carries their address and is bound to
+    ///   nobody becomes theirs: an invitation, or an account from before
+    ///   accounts were bound. An account bound to someone else does not.
+    /// - Otherwise they get a new account.
+    ///
+    /// Name and role are brought up to date, and an invitation becomes active.
+    /// A disabled account stays exactly as it is, apart from being bound:
+    /// signing in must not re-enable it. Called on every proxy request.
     ///
     /// # Errors
     /// When the DB query/update fails.
     pub async fn provision_from_sso(
         db: &DatabaseConnection,
+        subject: &str,
         email: &str,
         name: Option<&str>,
         role: UserRole,
-    ) -> ModelResult<Self> {
+    ) -> ModelResult<Recognized> {
         let name = name.and_then(display_name);
-        match Self::find_by_email(db, email).await {
-            Ok(user) if user.status == UserStatus::Disabled => Ok(user),
-            Ok(user) => {
-                let name_changed = name.is_some_and(|n| user.name != n);
-                if user.role.as_str() == role.as_str()
-                    && user.status == UserStatus::Active
-                    && !name_changed
-                {
-                    return Ok(user);
+        let bound = users::Entity::find()
+            .filter(users::Column::Subject.eq(subject))
+            .one(db)
+            .await?;
+        let user = match bound {
+            Some(user) => user,
+            None => match Self::find_by_email(db, email).await {
+                Ok(user) if user.subject.is_some() => return Ok(Recognized::AddressTaken),
+                Ok(user) => user,
+                Err(ModelError::EntityNotFound) => {
+                    return Self::insert_shadow(
+                        db,
+                        Some(subject),
+                        email,
+                        name,
+                        role,
+                        UserStatus::Active,
+                    )
+                    .await
+                    .map(|user| Recognized::Account(Box::new(user)));
                 }
-                let mut active = user.into_active_model();
-                active.role = ActiveValue::set(role.as_str().to_string());
-                active.status = ActiveValue::set(UserStatus::Active);
-                if let Some(n) = name {
-                    active.name = ActiveValue::set(n.to_string());
-                }
-                active.update(db).await.map_err(ModelError::from)
-            }
-            Err(ModelError::EntityNotFound) => {
-                Self::insert_shadow(db, email, name, role, UserStatus::Active).await
-            }
-            Err(e) => Err(e),
+                Err(e) => return Err(e),
+            },
+        };
+
+        let binds = user.subject.is_none();
+        let kept_as_is = user.status == UserStatus::Disabled;
+        let address_follows = user.email != email
+            && matches!(
+                Self::find_by_email(db, email).await,
+                Err(ModelError::EntityNotFound)
+            );
+        let out_of_date = user.role.as_str() != role.as_str()
+            || user.status != UserStatus::Active
+            || name.is_some_and(|n| user.name != n)
+            || address_follows;
+        if !binds && (kept_as_is || !out_of_date) {
+            return Ok(Recognized::Account(Box::new(user)));
         }
+
+        let mut active = user.into_active_model();
+        if binds {
+            active.subject = ActiveValue::set(Some(subject.to_string()));
+        }
+        if !kept_as_is {
+            active.role = ActiveValue::set(role.as_str().to_string());
+            active.status = ActiveValue::set(UserStatus::Active);
+            if let Some(n) = name {
+                active.name = ActiveValue::set(n.to_string());
+            }
+            if address_follows {
+                active.email = ActiveValue::set(email.to_string());
+            }
+        }
+        let user = active.update(db).await.map_err(ModelError::from)?;
+        Ok(Recognized::Account(Box::new(user)))
+    }
+
+    /// Forgets which person this account is bound to, so that whoever the
+    /// identity provider next vouches for with the account's address takes it.
+    ///
+    /// # Errors
+    /// When the DB update fails.
+    pub async fn unbind(self, db: &DatabaseConnection) -> ModelResult<Self> {
+        let mut user = self.into_active_model();
+        user.subject = ActiveValue::set(None);
+        user.update(db).await.map_err(ModelError::from)
+    }
+
+    /// Does that for every account, and says for how many: after a move to
+    /// another identity provider, where everybody has a new id.
+    ///
+    /// # Errors
+    /// When the DB update fails.
+    pub async fn unbind_all(db: &DatabaseConnection) -> ModelResult<u64> {
+        let bound = users::Entity::update_many()
+            .col_expr(
+                users::Column::Subject,
+                sea_orm::sea_query::Expr::value(Option::<String>::None),
+            )
+            .filter(users::Column::Subject.is_not_null())
+            .exec(db)
+            .await?;
+        Ok(bound.rows_affected)
     }
 
     /// Finds a user by email, or creates an "invited" placeholder so a manager
@@ -502,7 +584,8 @@ impl Model {
         match Self::find_by_email(db, email).await {
             Ok(user) => Ok(user),
             Err(ModelError::EntityNotFound) => {
-                Self::insert_shadow(db, email, None, UserRole::Client, UserStatus::Invited).await
+                Self::insert_shadow(db, None, email, None, UserRole::Client, UserStatus::Invited)
+                    .await
             }
             Err(e) => Err(e),
         }
@@ -510,6 +593,7 @@ impl Model {
 
     async fn insert_shadow(
         db: &DatabaseConnection,
+        subject: Option<&str>,
         email: &str,
         name: Option<&str>,
         role: UserRole,
@@ -520,6 +604,7 @@ impl Model {
             .map_err(|e| ModelError::Any(e.into()))?;
         let display = name.and_then(display_name).unwrap_or(email).to_string();
         let user = users::ActiveModel {
+            subject: ActiveValue::set(subject.map(str::to_string)),
             email: ActiveValue::set(email.to_string()),
             name: ActiveValue::set(display),
             password: ActiveValue::set(random),
@@ -544,6 +629,9 @@ impl Model {
 
     /// Replaces who this account belonged to with a placeholder, disables it and
     /// takes it off every project. What they wrote stays, under the placeholder.
+    /// The account stays bound to the person's id at the identity provider, so
+    /// that person, should they still exist there, is this disabled account and
+    /// not a new one.
     /// Returns the account and the number of memberships removed.
     ///
     /// # Errors

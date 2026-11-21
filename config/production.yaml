@@ -126,6 +126,9 @@ settings:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
     # x-forwarded-* variants; an nginx/ingress auth_request setup with
     # --set-xauthrequest sets x-auth-request-* instead.
+    # The identity provider's own id for the person, which an account is bound
+    # to: Keycloak's `sub`, sent by oauth2-proxy as x-forwarded-user.
+    subject_header: x-forwarded-user
     email_header: x-forwarded-email
     name_header: x-forwarded-preferred-username
     groups_header: x-forwarded-groups
@@ -136,8 +139,8 @@ settings:
     # literal block, so the value is read character for character.
     secret: |2-
       <%= get_env(name="CASTLE_PROXY_SECRET", default="") %>
-    # Keycloak groups (leaf names) that grant each platform role; unmapped users
-    # default to least privilege (client).
+    # The Keycloak group that gives each role, by its exact name. Someone in
+    # none of the three has no role and is refused.
     manager_group: castle-managers
     staff_group: castle-staff
     client_group: castle-clients

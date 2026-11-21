@@ -17,6 +17,7 @@ use castle::{
 use loco_rs::{boot::run_task, task, testing::prelude::*};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait,
 };
 use serial_test::serial;
 use std::path::Path;
@@ -800,6 +801,12 @@ impl Drop for ProxyMode {
     }
 }
 
+/// The id Keycloak has for a person, here made from their address, so that in
+/// these tests one person always comes with the same.
+pub(super) fn id_of(email: &str) -> String {
+    format!("id-of-{email}")
+}
+
 /// The header oauth2-proxy puts on what it forwards: Basic, with the secret as
 /// the password.
 pub(super) fn from_proxy(secret: &str) -> (&'static str, String) {
@@ -872,6 +879,7 @@ async fn a_proxy_session_does_not_re_enable_a_disabled_account() {
             request
                 .get("/api/auth/current")
                 .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-user", id_of("client@example.com"))
                 .add_header("x-forwarded-email", "client@example.com")
                 .add_header("x-forwarded-preferred-username", "client")
                 .add_header("x-forwarded-groups", "castle-clients")
@@ -1003,6 +1011,7 @@ async fn identity_headers_count_only_with_the_proxy_secret() {
         let as_manager = || {
             request
                 .get("/api/projects")
+                .add_header("x-forwarded-user", id_of("intruder@example.com"))
                 .add_header("x-forwarded-email", "intruder@example.com")
                 .add_header("x-forwarded-groups", "castle-managers")
         };
@@ -1037,6 +1046,7 @@ async fn identity_headers_count_only_with_the_proxy_secret() {
         let current: serde_json::Value = request
             .get("/api/auth/current")
             .add_header(h, &v)
+            .add_header("x-forwarded-user", id_of("intruder@example.com"))
             .add_header("x-forwarded-email", "intruder@example.com")
             .add_header("x-forwarded-groups", "castle-managers")
             .await
@@ -1065,54 +1075,223 @@ async fn the_identity_headers_are_read_strictly() {
         };
 
         let twice = ask()
+            .add_header("x-forwarded-user", id_of("someone@example.com"))
             .add_header("x-forwarded-email", "someone@example.com")
             .add_header("x-forwarded-email", "manager@example.com")
             .await;
         assert_eq!(twice.status_code(), 401, "two addresses");
         let groups_twice = ask()
+            .add_header("x-forwarded-user", id_of("someone@example.com"))
             .add_header("x-forwarded-email", "someone@example.com")
             .add_header("x-forwarded-groups", "castle-clients")
             .add_header("x-forwarded-groups", "castle-managers")
             .await;
         assert_eq!(groups_twice.status_code(), 401, "two groups headers");
         for not_an_address in ["someone", "a b@example.com", "@example.com", ""] {
-            let refused = ask().add_header("x-forwarded-email", not_an_address).await;
+            let refused = ask()
+                .add_header("x-forwarded-user", "someone")
+                .add_header("x-forwarded-email", not_an_address)
+                .await;
             assert_eq!(refused.status_code(), 401, "{not_an_address:?}");
         }
 
-        let role_with = |groups: &'static str| async move {
-            let who: serde_json::Value = ask()
+        for (what, id) in [
+            ("no id for the person", None),
+            ("an empty id", Some("")),
+            ("an id with a space", Some("a b")),
+        ] {
+            let mut call = ask()
+                .add_header("x-forwarded-email", "someone@example.com")
+                .add_header("x-forwarded-groups", "castle-clients");
+            if let Some(id) = id {
+                call = call.add_header("x-forwarded-user", id);
+            }
+            assert_eq!(call.await.status_code(), 401, "{what}");
+        }
+
+        let with_groups = |groups: &'static str| {
+            ask()
+                .add_header("x-forwarded-user", id_of("someone@example.com"))
                 .add_header("x-forwarded-email", "someone@example.com")
                 .add_header("x-forwarded-groups", groups)
-                .await
-                .json();
-            who["role"].as_str().expect("a role").to_string()
         };
+        // A name that is only nearly a group's gives no role, and someone
+        // without a role is signed in at the identity provider and nobody here.
         for nearly in [
             "x/castle-managers",
             "/castle-managers",
             "a castle-managers",
-            "castle-clients, castle-managers",
             "castle-managers;x",
             "castle-managers-x",
             "CASTLE-MANAGERS",
+            "some-other-group",
             "",
         ] {
-            assert_eq!(role_with(nearly).await, "client", "{nearly:?}");
+            assert_eq!(with_groups(nearly).await.status_code(), 403, "{nearly:?}");
         }
-        assert_eq!(role_with("castle-clients,castle-staff").await, "staff");
+        let no_groups = ask()
+            .add_header("x-forwarded-user", id_of("someone@example.com"))
+            .add_header("x-forwarded-email", "someone@example.com")
+            .await;
+        assert_eq!(no_groups.status_code(), 403, "no groups header");
+
+        let role_with = |groups: &'static str| async move {
+            let who: serde_json::Value = with_groups(groups).await.json();
+            (
+                who["id"].clone(),
+                who["role"].as_str().expect("a role").to_string(),
+            )
+        };
+        // The first account is made here: nothing above made one.
         assert_eq!(
-            role_with("other,castle-managers,castle-staff").await,
+            role_with("castle-clients").await,
+            (1.into(), "client".into())
+        );
+        assert_eq!(
+            role_with("castle-clients, castle-managers").await.1,
+            "client",
+            "a space is part of a name"
+        );
+        assert_eq!(role_with("castle-clients,castle-staff").await.1, "staff");
+        assert_eq!(
+            role_with("other,castle-managers,castle-staff").await.1,
             "manager"
         );
+    })
+    .await;
+}
 
-        // The first account is the only one: nothing above made another.
-        let who: serde_json::Value = ask()
-            .add_header("x-forwarded-email", "someone@example.com")
+/// An account belongs to the person the identity provider knows by one id.
+/// The address is how an invitation, or an account from before, finds that
+/// person once. After that it is only an address.
+#[tokio::test]
+#[serial]
+async fn an_account_is_bound_to_a_person_and_not_to_an_address() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
+        let (request, proxy) = (&request, &proxy);
+        let arrives = |id: &'static str, email: &'static str, group: &'static str| async move {
+            let answer = request
+                .get("/api/auth/current")
+                .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-user", id)
+                .add_header("x-forwarded-email", email)
+                .add_header("x-forwarded-groups", group)
+                .await;
+            let status = answer.status_code().as_u16();
+            let who: serde_json::Value = answer.json();
+            (status, who["id"].clone(), who["email"].clone())
+        };
+        let db = &ctx.db;
+
+        // Someone new gets an account, and it is theirs on every later request.
+        let (status, ann, _) = arrives("ann", "ann@example.com", "castle-clients").await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            arrives("ann", "ann@example.com", "castle-clients").await.1,
+            ann
+        );
+
+        // An account from before accounts were bound, and an invitation, each
+        // carry an address and belong to nobody yet: whoever the identity
+        // provider vouches for with that address takes them, once.
+        let before = make_user(db, "old@example.com", "From before", "client").await;
+        let invited = users::Model::find_or_invite(db, "new@example.com")
             .await
-            .json();
-        assert_eq!(who["id"], 1);
-        assert_eq!(who["role"], "client", "no groups header is a client");
+            .unwrap();
+        assert_eq!(
+            arrives("olga", "old@example.com", "castle-clients").await.1,
+            before.id
+        );
+        assert_eq!(
+            arrives("nora", "new@example.com", "castle-clients").await.1,
+            invited.id
+        );
+        let invited = users::Model::find_by_email(db, "new@example.com")
+            .await
+            .unwrap();
+        assert_eq!(invited.status, UserStatus::Active);
+        assert_eq!(invited.subject.as_deref(), Some("nora"));
+
+        // Someone else who now holds one of those addresses does not get the
+        // account, and no second one either.
+        for (who, email) in [
+            ("mallory", "ann@example.com"),
+            ("mallory", "old@example.com"),
+        ] {
+            let (status, id, _) = arrives(who, email, "castle-managers").await;
+            assert_eq!((status, id), (403, serde_json::Value::Null), "{email}");
+        }
+        assert_eq!(users::Entity::find().count(db).await.unwrap(), 3);
+
+        // The same person with a new address is the same account, and the
+        // address follows them when nobody else has it.
+        let (status, id, email) = arrives("ann", "ann@new.example.com", "castle-clients").await;
+        assert_eq!(
+            (status, id, email),
+            (200, ann.clone(), "ann@new.example.com".into())
+        );
+        let (status, id, email) = arrives("ann", "old@example.com", "castle-clients").await;
+        assert_eq!(
+            (status, id, email),
+            (200, ann.clone(), "ann@new.example.com".into()),
+            "an address someone else's account has stays theirs"
+        );
+
+        // Disabling an account disables the person: a new address is no way out.
+        set_status(&ctx, "ann@new.example.com", "disabled")
+            .await
+            .unwrap();
+        assert_eq!(
+            arrives("ann", "ann@new.example.com", "castle-clients")
+                .await
+                .0,
+            403
+        );
+        assert_eq!(
+            arrives("ann", "ann@elsewhere.example.com", "castle-clients")
+                .await
+                .0,
+            403
+        );
+        assert_eq!(users::Entity::find().count(db).await.unwrap(), 3);
+
+        // Someone who left stays the account that was anonymized, and does not
+        // come back as a new one while the identity provider still knows them.
+        let olga = users::Model::find_by_email(db, "old@example.com")
+            .await
+            .unwrap();
+        olga.anonymize(db).await.unwrap();
+        assert_eq!(
+            arrives("olga", "old@example.com", "castle-clients").await.0,
+            403
+        );
+        assert_eq!(users::Entity::find().count(db).await.unwrap(), 3);
+
+        // Management can let an account go to whoever next comes with its
+        // address: for someone whose account at the identity provider was made anew.
+        let nora = users::Model::find_by_email(db, "new@example.com")
+            .await
+            .unwrap();
+        assert_eq!(
+            arrives("nora-again", "new@example.com", "castle-clients")
+                .await
+                .0,
+            403
+        );
+        nora.unbind(db).await.unwrap();
+        assert_eq!(
+            arrives("nora-again", "new@example.com", "castle-clients")
+                .await
+                .1,
+            invited.id
+        );
+        assert_eq!(
+            arrives("nora", "new@example.com", "castle-clients").await.0,
+            403
+        );
     })
     .await;
 }
@@ -1131,7 +1310,9 @@ async fn a_name_that_does_not_fit_is_left_out() {
             let answer = request
                 .get("/api/auth/current")
                 .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-user", id_of("someone@example.com"))
                 .add_header("x-forwarded-email", "someone@example.com")
+                .add_header("x-forwarded-groups", "castle-clients")
                 .add_header("x-forwarded-preferred-username", name)
                 .await;
             assert_eq!(answer.status_code(), 200, "{name:?}");
@@ -1164,6 +1345,7 @@ async fn a_changing_request_comes_from_the_portal() {
             let mut call = request
                 .post("/api/projects")
                 .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-user", id_of("manager@example.com"))
                 .add_header("x-forwarded-email", "manager@example.com")
                 .add_header("x-forwarded-groups", "castle-managers");
             for (name, value) in browser {
@@ -1203,6 +1385,7 @@ async fn a_changing_request_comes_from_the_portal() {
             .get("/api/projects")
             .add_header(proxy.0, &proxy.1)
             .add_header("sec-fetch-site", "cross-site")
+            .add_header("x-forwarded-user", id_of("manager@example.com"))
             .add_header("x-forwarded-email", "manager@example.com")
             .add_header("x-forwarded-groups", "castle-managers")
             .await;
@@ -1227,6 +1410,7 @@ async fn a_membership_does_not_outrank_the_idp() {
             request
                 .get(path)
                 .add_header(proxy.0, &proxy.1)
+                .add_header("x-forwarded-user", id_of(email))
                 .add_header("x-forwarded-email", email)
                 .add_header("x-forwarded-groups", group)
         };
@@ -1235,6 +1419,7 @@ async fn a_membership_does_not_outrank_the_idp() {
                 .post(path)
                 .add_header(proxy.0, &proxy.1)
                 .add_header("sec-fetch-site", "same-origin")
+                .add_header("x-forwarded-user", id_of(email))
                 .add_header("x-forwarded-email", email)
                 .add_header("x-forwarded-groups", group)
         };

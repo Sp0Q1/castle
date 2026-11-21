@@ -191,3 +191,69 @@ async fn the_database_refuses_to_delete_a_user_with_content() {
     })
     .await;
 }
+
+/// The operator's `user:unbind` lets an account go to whoever next comes with
+/// its address: one account, or all of them after a move to another identity
+/// provider.
+#[tokio::test]
+#[serial]
+async fn the_operator_unbinds_one_account_or_all() {
+    fresh_db();
+    request::<App, _, _>(|_request, ctx| async move {
+        seed(&ctx).await;
+        let (ctx, db) = (&ctx, &ctx.db);
+        let bind = |email: &'static str, subject: &'static str| async move {
+            let mut user: users::ActiveModel = users::Model::find_by_email(db, email)
+                .await
+                .expect("seeded")
+                .into();
+            user.subject = sea_orm::ActiveValue::Set(Some(subject.to_string()));
+            sea_orm::ActiveModelTrait::update(user, db)
+                .await
+                .expect("bound");
+        };
+        let subject_of = |email: &'static str| async move {
+            users::Model::find_by_email(db, email)
+                .await
+                .expect("seeded")
+                .subject
+        };
+        let unbind = |args: Vec<(&'static str, &'static str)>| async move {
+            let vars = task::Vars::from_cli_args(
+                args.into_iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect(),
+            );
+            run_task::<App>(ctx, Some(&"user:unbind".to_string()), &vars).await
+        };
+        for (email, subject) in [
+            ("manager@test.com", "m"),
+            ("staff@test.com", "s"),
+            ("client@test.com", "c"),
+        ] {
+            bind(email, subject).await;
+        }
+
+        unbind(vec![("email", "Staff@Test.com")])
+            .await
+            .expect("one");
+        assert_eq!(subject_of("staff@test.com").await, None);
+        assert_eq!(subject_of("manager@test.com").await.as_deref(), Some("m"));
+
+        // Neither or both, or anything but a plain yes, changes nothing.
+        for args in [
+            vec![],
+            vec![("all", "true")],
+            vec![("email", "manager@test.com"), ("all", "yes")],
+            vec![("email", "nobody@test.com")],
+        ] {
+            assert!(unbind(args.clone()).await.is_err(), "{args:?}");
+        }
+        assert_eq!(subject_of("manager@test.com").await.as_deref(), Some("m"));
+
+        unbind(vec![("all", "yes")]).await.expect("all");
+        assert_eq!(subject_of("manager@test.com").await, None);
+        assert_eq!(subject_of("client@test.com").await, None);
+    })
+    .await;
+}

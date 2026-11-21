@@ -26,7 +26,7 @@ use serde::Deserialize;
 use validator::ValidateEmail;
 
 use crate::models::_entities::users;
-use crate::models::users::{UserRole, UserStatus};
+use crate::models::users::{Recognized, UserRole, UserStatus};
 
 /// How people sign in. There is no default: a configuration that does not say
 /// is not started.
@@ -90,6 +90,10 @@ fn group_name<'de, D: serde::Deserializer<'de>>(
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProxySettings {
+    /// Header carrying the identity provider's own id for the person
+    /// (oauth2-proxy: `x-forwarded-user`, which is Keycloak's `sub`). It is
+    /// what an account is bound to.
+    pub subject_header: String,
     /// Header carrying the authenticated email (oauth2-proxy: `x-forwarded-email`
     /// in full reverse-proxy mode, or `x-auth-request-email`).
     pub email_header: String,
@@ -119,6 +123,7 @@ pub struct ProxySettings {
 impl Default for ProxySettings {
     fn default() -> Self {
         Self {
+            subject_header: "x-forwarded-user".to_string(),
             email_header: "x-forwarded-email".to_string(),
             name_header: "x-forwarded-preferred-username".to_string(),
             groups_header: "x-forwarded-groups".to_string(),
@@ -242,19 +247,21 @@ fn from_own_proxy(headers: &HeaderMap, secret: &ProxySecret) -> bool {
 }
 
 impl ProxySettings {
-    /// The role a groups header gives: the highest among its names, and client
-    /// when none of them gives one. A name counts when it is exactly a
+    /// The role a groups header gives: the highest among its names, and none
+    /// when no name is one of the three. A name counts when it is exactly a
     /// configured one, so neither a path nor a longer name that contains it
     /// does.
     #[must_use]
-    pub fn role_of(&self, groups: &str) -> UserRole {
+    pub fn role_of(&self, groups: &str) -> Option<UserRole> {
         let has = |group: &str| groups.split(',').any(|name| name == group);
         if has(&self.manager_group) {
-            UserRole::Manager
+            Some(UserRole::Manager)
         } else if has(&self.staff_group) {
-            UserRole::Staff
+            Some(UserRole::Staff)
+        } else if has(&self.client_group) {
+            Some(UserRole::Client)
         } else {
-            UserRole::Client
+            None
         }
     }
 }
@@ -270,10 +277,20 @@ fn sent_once<'a>(headers: &'a HeaderMap, name: &str) -> Option<Option<&'a str>> 
     }
 }
 
+/// Why a proxied request is nobody's, or nobody's here.
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    /// The headers do not say who is asking in the one way they may.
+    NoIdentity,
+    /// They do, and that person is in none of the groups that give a role.
+    NoRole,
+}
+
 /// Who the proxy says is asking: its identity headers, read once. Nothing else
 /// in the app looks at them.
 #[derive(Debug, PartialEq, Eq)]
 struct ProxyIdentity {
+    subject: String,
     email: String,
     name: Option<String>,
     role: UserRole,
@@ -282,21 +299,41 @@ struct ProxyIdentity {
 impl ProxyIdentity {
     /// An address is at most this long (RFC 5321).
     const EMAIL_MAX: usize = 254;
+    /// More than any identity provider's id for a person needs.
+    const SUBJECT_MAX: usize = 255;
 
     /// Reads the identity headers of a request that came through the proxy.
-    /// The address has to be there and be one; it is taken in lower case. The
-    /// name is optional. Without a groups header the person is a client.
-    /// `None` when a header does not fit: the request is then nobody's, and
-    /// nothing is made of the headers that did.
-    fn recognize(headers: &HeaderMap, proxy: &ProxySettings) -> Option<Self> {
-        let email = sent_once(headers, &proxy.email_header)??.to_lowercase();
+    /// The person's id and their address have to be there: the id is printable
+    /// ASCII, the address is one and is taken in lower case. The name is
+    /// optional. The groups have to give a role.
+    ///
+    /// A header that does not fit makes the request nobody's, and nothing is
+    /// made of the headers that did fit.
+    fn recognize(headers: &HeaderMap, proxy: &ProxySettings) -> std::result::Result<Self, Refusal> {
+        let one = |name: &str| sent_once(headers, name).ok_or(Refusal::NoIdentity);
+        let subject = one(&proxy.subject_header)?
+            .filter(|id| {
+                (1..=Self::SUBJECT_MAX).contains(&id.len())
+                    && id.bytes().all(|byte| byte.is_ascii_graphic())
+            })
+            .ok_or(Refusal::NoIdentity)?
+            .to_string();
+        let email = one(&proxy.email_header)?
+            .ok_or(Refusal::NoIdentity)?
+            .to_lowercase();
         if email.len() > Self::EMAIL_MAX || !email.validate_email() {
-            return None;
+            return Err(Refusal::NoIdentity);
         }
-        let name = sent_once(headers, &proxy.name_header)?.map(str::to_string);
-        let role = sent_once(headers, &proxy.groups_header)?
-            .map_or(UserRole::Client, |groups| proxy.role_of(groups));
-        Some(Self { email, name, role })
+        let name = one(&proxy.name_header)?.map(str::to_string);
+        let role = one(&proxy.groups_header)?
+            .and_then(|groups| proxy.role_of(groups))
+            .ok_or(Refusal::NoRole)?;
+        Ok(Self {
+            subject,
+            email,
+            name,
+            role,
+        })
     }
 }
 
@@ -357,11 +394,39 @@ where
                 {
                     return Err(forbidden("this request did not come from the portal"));
                 }
-                let who = ProxyIdentity::recognize(&parts.headers, proxy).ok_or_else(|| {
-                    Error::Unauthorized("no authenticated identity from proxy".to_string())
-                })?;
-                users::Model::provision_from_sso(&ctx.db, &who.email, who.name.as_deref(), who.role)
-                    .await?
+                let who = match ProxyIdentity::recognize(&parts.headers, proxy) {
+                    Ok(who) => who,
+                    Err(Refusal::NoIdentity) => {
+                        return Err(Error::Unauthorized(
+                            "no authenticated identity from proxy".to_string(),
+                        ));
+                    }
+                    // Signed in at the identity provider, and nobody here: no
+                    // account is made for someone without a role.
+                    Err(Refusal::NoRole) => {
+                        return Err(forbidden("this account has no role in this portal"));
+                    }
+                };
+                let recognized = users::Model::provision_from_sso(
+                    &ctx.db,
+                    &who.subject,
+                    &who.email,
+                    who.name.as_deref(),
+                    who.role,
+                )
+                .await?;
+                match recognized {
+                    Recognized::Account(user) => *user,
+                    Recognized::AddressTaken => {
+                        tracing::warn!(
+                            email = who.email,
+                            "refused: the address belongs to an account bound to someone else"
+                        );
+                        return Err(forbidden(
+                            "this address belongs to another account in this portal",
+                        ));
+                    }
+                }
             }
         };
         // Checked here, on every request and in both modes, so disabling an
@@ -427,16 +492,17 @@ mod tests {
     fn a_group_counts_by_its_exact_name() {
         let proxy = ProxySettings::default();
         for (groups, role) in [
-            ("castle-managers", UserRole::Manager),
-            ("castle-clients,castle-managers", UserRole::Manager),
-            ("castle-staff,castle-clients", UserRole::Staff),
-            ("castle-clients", UserRole::Client),
-            ("", UserRole::Client),
-            ("castle-managers ", UserRole::Client),
-            ("/castle-managers", UserRole::Client),
-            ("x/castle-managers", UserRole::Client),
-            ("castle-managers;castle-staff", UserRole::Client),
-            ("castle-clients, castle-staff", UserRole::Client),
+            ("castle-managers", Some(UserRole::Manager)),
+            ("castle-clients,castle-managers", Some(UserRole::Manager)),
+            ("castle-staff,castle-clients", Some(UserRole::Staff)),
+            ("castle-clients", Some(UserRole::Client)),
+            ("castle-clients, castle-staff", Some(UserRole::Client)),
+            ("", None),
+            ("castle-managers ", None),
+            ("/castle-managers", None),
+            ("x/castle-managers", None),
+            ("castle-managers;castle-staff", None),
+            ("other", None),
         ] {
             assert_eq!(proxy.role_of(groups), role, "{groups:?}");
         }
