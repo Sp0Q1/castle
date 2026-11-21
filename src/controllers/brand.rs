@@ -44,14 +44,33 @@ fn is_svg(data: &[u8]) -> bool {
         };
         rest = match after("<?xml", "?>")
             .or_else(|| after("<!--", "-->"))
-            .or_else(|| after("<!DOCTYPE", ">").filter(|(doctype, _)| !doctype.contains('[')))
+            .map(|(_, tail)| tail)
+            .or_else(|| after_doctype(rest))
         {
-            Some((_, tail)) => tail,
+            Some(tail) => tail,
             None => break,
         };
     }
     rest.strip_prefix("<svg")
         .is_some_and(|tail| tail.starts_with(|c: char| c.is_ascii_whitespace() || c == '>'))
+}
+
+/// What follows a DOCTYPE that has no internal subset. Quoted literals are
+/// stepped over the way XML reads them, so a `>` or a `[` inside one is text
+/// and neither ends the declaration nor hides a subset.
+fn after_doctype(rest: &str) -> Option<&str> {
+    let body = rest.strip_prefix("<!DOCTYPE")?;
+    let mut quote = None;
+    for (at, c) in body.char_indices() {
+        match (quote, c) {
+            (Some(open), c) if c == open => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '[') => return None,
+            (None, '>') => return Some(body[at + 1..].trim_start()),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn content_type(data: &[u8]) -> Option<&'static str> {
@@ -138,6 +157,7 @@ mod tests {
             "<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_string(),
             "<svg>\n</svg>".to_string(),
             "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- exported -->\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg viewBox=\"0 0 1 1\"></svg>".to_string(),
+            "<!DOCTYPE svg SYSTEM \"a [b] > c\">\n<svg></svg>".to_string(),
         ] {
             assert_eq!(content_type(svg.as_bytes()), Some("image/svg+xml"), "{svg}");
         }
@@ -149,6 +169,11 @@ mod tests {
             "<html><body><svg></svg></body></html>",
             "<svgx></svgx>",
             "<!DOCTYPE svg [<!ENTITY a \"aaaa\">]><svg>&a;</svg>",
+            // A `>` inside a literal does not end the declaration, so what
+            // follows it is still the declaration, subset and all.
+            "<!DOCTYPE svg SYSTEM \"x><!--\" [<!ENTITY a \"aaaa\">]> --><svg>&a;</svg>",
+            "<!DOCTYPE svg SYSTEM 'x><!--' [<!ENTITY a 'aaaa'>]> --><svg>&a;</svg>",
+            "<!DOCTYPE svg SYSTEM \"never closed><svg></svg>",
             "<?xml version=\"1.0\"?><html/>",
             "plain text that mentions <svg>",
             "",
