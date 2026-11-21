@@ -33,7 +33,12 @@ pub(super) struct Fixture {
     pub(super) published_id: i64,
 }
 
-async fn make_user(db: &DatabaseConnection, email: &str, name: &str, role: &str) -> users::Model {
+pub(super) async fn make_user(
+    db: &DatabaseConnection,
+    email: &str,
+    name: &str,
+    role: &str,
+) -> users::Model {
     let user = users::Model::create_with_password(
         db,
         &RegisterParams {
@@ -50,7 +55,7 @@ async fn make_user(db: &DatabaseConnection, email: &str, name: &str, role: &str)
     active.update(db).await.expect("set role")
 }
 
-async fn make_finding(
+pub(super) async fn make_finding(
     db: &DatabaseConnection,
     project_id: i64,
     author_id: i64,
@@ -778,10 +783,10 @@ const PROXY_SECRET: &str = "shared-between-the-proxy-and-castle";
 
 /// Boots the next app in proxy mode, the way production runs. Dropped, later
 /// boots are back in jwt mode even if the test panicked.
-struct ProxyMode;
+pub(super) struct ProxyMode;
 
 impl ProxyMode {
-    fn on() -> Self {
+    pub(super) fn on() -> Self {
         std::env::set_var("CASTLE_AUTH_MODE", "proxy");
         std::env::set_var("CASTLE_PROXY_SECRET", PROXY_SECRET);
         Self
