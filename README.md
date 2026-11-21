@@ -134,7 +134,9 @@ The long fields and comment bodies are markdown; images pasted into the editor
 go through `POST /api/uploads` and are embedded as `![](/api/uploads/<name>)`.
 Serving an upload requires authentication too. An `<img>` cannot send a token,
 so the SPA fetches each image through its API client and renders it from an
-object URL instead of pointing the browser at the endpoint.
+object URL instead of pointing the browser at the endpoint. Only the path of
+an upload is an image to the pages: any other image reference in a text is
+shown as its caption, and nothing is requested for it.
 
 ## Configuration and tasks
 

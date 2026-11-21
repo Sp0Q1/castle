@@ -30,12 +30,15 @@ function codeText(
 }
 
 /**
- * True for a same-origin upload path, which is the only kind of image src we
- * fetch ourselves. Anything else (an absolute URL a user typed, a data: URI) is
- * left to the browser, and is constrained by the CSP either way.
+ * The path of an upload as the server names them: `/api/uploads/` and one file
+ * name. Nothing else is an image here. The content policy refuses images from
+ * other sites and `data:` anyway, and any other path on this site is not a
+ * picture: showing it would make the reader's browser ask for that address.
  */
-function isProtectedUpload(src: string): boolean {
-  return src.startsWith("/api/uploads/");
+const UPLOAD = /^\/api\/uploads\/[A-Za-z0-9_-][A-Za-z0-9._-]{0,126}$/;
+
+function isUpload(src: string | undefined): src is string {
+  return src !== undefined && UPLOAD.test(src) && !src.includes("..");
 }
 
 /**
@@ -50,7 +53,7 @@ function UploadImage({ src, alt }: { src?: string; alt?: string }) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!src || !isProtectedUpload(src)) {
+    if (!isUpload(src)) {
       return;
     }
     let active = true;
@@ -79,10 +82,7 @@ function UploadImage({ src, alt }: { src?: string; alt?: string }) {
     };
   }, [src]);
 
-  if (!src || !isProtectedUpload(src)) {
-    return <img src={src} alt={alt ?? ""} />;
-  }
-  if (failed) {
+  if (!isUpload(src) || failed) {
     return <span className="md-image-error">{alt || "image unavailable"}</span>;
   }
   if (!objectUrl) {
