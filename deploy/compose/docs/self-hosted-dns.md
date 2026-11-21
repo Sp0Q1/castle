@@ -54,7 +54,7 @@ can't be abused as an open resolver or amplifier — but it must stay reachable 
 4. **Start the platform with the DNS profile:**
 
    ```
-   docker compose -f platform.compose.yml --profile self-dns up -d
+   podman compose -f platform.compose.yml --profile self-dns up -d
    ```
 
 5. **Verify** from off-box:

@@ -1,135 +1,128 @@
-# Deploying Castle behind oauth2-proxy + Keycloak (SSO)
+# Sign-in, roles and sessions (proxy mode)
 
-In production Castle runs in **proxy auth mode** (`settings.auth_mode: proxy`).
-It performs no login itself: **oauth2-proxy** does the full OIDC flow with
-**Keycloak**, then forwards the user's identity to Castle as request headers.
-Castle trusts those headers, provisions/updates the user on the fly, and derives
-the platform role (`manager`/`staff`/`client`) from the user's Keycloak groups on
-every request.
+In a deployment castle runs in **proxy mode** (`settings.auth_mode: proxy`). It
+performs no login itself: **oauth2-proxy** does the OIDC flow with **Keycloak**
+and forwards the user's identity to castle as request headers. Castle creates
+the user on first sight and reads the role (`manager`/`staff`/`client`) from
+their Keycloak groups on every request.
 
 ```
-   browser ──▶ oauth2-proxy ──(OIDC)──▶ Keycloak
-                   │  (adds X-Forwarded-Email / -Groups / -Preferred-Username)
-                   ▼
-                 Castle  (private network — NOT publicly reachable)
+   browser ──▶ Caddy ──▶ oauth2-proxy ──(OIDC)──▶ Keycloak
+                             │  (sets X-Forwarded-Email / -Groups / -Preferred-Username)
+                             ▼
+                           castle  (its tenant's network only, no published port)
 ```
 
-## ⚠️ The one rule that makes this safe
+## The rule that makes this safe
 
-In proxy mode the identity headers are **trusted unconditionally**. If Castle's
-port is reachable without going through oauth2-proxy, anyone can send
-`X-Forwarded-Email: manager@you.com` and become a manager. Therefore:
+In proxy mode the identity headers are **trusted unconditionally**. If castle's
+port were reachable without going through oauth2-proxy, anyone could send
+`X-Forwarded-Email: manager@you.com` and be that manager. Therefore:
 
-1. **Bind Castle to a private interface / internal network only** — never expose
-   `:5150` publicly. In the compose below it is only on the internal network.
-2. Enforce it at the infra layer too (k8s NetworkPolicy, security group,
-   firewall) so only oauth2-proxy can dial Castle.
-3. Optionally set `CASTLE_PROXY_SECRET` + an ingress that injects
-   `X-Castle-Proxy-Secret` as defense-in-depth (Castle rejects requests without
-   it). This complements — does not replace — network isolation.
+1. **Castle is reachable by its own proxy and nothing else.** No published
+   port, and a network it shares only with that proxy and its database. The
+   Compose templates are built this way; anything else that runs castle has to
+   keep it.
+2. **The edge decides what the proxy believes.** oauth2-proxy runs with
+   `--reverse-proxy=true` and takes `X-Forwarded-Uri` and `X-Real-IP` from
+   whatever is in front of it. The vhost template removes the first and sets
+   the second, and no path is exempt from sign-in.
+3. Optionally set `CASTLE_PROXY_SECRET` and have the proxy send
+   `X-Castle-Proxy-Secret`; castle then refuses requests without it. This adds
+   to the network rule and does not replace it.
 
-## Keycloak setup
+## The realm
 
-1. Realm `castle` (or reuse an existing one).
-2. Client `castle` — type **confidential** (client authentication on), standard
-   flow enabled, redirect URI `https://castle.example.com/oauth2/callback`, and a
-   **valid post-logout redirect URI** of `https://castle.example.com/*` (or the
-   app root). Sign-out sends `post_logout_redirect_uri=<app root>`; Keycloak
-   rejects it — breaking logout with a "We are sorry…" error — unless it's
-   registered here. Also ensure oauth2-proxy is started with
-   `--whitelist-domain=<keycloak host[:port]>` so it will redirect to the IdP's
-   end-session endpoint on sign-out (include the port if non-standard).
-   Note: without an `id_token_hint`, Keycloak shows a "Do you want to log out?"
-   confirmation page before completing — expected; seamless logout needs the
-   hint, which oauth2-proxy's `sign_out` does not add.
-3. Groups: create `castle-managers`, `castle-staff`, `castle-clients` and assign
-   users. (Unmapped users get least privilege = `client`.)
-4. Add a **Group Membership** mapper to the `castle` client (or a client scope it
-   uses): name `groups`, token claim name `groups`, "Full group path" OFF, add
-   to userinfo ON. This makes Keycloak emit a `groups` claim that oauth2-proxy
-   forwards.
+`keycloak-realm.sh` creates one realm per codename, and
+`./keycloak-realm.sh render <codename>` prints exactly what it will create. In
+short:
 
-## oauth2-proxy + Castle (docker-compose sketch)
+- TLS required for everything; no self-registration; no self-service password
+  reset; email must be verified.
+- Temporary lockout after repeated failed sign-ins.
+- Access tokens live 5 minutes; a session ends after 30 minutes without use and
+  after 10 hours in any case.
+- Sign-in and admin events are recorded.
+- One confidential client, `castle`: browser code flow only, one exact
+  redirect URI, and a mapper that puts the user's groups into the token.
+- Three groups: `castle-managers`, `castle-staff`, `castle-clients`.
 
-```yaml
-services:
-  oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:latest
-    command:
-      - --provider=keycloak-oidc
-      - --oidc-issuer-url=https://keycloak.example.com/realms/castle
-      - --client-id=castle
-      - --client-secret=${OIDC_CLIENT_SECRET}
-      - --redirect-url=https://castle.example.com/oauth2/callback
-      - --cookie-secret=${COOKIE_SECRET}          # 32 random bytes, base64
-      - --email-domain=*                           # or restrict to your domain
-      - --scope=openid email profile               # do NOT add "groups" here unless
-                                                   # you created a `groups` *client scope*
-                                                   # in Keycloak — otherwise Keycloak
-                                                   # returns invalid_scope. The groups
-                                                   # claim comes from the mapper below,
-                                                   # which needs no extra scope.
-      - --upstream=http://castle:5150              # Castle, on the internal net
-      - --pass-user-headers=true                   # -> X-Forwarded-Email/-User/-Groups
-      - --set-xauthrequest=true                    # also emits X-Auth-Request-*
-      - --http-address=0.0.0.0:4180
-      - --reverse-proxy=true
-      - --trusted-proxy-ip=<your LB CIDR>          # REQUIRED if behind an LB
-    ports: ["4180:4180"]                           # the only public entrypoint
-    networks: [edge, internal]
+## People and roles
 
-  castle:
-    image: castle:latest                           # built from this repo (see below)
-    environment:
-      LOCO_ENV: production
-      DATABASE_URL: postgres://castle:...@db/castle # or sqlite for a single node
-      # Base64! loco base64-decodes it. Unused for auth in proxy mode but still parsed:
-      JWT_SECRET: ${JWT_SECRET}
-      CASTLE_PROXY_SECRET: ${CASTLE_PROXY_SECRET}   # optional defense-in-depth
-    networks: [internal]                            # NO published ports
+| Group in the realm | Role in the portal |
+|--------------------|--------------------|
+| `castle-managers` | manager: sees every project of this codename, opens projects, puts people on them |
+| `castle-staff` | staff: works on the projects a manager put them on |
+| `castle-clients`, or no group | client: reads the published findings of their projects and comments |
 
-networks:
-  edge:
-  internal:
-    internal: true
-```
+Roles are Keycloak's to give. Castle reads them on every request and has no
+way to edit them.
 
-> Castle has no Dockerfile yet — generate one with `cargo loco generate deployment`
-> (choose Docker), which produces a multi-stage build. Run
-> `npm --prefix frontend run build` first so `frontend/dist` is baked in and
-> served by Castle in production.
+**Adding a person.** In Keycloak's admin console, in the realm
+`castle-<codename>`: *Users → Add user* with their email and *Email verified*
+on; *Credentials → Set password*, temporary, so they choose their own at first
+sign-in; *Groups → Join* one of the three. To make them enrol an authenticator
+app at first sign-in, add *Configure OTP* to their required actions.
 
-If your oauth2-proxy emits `X-Auth-Request-*` instead of `X-Forwarded-*`, just
-point Castle at those names in `config/production.yaml`:
+**Putting them on a project.** A manager opens the project in the portal and
+onboards the person by email, as staff or as client. This works before their
+first sign-in: castle keeps an `invited` placeholder that becomes the real
+account when they arrive. A manager can later change that capacity or remove
+the person from the project. What someone may do on a project takes both: the
+role from Keycloak and the capacity from the manager.
+
+**Taking access away.**
+
+| Step | Takes effect |
+|------|--------------|
+| disable or delete the user in Keycloak, or remove them from a group | within four minutes, at the session's next refresh |
+| `podman exec castle-<codename> castle-cli task --environment production user:status email:<email> status:disabled` | at the next request |
+| remove them from a project in the portal | at the next request, for that project |
+
+## Sessions
+
+- The session is an encrypted cookie for that one codename. It is refreshed
+  with Keycloak every four minutes (`--cookie-refresh=4m`, shorter than the
+  access token's five) and ends after ten hours (`--cookie-expire=10h`).
+- So the realm's limits apply to the portal: thirty minutes without use ends
+  the session, and so does anything an administrator does to the user or
+  their session in Keycloak.
+- Sign-out (`/oauth2/sign_out`) ends the Keycloak session as well
+  (`--backend-logout-url`).
+
+## Settings
+
+`config/production.yaml`, the `settings.proxy` block. The defaults match the
+Compose templates:
 
 ```yaml
 settings:
   auth_mode: proxy
   proxy:
-    email_header: x-auth-request-email
-    name_header: x-auth-request-preferred-username
-    groups_header: x-auth-request-groups
+    email_header: x-forwarded-email
+    name_header: x-forwarded-preferred-username
+    groups_header: x-forwarded-groups
     manager_group: castle-managers
     staff_group: castle-staff
     client_group: castle-clients
-    # shared_secret_header / shared_secret if an ingress injects one
+    shared_secret_header: x-castle-proxy-secret   # with CASTLE_PROXY_SECRET
+    logout_url: /oauth2/sign_out?rd=/             # CASTLE_LOGOUT_URL
 ```
 
-## User lifecycle in proxy mode
+If your proxy sends `X-Auth-Request-*` instead of `X-Forwarded-*`, point the
+three header names at those.
 
-- **No self-registration** — the `/api/auth/register` and `/login` endpoints are
-  not even mounted in proxy mode. Accounts come from SSO + manager onboarding.
-- **First sign-in** provisions a Castle user from the proxy identity (keyed by
-  email), with the role derived from Keycloak groups.
-- **Onboarding someone who hasn't signed in yet** works: a manager onboards them
-  by email, which creates an `invited` placeholder user + their project
-  membership. On that person's first SSO login the placeholder is matched by
-  email and flipped to `active`, keeping the pre-staged membership.
-- **Roles are Keycloak-authoritative**: Castle re-derives and caches the role
-  from groups on every request and exposes no way to edit it in-app.
+## Running it somewhere else
+
+[`compose/templates/tenant.compose.yml`](compose/templates/tenant.compose.yml)
+is the reference for the proxy's flags, and
+[`compose/templates/site.caddy`](compose/templates/site.caddy) for what the edge
+must do. Whatever replaces them has to keep the three points of the rule above,
+a `--cookie-refresh` shorter than the access token's lifetime, and a Keycloak
+client whose post-logout redirect URI covers the portal's root.
 
 ## Local development
 
-Dev keeps the built-in JWT login (`config/development.yaml` →
-`settings.auth_mode: jwt`) so you don't need Keycloak locally: run
-`cargo run -- start` + `npm --prefix frontend run dev` and sign in normally.
+Development keeps the built-in JWT login (`config/development.yaml` →
+`settings.auth_mode: jwt`), so no Keycloak is needed: run `cargo run -- start`
+and `npm --prefix frontend run dev`, and sign in with a seeded account.
