@@ -505,9 +505,10 @@ wait_healthy(){ # <container> <mode: health|running> [<timeout-seconds>]
   done
 }
 
-# Recreate running instances with the current images (CASTLE_IMAGE / templates),
-# keeping their data volumes. castle runs pending schema migrations on boot
-# (auto_migrate), so an app upgrade is: bump CASTLE_IMAGE in .env, then this.
+# Recreate running instances with the current images (CASTLE_IMAGE / templates)
+# and rewrite their edge vhosts, keeping their data volumes. castle runs pending
+# schema migrations on boot (auto_migrate), so an app upgrade is: bump
+# CASTLE_IMAGE in .env, then this.
 upgrade(){ # [<codename>]  (default: every running codename)
   local one="${1:-}" targets=() cn
   if [[ -n "$one" ]]; then
@@ -554,6 +555,7 @@ upgrade(){ # [<codename>]  (default: every running codename)
       render_instance "$cn" "$TPL/canary.compose.yml";            target="oauth2-proxy-$cn"; hc=running
       before=""
     fi
+    write_site "$cn"
     if ! out="$(compose_instance "$cn" pull 2>&1)"; then
       fails+=("$cn ($kind): image pull failed — ${out##*"$NL"}"); continue
     fi
