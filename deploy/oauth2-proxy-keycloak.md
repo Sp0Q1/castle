@@ -65,7 +65,9 @@ short:
 | `castle-clients`, or no group | client: reads the published findings of their projects and comments |
 
 Roles are Keycloak's to give. Castle reads them on every request and has no
-way to edit them.
+way to edit them. A group counts by its exact name: castle reads the
+comma-separated list the proxy sends, and a name that is only nearly one of the
+three gives nothing.
 
 **Adding a person.** In Keycloak's admin console (reached through an SSH
 tunnel: [`compose/docs/admin-rotation.md`](compose/docs/admin-rotation.md)), in the realm
@@ -115,6 +117,11 @@ holds.
   their session in Keycloak.
 - Sign-out (`/oauth2/sign_out`) ends the Keycloak session as well
   (`--backend-logout-url`).
+- The cookie is `SameSite=Lax`, and castle refuses a request that changes
+  something unless the browser marks it as coming from the portal's own pages
+  (`Sec-Fetch-Site: same-origin`, or the portal's own `Origin` from a browser
+  that does not send that header). A link from elsewhere opens the portal; a
+  form on another site changes nothing in it.
 
 ## Settings
 
@@ -136,7 +143,9 @@ settings:
 ```
 
 If your proxy sends `X-Auth-Request-*` instead of `X-Forwarded-*`, point the
-three header names at those.
+three header names at those. Each is read when it is sent once. The groups
+header is a comma-separated list of the groups' names, without paths, which is
+what Keycloak's group mapper sends with *Full group path* off.
 
 ## Running it somewhere else
 
