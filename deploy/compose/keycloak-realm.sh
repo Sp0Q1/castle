@@ -228,6 +228,7 @@ people() {
 # gives them a password. Someone already there is left as they are.
 add_people() {
   local known person username status id group gid
+  local -a joined
   known="$(kc "/groups" | jq -c 'map({(.name): .id}) | add // {}')"
   while read -r person; do
     username="$(jq -r .username <<<"$person")"
@@ -239,12 +240,14 @@ add_people() {
       *)   echo "keycloak-realm.sh: could not add ${username} (HTTP ${status})" >&2; exit 1 ;;
     esac
     id="$(kc "/users" -G --data-urlencode "username=${username}" --data-urlencode "exact=true" | jq -r '.[0].id')"
+    joined=()
     while read -r group; do
       gid="$(jq -r --arg g "$group" '.[$g] // empty' <<<"$known")"
       [[ -n "$gid" ]] || { echo "  ${username}: no group '${group}' in ${realm}, skipped" >&2; continue; }
       kc "/users/${id}/groups/${gid}" -o /dev/null -X PUT
+      joined+=("$group")
     done < <(jq -r '.groups[]' <<<"$person")
-    echo "  ${username}: added ($(jq -r '.groups | join(", ")' <<<"$person"))" >&2
+    echo "  ${username}: added (${joined[*]:-no group})" >&2
   done < <(jq -c '.[]')
 }
 
