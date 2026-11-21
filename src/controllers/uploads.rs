@@ -9,8 +9,9 @@
 //! - Only real raster images (png/jpeg/gif/webp) are accepted. **SVG is
 //!   deliberately rejected**: it is XML that can carry `<script>`/`onload`, and
 //!   served inline it would execute in this origin (stored XSS).
-//! - Responses carry `nosniff` and `Content-Disposition: inline`, so an
-//!   unexpected byte sequence cannot be reinterpreted as a scriptable document.
+//! - Responses carry `nosniff`, `Content-Disposition: inline` and a policy of
+//!   their own (`FILE_POLICY`), so an unexpected byte sequence cannot be
+//!   reinterpreted as a scriptable document, and would run nothing if it were.
 //! - Serving is auth-gated, which means a plain `<img src>` cannot load an
 //!   upload in jwt mode: the browser sends no Authorization header and the token
 //!   is in sessionStorage. The frontend therefore fetches uploads through
@@ -19,7 +20,9 @@
 //!   oauth2-proxy session cookie would have sufficed on its own.
 use std::path::Path as FsPath;
 
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
+use axum::http::header::{
+    CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS,
+};
 use axum::response::IntoResponse;
 use loco_rs::prelude::*;
 
@@ -140,17 +143,11 @@ pub async fn serve(
     Ok((
         [
             (CONTENT_TYPE, mime_for(&name)),
-            // Defence in depth: never sniff, never offer as a download.
-            //
-            // A Content-Security-Policy set here would not survive: the global
-            // `secure_headers` middleware sets its own on every response. Uploads
-            // therefore carry the app-wide CSP, and what constrains them is the
-            // auth gate, the magic-byte check in `sniff_image` (only png/jpeg/
-            // gif/webp are ever written, and SVG is rejected outright) and
-            // nosniff, which stops a browser from reinterpreting those bytes as
-            // HTML.
+            // Only png, jpeg, gif and webp are ever written (`sniff_image`),
+            // and none of these lets a browser make something else of them.
             (X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (CONTENT_DISPOSITION, "inline"),
+            (CONTENT_SECURITY_POLICY, super::FILE_POLICY),
         ],
         bytes,
     )

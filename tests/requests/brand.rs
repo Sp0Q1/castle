@@ -67,6 +67,11 @@ async fn a_logo_is_announced_and_served_as_an_image_and_nothing_else() {
         // Opened directly, the file is downloaded, never rendered in this origin.
         assert_eq!(response.header("content-disposition"), "attachment");
         assert_eq!(response.header("x-content-type-options"), "nosniff");
+        // And if a browser rendered it all the same, it would run nothing.
+        assert_eq!(
+            response.header("content-security-policy"),
+            "default-src 'none'; sandbox"
+        );
         assert_eq!(response.text(), SVG);
 
         // Replacing the file is all it takes; the type follows the bytes.
