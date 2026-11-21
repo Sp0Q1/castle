@@ -13,11 +13,17 @@
 //! oauth2-proxy sends as the password of a Basic `Authorization` header. Proxy
 //! mode does not start without that secret. The network the app sits on, which
 //! only its proxy joins, is the second lock and not the only one.
+//!
+//! What the proxy says is read once, by [`ProxyIdentity::recognize`], and
+//! strictly: a header sent twice, an address that is none, or a group name
+//! that is only nearly right makes nobody, or a client, never more.
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use axum::http::HeaderMap;
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 use loco_rs::prelude::*;
 use serde::Deserialize;
+use validator::ValidateEmail;
 
 use crate::models::_entities::users;
 use crate::models::users::{UserRole, UserStatus};
@@ -66,6 +72,20 @@ impl std::fmt::Debug for ProxySecret {
     }
 }
 
+/// A group's name as it can stand in the groups header: not empty, and without
+/// the comma that separates one name from the next.
+fn group_name<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    if name.is_empty() || name.contains(',') {
+        return Err(serde::de::Error::custom(format!(
+            "a group name is not empty and has no comma, got {name:?}"
+        )));
+    }
+    Ok(name)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ProxySettings {
@@ -74,15 +94,19 @@ pub struct ProxySettings {
     pub email_header: String,
     /// Header carrying the display name / preferred username.
     pub name_header: String,
-    /// Header carrying the user's groups (comma/space separated).
+    /// Header carrying the user's groups, as oauth2-proxy writes them: names
+    /// separated by commas.
     pub groups_header: String,
     /// The secret this instance shares with its own proxy. A request's identity
     /// headers are read only when it carries this secret.
     #[serde(deserialize_with = "ProxySecret::or_unset")]
     pub secret: Option<ProxySecret>,
-    /// Keycloak group (leaf name) that grants each platform role.
+    /// The Keycloak group that gives each role, by its exact name.
+    #[serde(deserialize_with = "group_name")]
     pub manager_group: String,
+    #[serde(deserialize_with = "group_name")]
     pub staff_group: String,
+    #[serde(deserialize_with = "group_name")]
     pub client_group: String,
     /// Where the SPA sends the browser on sign-out. For a full RP-initiated
     /// logout point this at oauth2-proxy's sign-out chained to the IdP's
@@ -187,7 +211,7 @@ pub fn forbidden(message: &str) -> Error {
 /// oauth2-proxy sends upstream with `--pass-basic-auth` and a basic-auth
 /// password, and it replaces whatever the browser sent under that name.
 #[must_use]
-fn from_own_proxy(headers: &axum::http::HeaderMap, secret: &ProxySecret) -> bool {
+fn from_own_proxy(headers: &HeaderMap, secret: &ProxySecret) -> bool {
     let mut sent = headers.get_all(axum::http::header::AUTHORIZATION).iter();
     let (Some(value), None) = (sent.next(), sent.next()) else {
         return false;
@@ -205,17 +229,13 @@ fn from_own_proxy(headers: &axum::http::HeaderMap, secret: &ProxySecret) -> bool
 }
 
 impl ProxySettings {
-    /// Maps the groups header to a platform role. Exact leaf-name match (a
-    /// leading `/path/` from Keycloak is stripped); highest privilege wins;
-    /// unknown/empty defaults to least privilege (client).
+    /// The role a groups header gives: the highest among its names, and client
+    /// when none of them gives one. A name counts when it is exactly a
+    /// configured one, so neither a path nor a longer name that contains it
+    /// does.
     #[must_use]
-    pub fn role_from_groups(&self, groups: &str) -> UserRole {
-        let has = |target: &str| {
-            groups.split([',', ' ', ';']).map(str::trim).any(|g| {
-                let leaf = g.rsplit('/').next().unwrap_or(g);
-                leaf == target
-            })
-        };
+    pub fn role_of(&self, groups: &str) -> UserRole {
+        let has = |group: &str| groups.split(',').any(|name| name == group);
         if has(&self.manager_group) {
             UserRole::Manager
         } else if has(&self.staff_group) {
@@ -223,6 +243,61 @@ impl ProxySettings {
         } else {
             UserRole::Client
         }
+    }
+}
+
+/// The one value of a header. `Some(None)` when it is not sent; `None` when it
+/// is sent more than once or is not UTF-8, which nothing here guesses at.
+fn sent_once<'a>(headers: &'a HeaderMap, name: &str) -> Option<Option<&'a str>> {
+    let mut values = headers.get_all(name).iter();
+    match (values.next(), values.next()) {
+        (None, _) => Some(None),
+        (Some(value), None) => std::str::from_utf8(value.as_bytes()).ok().map(Some),
+        (Some(_), Some(_)) => None,
+    }
+}
+
+/// Who the proxy says is asking: its identity headers, read once. Nothing else
+/// in the app looks at them.
+#[derive(Debug, PartialEq, Eq)]
+struct ProxyIdentity {
+    email: String,
+    name: Option<String>,
+    role: UserRole,
+}
+
+impl ProxyIdentity {
+    /// An address is at most this long (RFC 5321).
+    const EMAIL_MAX: usize = 254;
+
+    /// Reads the identity headers of a request that came through the proxy.
+    /// The address has to be there and be one; it is taken in lower case. The
+    /// name is optional. Without a groups header the person is a client.
+    /// `None` when a header does not fit: the request is then nobody's, and
+    /// nothing is made of the headers that did.
+    fn recognize(headers: &HeaderMap, proxy: &ProxySettings) -> Option<Self> {
+        let email = sent_once(headers, &proxy.email_header)??.to_lowercase();
+        if email.len() > Self::EMAIL_MAX || !email.validate_email() {
+            return None;
+        }
+        let name = sent_once(headers, &proxy.name_header)?.map(str::to_string);
+        let role = sent_once(headers, &proxy.groups_header)?
+            .map_or(UserRole::Client, |groups| proxy.role_of(groups));
+        Some(Self { email, name, role })
+    }
+}
+
+/// Whether a request comes from one of this site's own pages, by the browser's
+/// word, which a page can neither set nor change: `Sec-Fetch-Site:
+/// same-origin`, or, from a browser that does not send that header, an
+/// `Origin` that is this site's.
+fn from_this_site(headers: &HeaderMap, site: &str) -> bool {
+    match sent_once(headers, "sec-fetch-site") {
+        Some(Some(relation)) => relation == "same-origin",
+        Some(None) => sent_once(headers, "origin")
+            .flatten()
+            .is_some_and(|origin| origin == site.trim_end_matches('/')),
+        None => false,
     }
 }
 
@@ -261,28 +336,19 @@ where
                         "request did not arrive through the authenticating proxy".to_string(),
                     ));
                 }
-                let read = |name: &str| {
-                    parts
-                        .headers
-                        .get(name)
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_string)
-                };
-                let email = read(&proxy.email_header)
-                    .filter(|e| !e.is_empty())
-                    .ok_or_else(|| {
-                        Error::Unauthorized("no authenticated identity from proxy".to_string())
-                    })?;
-                let name = read(&proxy.name_header);
-                let role = read(&proxy.groups_header)
-                    .map_or(UserRole::Client, |g| proxy.role_from_groups(&g));
-                users::Model::provision_from_sso(
-                    &ctx.db,
-                    &email.to_lowercase(),
-                    name.as_deref(),
-                    role,
-                )
-                .await?
+                // A request that changes something has to come from this
+                // site's own pages: the session is a cookie, and a browser
+                // sends it along with requests that other sites start.
+                if !parts.method.is_safe()
+                    && !from_this_site(&parts.headers, &ctx.config.server.host)
+                {
+                    return Err(forbidden("this request did not come from the portal"));
+                }
+                let who = ProxyIdentity::recognize(&parts.headers, proxy).ok_or_else(|| {
+                    Error::Unauthorized("no authenticated identity from proxy".to_string())
+                })?;
+                users::Model::provision_from_sso(&ctx.db, &who.email, who.name.as_deref(), who.role)
+                    .await?
             }
         };
         // Checked here, on every request and in both modes, so disabling an

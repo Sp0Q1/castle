@@ -423,6 +423,7 @@ async fn everyone_asks_everything(sign_in: SignIn) {
                 (SignIn::Jwt, Some(token), _) => vec![bearer(token)],
                 (SignIn::Proxy, _, Some((email, group))) => vec![
                     from_proxy(PROXY_SECRET),
+                    ("sec-fetch-site", "same-origin".to_string()),
                     ("x-forwarded-email", email.to_string()),
                     ("x-forwarded-groups", group.to_string()),
                 ],

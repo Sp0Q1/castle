@@ -443,6 +443,14 @@ impl Model {
     }
 }
 
+/// A name from the identity provider as an account can carry it: trimmed, and
+/// of a length the model accepts and a page can show. Anything else is no name,
+/// and the account keeps the one it has.
+fn display_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (2..=100).contains(&name.chars().count()).then_some(name)
+}
+
 // SSO / provisioning
 impl Model {
     /// Reconciles an SSO identity (keyed by email) into a local user: creates it
@@ -459,13 +467,11 @@ impl Model {
         name: Option<&str>,
         role: UserRole,
     ) -> ModelResult<Self> {
+        let name = name.and_then(display_name);
         match Self::find_by_email(db, email).await {
             Ok(user) if user.status == UserStatus::Disabled => Ok(user),
             Ok(user) => {
-                let name_changed = name
-                    .map(str::trim)
-                    .filter(|n| !n.is_empty())
-                    .is_some_and(|n| user.name != n);
+                let name_changed = name.is_some_and(|n| user.name != n);
                 if user.role.as_str() == role.as_str()
                     && user.status == UserStatus::Active
                     && !name_changed
@@ -475,7 +481,7 @@ impl Model {
                 let mut active = user.into_active_model();
                 active.role = ActiveValue::set(role.as_str().to_string());
                 active.status = ActiveValue::set(UserStatus::Active);
-                if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
+                if let Some(n) = name {
                     active.name = ActiveValue::set(n.to_string());
                 }
                 active.update(db).await.map_err(ModelError::from)
@@ -512,11 +518,7 @@ impl Model {
         // No usable password: these users authenticate via the IdP/proxy, never here.
         let random = hash::hash_password(&Uuid::new_v4().to_string())
             .map_err(|e| ModelError::Any(e.into()))?;
-        let display = name
-            .map(str::trim)
-            .filter(|n| n.len() >= 2)
-            .unwrap_or(email)
-            .to_string();
+        let display = name.and_then(display_name).unwrap_or(email).to_string();
         let user = users::ActiveModel {
             email: ActiveValue::set(email.to_string()),
             name: ActiveValue::set(display),
