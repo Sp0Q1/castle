@@ -10,18 +10,24 @@ import {
 } from "react-router-dom";
 import { errorMessage } from "./api/client";
 import type { AuthMode, CurrentUser } from "./api/types";
-import { redirectIfSignedIn, requireUser, signOut } from "./auth/session";
+import {
+  brandLogo,
+  redirectIfSignedIn,
+  requireUser,
+  signOut,
+} from "./auth/session";
 
 function Layout() {
   const user = useLoaderData<CurrentUser>();
   const { state } = useNavigation();
   const navigate = useNavigate();
+  const logo = brandLogo();
   return (
     <>
       <header className="navbar fixed-top">
         <div className="container">
           <Link to="/" className="brand">
-            🏰 Castle
+            {logo ? <img src={logo} alt="Castle" /> : "🏰 Castle"}
           </Link>
           <nav className="navbar-nav">
             <span className="whoami">

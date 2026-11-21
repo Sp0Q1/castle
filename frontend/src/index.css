@@ -74,20 +74,34 @@ h3 {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 12px;
 	height: 60px;
 }
 .brand {
 	font-weight: 700;
 	font-size: 1.15rem;
 	color: var(--text);
+	/* In a narrow bar it is the brand that gives way, not the controls. */
+	min-width: 0;
 }
 .brand:hover {
 	text-decoration: none;
+}
+/* A deployment's own logo fits the bar whatever its size or shape. */
+.brand img {
+	display: block;
+	height: 34px;
+	width: auto;
+	max-width: min(220px, 100%);
+	object-fit: contain;
+	object-position: left center;
 }
 .navbar-nav {
 	display: flex;
 	align-items: center;
 	gap: 14px;
+	flex: none;
+	white-space: nowrap;
 }
 .whoami {
 	display: inline-flex;
