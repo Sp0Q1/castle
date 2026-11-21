@@ -113,7 +113,8 @@ images; which codenames belong to clients; credentials and sessions.
    the pool's certificates, which were issued in advance, and forwards a
    request to its codename's proxy. It removes the header a visitor could use
    to tell the proxy which path is being asked for, and sets the visitor's
-   address itself.
+   address itself. Every answer of every codename leaves with the same
+   security headers, and none that names the software behind it.
 2. **Edge to proxy.** oauth2-proxy lets a request through only with a valid
    session for that codename's realm. Every codename has its own realm, client
    secret and cookie secret, so a session for one is nothing to another.
@@ -136,7 +137,7 @@ images; which codenames belong to clients; credentials and sessions.
 | A client reading drafts | drafts and their comments go to project staff only: a manager, or someone who is staff both to Keycloak and on that project |
 | Access outliving the person's role | the role is read on every request, the session is refreshed with Keycloak every four minutes and ends after ten hours, a disabled account is refused at once, and management removes memberships |
 | Guessed passwords | temporary lockout in Keycloak, no self-registration, no self-service password reset; the built-in login of `jwt` mode is throttled |
-| Script in a finding or comment | Markdown goes through a sanitizer, diagrams render in mermaid's strict mode, and the Content-Security-Policy allows scripts from the portal's origin only. The text itself is stored as written, since a finding may quote a payload |
+| Script in a finding or comment | Markdown goes through a sanitizer, diagrams render in mermaid's strict mode, and the Content-Security-Policy denies everything by default: scripts come from the portal's own files only, with no inline script or handler. The text itself is stored as written, since a finding may quote a payload |
 | A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served with `nosniff` to signed-in users |
 | Finding out which codenames are in use | tenants and canaries answer alike at the edge; certificates for the whole pool are issued and renewed in one batch; promoting a canary changes neither certificate nor DNS; a request by address or unknown name gets a neutral certificate; the bundled DNS allows no zone transfer |
 | A stolen backup | bundles are encrypted on the host to a public key whose private half is kept elsewhere |
