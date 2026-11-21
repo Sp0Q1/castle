@@ -773,6 +773,9 @@ async fn set_status(
     run_task::<App>(ctx, Some(&"user:status".to_string()), &vars).await
 }
 
+/// The secret a proxy-mode instance in these tests shares with its proxy.
+const PROXY_SECRET: &str = "shared-between-the-proxy-and-castle";
+
 /// Boots the next app in proxy mode, the way production runs. Dropped, later
 /// boots are back in jwt mode even if the test panicked.
 struct ProxyMode;
@@ -780,6 +783,7 @@ struct ProxyMode;
 impl ProxyMode {
     fn on() -> Self {
         std::env::set_var("CASTLE_AUTH_MODE", "proxy");
+        std::env::set_var("CASTLE_PROXY_SECRET", PROXY_SECRET);
         Self
     }
 }
@@ -787,7 +791,21 @@ impl ProxyMode {
 impl Drop for ProxyMode {
     fn drop(&mut self) {
         std::env::remove_var("CASTLE_AUTH_MODE");
+        std::env::remove_var("CASTLE_PROXY_SECRET");
     }
+}
+
+/// The header oauth2-proxy puts on what it forwards: Basic, with the secret as
+/// the password.
+fn from_proxy(secret: &str) -> (&'static str, String) {
+    use base64::prelude::{Engine as _, BASE64_STANDARD};
+    (
+        "authorization",
+        format!(
+            "Basic {}",
+            BASE64_STANDARD.encode(format!("someone:{secret}"))
+        ),
+    )
 }
 
 #[tokio::test]
@@ -844,9 +862,11 @@ async fn a_proxy_session_does_not_re_enable_a_disabled_account() {
     fresh_db();
     let _proxy = ProxyMode::on();
     request::<App, _, _>(|request, ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
         let current = || {
             request
                 .get("/api/auth/current")
+                .add_header(proxy.0, &proxy.1)
                 .add_header("x-forwarded-email", "client@example.com")
                 .add_header("x-forwarded-preferred-username", "client")
                 .add_header("x-forwarded-groups", "castle-clients")
@@ -966,6 +986,64 @@ async fn management_changes_and_removes_memberships() {
     .await;
 }
 
+/// Identity headers are believed only from this instance's own proxy, which
+/// proves itself with the secret the two share. Anything else that reaches the
+/// port, whatever headers it sends, is nobody.
+#[tokio::test]
+#[serial]
+async fn identity_headers_count_only_with_the_proxy_secret() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, _ctx| async move {
+        let as_manager = || {
+            request
+                .get("/api/projects")
+                .add_header("x-forwarded-email", "intruder@example.com")
+                .add_header("x-forwarded-groups", "castle-managers")
+        };
+
+        assert_eq!(as_manager().await.status_code(), 401, "no secret");
+        let wrong = from_proxy("not-the-secret");
+        let refused = as_manager().add_header(wrong.0, &wrong.1).await;
+        assert_eq!(refused.status_code(), 401, "a wrong secret");
+        let empty = from_proxy("");
+        let refused = as_manager().add_header(empty.0, &empty.1).await;
+        assert_eq!(refused.status_code(), 401, "an empty secret");
+        let bare = as_manager()
+            .add_header("authorization", format!("Bearer {PROXY_SECRET}"))
+            .await;
+        assert_eq!(
+            bare.status_code(),
+            401,
+            "the secret outside the Basic scheme"
+        );
+        let right = from_proxy(PROXY_SECRET);
+        let twice = as_manager()
+            .add_header(right.0, &right.1)
+            .add_header(wrong.0, &wrong.1)
+            .await;
+        assert_eq!(twice.status_code(), 401, "two Authorization headers");
+
+        let through = as_manager().add_header(right.0, &right.1).await;
+        assert_eq!(through.status_code(), 200, "through the proxy");
+
+        // Nobody who was refused left an account behind.
+        let (h, v) = (right.0, right.1.clone());
+        let current: serde_json::Value = request
+            .get("/api/auth/current")
+            .add_header(h, &v)
+            .add_header("x-forwarded-email", "intruder@example.com")
+            .add_header("x-forwarded-groups", "castle-managers")
+            .await
+            .json();
+        assert_eq!(
+            current["id"], 1,
+            "the first account is the one that came through"
+        );
+    })
+    .await;
+}
+
 /// Staff capacity on a project takes the IdP's word and a manager's. An account
 /// the IdP calls a client stays one whatever it is onboarded as, whichever of
 /// the two happened first.
@@ -975,15 +1053,18 @@ async fn a_membership_does_not_outrank_the_idp() {
     fresh_db();
     let _proxy = ProxyMode::on();
     request::<App, _, _>(|request, _ctx| async move {
+        let proxy = from_proxy(PROXY_SECRET);
         let get = |path: &str, email: &str, group: &str| {
             request
                 .get(path)
+                .add_header(proxy.0, &proxy.1)
                 .add_header("x-forwarded-email", email)
                 .add_header("x-forwarded-groups", group)
         };
         let post = |path: &str, email: &str, group: &str| {
             request
                 .post(path)
+                .add_header(proxy.0, &proxy.1)
                 .add_header("x-forwarded-email", email)
                 .add_header("x-forwarded-groups", group)
         };
