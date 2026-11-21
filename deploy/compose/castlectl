@@ -67,7 +67,7 @@ KC_HOST="${KC_HOST:?set KC_HOST in .env (IdP hostname, e.g. sso.example.com)}"
 # the bare :443 host.
 KC_ADMIN_URL="${KC_ADMIN_URL:-$KC_PUBLIC_URL}"
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
-CASTLE_IMAGE="${CASTLE_IMAGE:-ghcr.io/sp0q1/castle:latest}"
+CASTLE_IMAGE="${CASTLE_IMAGE:?set CASTLE_IMAGE in .env}"
 ENGINE="${ENGINE:-podman}"
 COMPOSE="${COMPOSE:-$ENGINE compose}"
 # Cert issuance is dehydrated (pure-bash ACME, matches this script). castlectl
@@ -227,7 +227,7 @@ dns_del_a(){ # <codename> — remove the A record (goes dark)
 # supplies the domains and copies the results into Caddy's cert dir.
 sync_certs(){
   touch "$DOMAINS_TXT"
-  if [[ -n "${KC_INSECURE:-}" ]]; then          # lab: self-signed, never touch a CA
+  if [[ "${KC_INSECURE:-0}" == "1" ]]; then     # lab: self-signed, never touch a CA
     while read -r host; do [[ -n "$host" ]] && mock_cert "$host"; done < "$DOMAINS_TXT"
     return
   fi
