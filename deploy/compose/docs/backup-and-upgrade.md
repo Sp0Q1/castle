@@ -1,5 +1,7 @@
 # Upgrading, backing up, and restoring
 
+One tenant on its own, to move or retire it: [`moving-and-retiring-a-tenant.md`](moving-and-retiring-a-tenant.md).
+
 ## Upgrading
 
 The castle app runs pending schema migrations on boot (`auto_migrate: true`), so

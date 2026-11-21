@@ -10,13 +10,14 @@ Run everything below as root.
 
 ```bash
 apt update && apt -y upgrade
-apt -y install git age podman podman-compose bind9-dnsutils curl ca-certificates runc
+apt -y install git age jq podman podman-compose bind9-dnsutils curl ca-certificates runc
 ```
 
 `podman` + `podman-compose` are the container engine (this deployment is
 validated on podman 5.x / podman-compose 1.3.x — the versions Debian 13 ships).
-`age` is for `castlectl backup`, `bind9-dnsutils` gives `dig` + `nsupdate` (the
-self-hosted-DNS path uses them), and `runc` is the container runtime — see next.
+`age` is for `castlectl backup`, `jq` for the commands that read a realm's
+people, `bind9-dnsutils` gives `dig` + `nsupdate` (the self-hosted-DNS path uses
+them), and `runc` is the container runtime — see next.
 
 ## 2. Container runtime: runc, not crun (REQUIRED)
 
