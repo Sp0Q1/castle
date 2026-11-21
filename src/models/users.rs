@@ -369,7 +369,9 @@ impl ActiveModel {
 
 /// Where a user is in their lifecycle. `Invited` is a placeholder created when a
 /// manager onboards an email that has never signed in; first SSO login reconciles
-/// it to the real identity and flips it to `Active`.
+/// it to the real identity and flips it to `Active`. `Disabled` is set by an
+/// operator and refuses the account on every request, whatever session the proxy
+/// or a token still vouches for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "lowercase")]
@@ -378,6 +380,8 @@ pub enum UserStatus {
     Active,
     #[sea_orm(string_value = "invited")]
     Invited,
+    #[sea_orm(string_value = "disabled")]
+    Disabled,
 }
 
 /// The role a user holds across the platform. Stored on `users.role` as a
@@ -444,7 +448,9 @@ impl Model {
 impl Model {
     /// Reconciles an SSO identity (keyed by email) into a local user: creates it
     /// if new, otherwise syncs the display name, the IdP-authoritative role, and
-    /// marks the account active. Called on every authenticated proxy request.
+    /// marks an invited account active. A disabled account is returned as it is:
+    /// signing in must not re-enable it. Called on every authenticated proxy
+    /// request.
     ///
     /// # Errors
     /// When the DB query/update fails.
@@ -455,6 +461,7 @@ impl Model {
         role: UserRole,
     ) -> ModelResult<Self> {
         match Self::find_by_email(db, email).await {
+            Ok(user) if user.status == UserStatus::Disabled => Ok(user),
             Ok(user) => {
                 let name_changed = name
                     .map(str::trim)

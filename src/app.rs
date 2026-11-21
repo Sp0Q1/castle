@@ -92,6 +92,7 @@ impl Hooks for App {
     fn register_tasks(tasks: &mut Tasks) {
         // tasks-inject (do not remove)
         tasks.register(tasks::user_create::UserCreate);
+        tasks.register(tasks::user_status::SetUserStatus);
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
         // Truncate children before parents so foreign keys stay satisfied.

@@ -17,7 +17,7 @@ use loco_rs::prelude::*;
 use serde::Deserialize;
 
 use crate::models::_entities::users;
-use crate::models::users::UserRole;
+use crate::models::users::{UserRole, UserStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -167,13 +167,12 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Error> {
         let ctx = AppContext::from_ref(state);
         let settings = Settings::from_ctx(&ctx);
-        match settings.auth_mode {
+        let user = match settings.auth_mode {
             AuthMode::Jwt => {
                 let jwt = auth::JWT::from_request_parts(parts, state).await?;
-                let user = users::Model::find_by_pid(&ctx.db, &jwt.claims.pid)
+                users::Model::find_by_pid(&ctx.db, &jwt.claims.pid)
                     .await
-                    .map_err(|_| Error::Unauthorized("user not found".to_string()))?;
-                Ok(Self(user))
+                    .map_err(|_| Error::Unauthorized("user not found".to_string()))?
             }
             AuthMode::Proxy => {
                 let proxy = &settings.proxy;
@@ -211,15 +210,21 @@ where
                 let name = read(&proxy.name_header);
                 let role = read(&proxy.groups_header)
                     .map_or(UserRole::Client, |g| proxy.role_from_groups(&g));
-                let user = users::Model::provision_from_sso(
+                users::Model::provision_from_sso(
                     &ctx.db,
                     &email.to_lowercase(),
                     name.as_deref(),
                     role,
                 )
-                .await?;
-                Ok(Self(user))
+                .await?
             }
+        };
+        // Checked here, on every request and in both modes, so disabling an
+        // account takes effect at once: neither a proxy session nor a token that
+        // is still valid gets past it.
+        if user.status == UserStatus::Disabled {
+            return Err(forbidden("this account is disabled"));
         }
+        Ok(Self(user))
     }
 }
