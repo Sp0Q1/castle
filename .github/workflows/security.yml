@@ -194,6 +194,14 @@ jobs:
           help="$(docker run --rm castle:ci --help)"
           grep -q '^  start' <<<"$help" \
             || { echo "::error::image binary does not behave like castle-cli"; exit 1; }
+          # A malformed auth setting must stop the real binary. The Rust tests
+          # cannot vouch for that alone: for months the check sat in a hook that
+          # only the test harness calls, every test passed, and the image came
+          # up in jwt mode instead of refusing.
+          out="$(timeout 60 docker run --rm -e CASTLE_AUTH_MODE=Proxy -e JWT_SECRET=smoke \
+            -e 'DATABASE_URL=sqlite:///tmp/smoke.sqlite?mode=rwc' castle:ci 2>&1 || true)"
+          grep -q 'invalid `settings:`' <<<"$out" \
+            || { echo "::error::a malformed auth setting did not stop the image"; exit 1; }
           # The SPA is served from disk at runtime, so an image without it is
           # broken in a way no Rust check can see.
           docker run --rm --entrypoint sh castle:ci -c 'test -s frontend/dist/index.html' \
