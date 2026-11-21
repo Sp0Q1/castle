@@ -1,5 +1,11 @@
 export type Role = "manager" | "staff" | "client";
 
+/**
+ * What someone may do on one project, worked out by the server from their role
+ * and their membership. Pages render from this and never work it out again.
+ */
+export type Access = "staff" | "client";
+
 /** GET /api/auth/mode — "jwt" has built-in login/register, "proxy" defers to the IdP. */
 export type AuthMode = "jwt" | "proxy";
 
@@ -48,12 +54,16 @@ export interface Project {
   created_by: number;
   created_at: string;
   updated_at: string;
+  /** What the signed-in person may do on this project. */
+  access: Access;
 }
 
 export interface Member {
   id: number;
   /** capacity on the project: "staff" | "client" */
   role: string;
+  /** What this member may do on the project: the capacity, as far as their role allows. */
+  access: Access;
   user: UserSummary;
   created_at: string;
 }

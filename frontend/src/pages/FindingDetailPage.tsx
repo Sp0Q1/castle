@@ -11,8 +11,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
-import type { Finding, FindingDetail, Member, Project } from "../api/types";
-import { isProjectStaff, useUser } from "../auth/session";
+import type { Finding, FindingDetail, Project } from "../api/types";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import {
   FindingFields,
@@ -25,7 +24,6 @@ import { MarkdownField } from "../components/MarkdownField";
 interface Data {
   finding: FindingDetail;
   project: Project | null;
-  members: Member[];
   types: string[];
 }
 
@@ -35,15 +33,14 @@ export async function loader({
 }: LoaderFunctionArgs): Promise<Data> {
   const finding = await api.getFinding(Number(params.id));
   const editing = new URL(request.url).searchParams.has("edit");
-  const [project, members, siblings] = await Promise.all([
+  // The project says what the reader may do on it.
+  const [project, siblings] = await Promise.all([
     api.getProject(finding.project_id).catch(() => null),
-    // Needed to mirror the backend's edit/publish permission (staff member).
-    api.listMembers(finding.project_id).catch((): Member[] => []),
     editing
       ? api.listFindings(finding.project_id).catch((): Finding[] => [])
       : [],
   ]);
-  return { finding, project, members, types: findingTypes(siblings) };
+  return { finding, project, types: findingTypes(siblings) };
 }
 
 export async function action({ params, request }: ActionFunctionArgs) {
@@ -87,8 +84,7 @@ function Section({ title, body }: { title: string; body: string }) {
 }
 
 function FindingDetailPage() {
-  const { finding, project, members, types } = useLoaderData<Data>();
-  const user = useUser();
+  const { finding, project, types } = useLoaderData<Data>();
   const [searchParams] = useSearchParams();
   const editing = searchParams.has("edit");
   const edit = useActionData<{ error: string }>();
@@ -96,7 +92,7 @@ function FindingDetailPage() {
   const actions = useFetcher<{ error: string }>();
   const composer = useFetcher<{ error: string }>();
 
-  const canModify = isProjectStaff(user, members);
+  const canModify = project?.access === "staff";
   const busy = actions.state !== "idle";
 
   return (

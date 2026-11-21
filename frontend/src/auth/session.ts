@@ -6,7 +6,7 @@ import {
   useRouteLoaderData,
 } from "react-router-dom";
 import { ApiError, api, setAuthToken } from "../api/client";
-import type { AuthMode, CurrentUser, Member } from "../api/types";
+import type { AuthMode, CurrentUser } from "../api/types";
 
 // jwt (dev) mode only — production runs proxy mode, where the session is an
 // httpOnly oauth2-proxy cookie and no token is ever exposed to JavaScript.
@@ -96,9 +96,3 @@ export function redirectIfSignedIn(): Promise<Response | null> {
 /** Every page below the root route has a user — its loader guarantees one. */
 export const useUser = (): CurrentUser =>
   useRouteLoaderData("root") as CurrentUser;
-
-/** The API's rule for who may write a project's findings. */
-export const isProjectStaff = (user: CurrentUser, members: Member[]): boolean =>
-  user.role === "manager" ||
-  (user.role === "staff" &&
-    members.some((m) => m.user.pid === user.pid && m.role === "staff"));
