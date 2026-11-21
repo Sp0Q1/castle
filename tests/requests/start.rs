@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use castle::app::App;
+use castle::{app::App, security::Settings};
 use loco_rs::{
     app::Hooks,
     boot::{create_app, StartMode},
@@ -50,6 +50,64 @@ async fn a_malformed_auth_setting_stops_the_start() {
             why.to_string().contains("invalid `settings:`"),
             "{mode:?}: {why}"
         );
+    }
+}
+
+/// Proxy mode believes identity headers, so it does not start without the
+/// secret that tells its own proxy from anything else that reaches the port.
+#[tokio::test]
+#[serial]
+async fn proxy_mode_without_its_secret_stops_the_start() {
+    fresh_db();
+    for secret in [None, Some("")] {
+        let mut vars = vec![("CASTLE_AUTH_MODE", "proxy")];
+        vars.extend(secret.map(|s| ("CASTLE_PROXY_SECRET", s)));
+        let why = start_with(&vars)
+            .await
+            .expect_err("proxy mode started without a secret");
+        assert!(why.to_string().contains("CASTLE_PROXY_SECRET"), "{why}");
+    }
+    let started = start_with(&[
+        ("CASTLE_AUTH_MODE", "proxy"),
+        ("CASTLE_PROXY_SECRET", "shared-with-the-proxy"),
+    ])
+    .await;
+    assert!(started.is_ok(), "proxy mode with its secret must start");
+}
+
+/// The proxy is handed the secret as the environment has it, so castle has to
+/// read the same characters out of its configuration file, whatever they mean
+/// to YAML.
+#[tokio::test]
+#[serial]
+async fn the_configuration_reads_the_secret_character_for_character() {
+    let secret = r##" it's "a" #secret: \n {with} [everything], & a trailing space "##;
+    let vars = [
+        ("CASTLE_PROXY_SECRET", secret),
+        ("DATABASE_URL", "postgres://nobody@localhost/none"),
+        ("JWT_SECRET", "bm90LWEtc2VjcmV0"),
+    ];
+    for (name, value) in vars {
+        std::env::set_var(name, value);
+    }
+    let read: Vec<_> = [Environment::Test, Environment::Production]
+        .iter()
+        .map(|environment| {
+            let config = environment.load().expect("the configuration loads");
+            Settings::try_from_config(&config)
+                .expect("the settings parse")
+                .proxy
+                .secret
+        })
+        .collect();
+    for (name, _) in vars {
+        std::env::remove_var(name);
+    }
+    for (secret_read, file) in read.iter().zip(["test.yaml", "production.yaml"]) {
+        let same = secret_read
+            .as_ref()
+            .is_some_and(|read| read.is(secret.as_bytes()));
+        assert!(same, "{file} read a different secret than the one set");
     }
 }
 

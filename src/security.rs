@@ -7,12 +7,15 @@
 //!   OIDC dance with Keycloak and injects identity headers. Castle trusts those
 //!   headers and never handles tokens or secrets itself.
 //!
-//! SECURITY: in `proxy` mode the identity headers are trusted unconditionally,
-//! so the app MUST be reachable only through the proxy (private bind + network
-//! policy). The optional `shared_secret` header is defense-in-depth, not a
-//! substitute for network isolation.
+//! SECURITY: in `proxy` mode the identity headers are believed, so they are
+//! only read from a request that proves it came through this instance's own
+//! proxy: it carries the secret the two share (`settings.proxy.secret`), which
+//! oauth2-proxy sends as the password of a Basic `Authorization` header. Proxy
+//! mode does not start without that secret. The network the app sits on, which
+//! only its proxy joins, is the second lock and not the only one.
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use base64::prelude::{Engine as _, BASE64_STANDARD};
 use loco_rs::prelude::*;
 use serde::Deserialize;
 
@@ -27,6 +30,42 @@ pub enum AuthMode {
     Proxy,
 }
 
+/// The secret an instance shares with its own proxy. There is no empty one,
+/// and `Debug` shows nothing of it.
+#[derive(Clone)]
+pub struct ProxySecret(String);
+
+impl ProxySecret {
+    /// An empty value means "not set", so a configuration can always pass the
+    /// variable.
+    fn or_unset<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Option<Self>, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        Ok(value.filter(|value| !value.is_empty()).map(Self))
+    }
+
+    /// Whether `presented` is this secret. Constant-time, so a byte-by-byte
+    /// timing oracle can't recover it across many requests. Length may leak:
+    /// it isn't secret; only the bytes are.
+    #[must_use]
+    pub fn is(&self, presented: &[u8]) -> bool {
+        let expected = self.0.as_bytes();
+        presented.len() == expected.len()
+            && presented
+                .iter()
+                .zip(expected)
+                .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                == 0
+    }
+}
+
+impl std::fmt::Debug for ProxySecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProxySecret(set)")
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ProxySettings {
@@ -37,10 +76,10 @@ pub struct ProxySettings {
     pub name_header: String,
     /// Header carrying the user's groups (comma/space separated).
     pub groups_header: String,
-    /// Optional shared secret the proxy injects; when set, requests without a
-    /// matching value are rejected (defense-in-depth against direct access).
-    pub shared_secret_header: Option<String>,
-    pub shared_secret: Option<String>,
+    /// The secret this instance shares with its own proxy. A request's identity
+    /// headers are read only when it carries this secret.
+    #[serde(deserialize_with = "ProxySecret::or_unset")]
+    pub secret: Option<ProxySecret>,
     /// Keycloak group (leaf name) that grants each platform role.
     pub manager_group: String,
     pub staff_group: String,
@@ -58,8 +97,7 @@ impl Default for ProxySettings {
             email_header: "x-forwarded-email".to_string(),
             name_header: "x-forwarded-preferred-username".to_string(),
             groups_header: "x-forwarded-groups".to_string(),
-            shared_secret_header: None,
-            shared_secret: None,
+            secret: None,
             manager_group: "castle-managers".to_string(),
             staff_group: "castle-staff".to_string(),
             client_group: "castle-clients".to_string(),
@@ -114,11 +152,22 @@ impl Settings {
     /// # Errors
     /// If `settings:` is present but does not deserialize into [`Settings`].
     pub fn try_from_config(config: &loco_rs::config::Config) -> Result<Self> {
-        match &config.settings {
-            None => Ok(Self::default()),
+        let settings = match &config.settings {
+            None => Self::default(),
             Some(v) => serde_json::from_value::<Self>(v.clone())
-                .map_err(|e| Error::Message(format!("invalid `settings:` config: {e}"))),
+                .map_err(|e| Error::Message(format!("invalid `settings:` config: {e}")))?,
+        };
+        // Proxy mode believes identity headers, and only from its own proxy.
+        // Without the secret that proves it there is nothing to tell that proxy
+        // from anything else that can reach the port, so the app does not start.
+        if settings.auth_mode == AuthMode::Proxy && settings.proxy.secret.is_none() {
+            return Err(Error::Message(
+                "invalid `settings:` config: proxy mode needs `proxy.secret` \
+                 (CASTLE_PROXY_SECRET), the secret this instance shares with its proxy"
+                    .to_string(),
+            ));
         }
+        Ok(settings)
     }
 }
 
@@ -133,13 +182,26 @@ pub fn forbidden(message: &str) -> Error {
     )
 }
 
-/// Constant-time equality for the proxy shared secret, so a byte-by-byte timing
-/// oracle can't recover it across many requests. Length may leak — it isn't
-/// secret; only the bytes are.
+/// Whether `headers` carry the proxy's secret: exactly one `Authorization`
+/// header, of the Basic scheme, whose password is `secret`. That is what
+/// oauth2-proxy sends upstream with `--pass-basic-auth` and a basic-auth
+/// password, and it replaces whatever the browser sent under that name.
 #[must_use]
-fn secret_eq(got: &str, expected: &str) -> bool {
-    let (a, b) = (got.as_bytes(), expected.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+fn from_own_proxy(headers: &axum::http::HeaderMap, secret: &ProxySecret) -> bool {
+    let mut sent = headers.get_all(axum::http::header::AUTHORIZATION).iter();
+    let (Some(value), None) = (sent.next(), sent.next()) else {
+        return false;
+    };
+    value
+        .as_bytes()
+        .strip_prefix(b"Basic ")
+        .and_then(|encoded| BASE64_STANDARD.decode(encoded).ok())
+        .is_some_and(|credentials| {
+            credentials
+                .splitn(2, |byte| *byte == b':')
+                .nth(1)
+                .is_some_and(|password| secret.is(password))
+        })
 }
 
 impl ProxySettings {
@@ -187,24 +249,17 @@ where
             }
             AuthMode::Proxy => {
                 let proxy = &settings.proxy;
-                if let (Some(name), Some(expected)) = (
-                    proxy.shared_secret_header.as_ref(),
-                    proxy.shared_secret.as_ref(),
-                ) {
-                    // An empty configured secret means "not set" — don't enforce.
-                    if !expected.is_empty() {
-                        let ok = parts
-                            .headers
-                            .get(name)
-                            .and_then(|v| v.to_str().ok())
-                            .is_some_and(|got| secret_eq(got, expected));
-                        if !ok {
-                            return Err(Error::Unauthorized(
-                                "request did not arrive through the authenticating proxy"
-                                    .to_string(),
-                            ));
-                        }
-                    }
+                // Checked before a single identity header is read. An instance
+                // without a secret does not start in this mode, and here it
+                // would believe nobody.
+                let through_proxy = proxy
+                    .secret
+                    .as_ref()
+                    .is_some_and(|secret| from_own_proxy(&parts.headers, secret));
+                if !through_proxy {
+                    return Err(Error::Unauthorized(
+                        "request did not arrive through the authenticating proxy".to_string(),
+                    ));
                 }
                 let read = |name: &str| {
                     parts

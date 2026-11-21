@@ -129,10 +129,13 @@ settings:
     email_header: x-forwarded-email
     name_header: x-forwarded-preferred-username
     groups_header: x-forwarded-groups
-    # Defense-in-depth: a secret only the proxy injects (leave empty to rely on
-    # network isolation alone). Set both the header name and the value.
-    shared_secret_header: x-castle-proxy-secret
-    shared_secret: <%= get_env(name="CASTLE_PROXY_SECRET", default="") %>
+    # The secret this instance shares with its own proxy, which sends it as the
+    # password of a Basic `Authorization` header (oauth2-proxy: --pass-basic-auth
+    # and OAUTH2_PROXY_BASIC_AUTH_PASSWORD). Identity headers are read only from
+    # a request that carries it, and proxy mode does not start without it. A
+    # literal block, so the value is read character for character.
+    secret: |2-
+      <%= get_env(name="CASTLE_PROXY_SECRET", default="") %>
     # Keycloak groups (leaf names) that grant each platform role; unmapped users
     # default to least privilege (client).
     manager_group: castle-managers
