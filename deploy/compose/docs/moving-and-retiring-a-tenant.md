@@ -48,7 +48,10 @@ export BACKUP_AGE_IDENTITY=/path/to/castle-backup.key
 uploads, and creates the people in its realm, in the groups they were in. They
 arrive **without credentials**: give each one a temporary password in Keycloak
 before they sign in. Their projects, findings and comments are theirs again at
-that first sign-in, because castle knows a person by their email.
+that first sign-in. Castle binds an account to the id Keycloak has for a
+person, and in the new realm everybody has a new one, so `import` lets every
+account go (`user:unbind all:yes`); each is then taken by the person the new
+realm vouches for with its address.
 
 Anything written at `<old>` after the export is not in the bundle. To lose
 nothing, tell people to stop first, or import the bundle that `demote` writes
