@@ -88,6 +88,7 @@ impl Hooks for App {
             .add_route(controllers::comments::routes())
             .add_route(controllers::uploads::routes())
             .add_route(controllers::brand::routes())
+            .add_route(controllers::people::routes())
     }
     /// Castle runs no background jobs — every operation it performs is
     /// request-scoped — but `Hooks` requires the registration point.

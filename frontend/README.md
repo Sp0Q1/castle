@@ -41,6 +41,7 @@ src/
     ProjectsPage.tsx        list + (manager) create
     ProjectDetailPage.tsx   members + findings + (manager) onboard + (staff) new finding
     FindingDetailPage.tsx   the four report sections + (staff) publish + comments
+    PeoplePage.tsx          (manager) everyone with an account, their role and projects
 ```
 
 ## Develop

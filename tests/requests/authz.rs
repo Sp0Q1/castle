@@ -23,14 +23,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Everything a test needs to make an authenticated request as each role.
-struct Fixture {
-    manager_token: String,
-    staff_token: String,
-    client_token: String,
-    outsider_token: String,
-    project_id: i64,
-    draft_id: i64,
-    published_id: i64,
+pub(super) struct Fixture {
+    pub(super) manager_token: String,
+    pub(super) staff_token: String,
+    pub(super) client_token: String,
+    pub(super) outsider_token: String,
+    pub(super) project_id: i64,
+    pub(super) draft_id: i64,
+    pub(super) published_id: i64,
 }
 
 async fn make_user(db: &DatabaseConnection, email: &str, name: &str, role: &str) -> users::Model {
@@ -117,7 +117,7 @@ pub(super) fn fresh_db() {
 
 /// One manager (project owner), one staff member, one client, and one user with
 /// no membership at all — plus a draft and a published finding.
-async fn seed(ctx: &loco_rs::app::AppContext) -> Fixture {
+pub(super) async fn seed(ctx: &loco_rs::app::AppContext) -> Fixture {
     let db = &ctx.db;
 
     let manager = make_user(db, "manager@test.com", "Manager", "manager").await;
@@ -184,7 +184,7 @@ async fn seed(ctx: &loco_rs::app::AppContext) -> Fixture {
     }
 }
 
-fn bearer(token: &str) -> (&'static str, String) {
+pub(super) fn bearer(token: &str) -> (&'static str, String) {
     ("authorization", format!("Bearer {token}"))
 }
 

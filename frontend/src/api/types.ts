@@ -87,6 +87,20 @@ export interface FindingDetail extends Finding {
   comments: Comment[];
 }
 
+/** GET /api/users — management only. */
+export interface Person {
+  id: number;
+  pid: string;
+  name: string;
+  email: string;
+  role: Role;
+  /** "invited" | "active" | "disabled" */
+  status: string;
+  created_at: string;
+  /** The projects they are on, and as what. */
+  projects: { id: number; name: string; role: string }[];
+}
+
 export interface CreateFindingParams {
   title: string;
   finding_type?: string;
