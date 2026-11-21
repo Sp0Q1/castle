@@ -51,6 +51,13 @@ services:
       - --backend-logout-url=http://keycloak:8080/realms/__REALM__/protocol/openid-connect/logout?id_token_hint={id_token}
       - --cookie-secure=true
       - --cookie-csrf-per-request=true
+      # The session is renewed with Keycloak just inside the access token's five
+      # minutes. A user disabled or signed out there loses the portal at the next
+      # renewal, and a changed group reaches castle with it; without this the
+      # cookie alone decides, for as long as it lives.
+      - --cookie-refresh=4m
+      # The realm's longest session (ssoSessionMaxLifespan), not the default week.
+      - --cookie-expire=10h
       - --pass-user-headers=true
       - --set-xauthrequest=true
       - --skip-oidc-discovery=true
