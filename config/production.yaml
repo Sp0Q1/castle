@@ -116,10 +116,6 @@ settings:
   # identity headers and manages no passwords). "jwt" = built-in login/register.
   # Env-overridable so one image can run either mode.
   auth_mode: <%= get_env(name="CASTLE_AUTH_MODE", default="proxy") %>
-  # Decoy mode: capture submitted credentials + attacker metadata to the
-  # `castle::honeypot` log target and return believable responses (no real DB).
-  # For a decoy that should answer like a castle with its own login.
-  honeypot: <%= get_env(name="CASTLE_HONEYPOT", default="false") %>
   # An image file that replaces the built-in brand in the header. Empty: none.
   logo: <%= get_env(name="CASTLE_LOGO", default="") %>
   proxy:

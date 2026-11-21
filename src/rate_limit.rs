@@ -37,8 +37,7 @@
 //! check.
 //!
 //! In `proxy` mode (production) Keycloak performs authentication and its own
-//! brute-force detection applies; these limits then guard the endpoints that
-//! remain reachable, including the honeypot's fake login.
+//! brute-force detection applies, and castle serves no sign-in of its own.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
