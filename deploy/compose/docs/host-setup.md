@@ -76,7 +76,17 @@ it). Keep 22 for SSH.
 On TransIP this is the control-panel firewall; on the box itself a fresh Debian
 has no local firewall by default.
 
-## 5. Clone
+## 5. Start on boot
+
+podman has no daemon, so after a reboot nothing starts the containers unless
+this unit is enabled. It starts every container whose restart policy is
+`always`, which is the policy the compose files here set:
+
+```bash
+systemctl enable podman-restart.service
+```
+
+## 6. Clone
 
 ```bash
 git clone https://github.com/Sp0Q1/castle.git /opt/castle

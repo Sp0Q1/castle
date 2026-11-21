@@ -36,7 +36,7 @@ services:
   # $BASE_DOMAIN to this box (NS + glue) at your registrar. See docs/self-hosted-dns.md.
   dns:
     image: docker.io/internetsystemsconsortium/bind9:9.20
-    restart: unless-stopped
+    restart: always
     profiles: ["self-dns"]
     # Host networking, NOT published ports: BIND binds the host's real :53 via
     # listen-on {public IP; 127.0.0.1} (see dns/named.conf.template), so it never
@@ -70,7 +70,7 @@ services:
 
   caddy:
     image: docker.io/library/caddy:2-alpine
-    restart: unless-stopped
+    restart: always
     ports:
       - "80:80"
       - "443:443"
@@ -98,7 +98,7 @@ services:
     # volume's data dir. Do NOT just bump this tag — run the dump/restore migration
     # in docs/backup-and-upgrade.md first, then bump. (Minor 18.x bumps are free.)
     image: docker.io/library/postgres:18-alpine
-    restart: unless-stopped
+    restart: always
     networks: [kc]
     # Run AS the postgres user (uid 70), not root. The postgres entrypoint invokes
     # gosu to drop root->postgres ONLY when it starts as root — and gosu spins at
@@ -128,7 +128,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.2-3
-    restart: unless-stopped
+    restart: always
     # `start` = production mode (not start-dev). Implicit build at boot from the
     # env below; bake an optimized image later to skip it.
     command: ["start"]

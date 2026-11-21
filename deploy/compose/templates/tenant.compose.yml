@@ -29,7 +29,7 @@ services:
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6
     container_name: oauth2-proxy-__CODENAME__
-    restart: unless-stopped
+    restart: always
     networks: [edge, kc, tenant]
     depends_on: [castle]
     command:
@@ -73,7 +73,7 @@ services:
   castle:
     image: __IMAGE__
     container_name: castle-__CODENAME__
-    restart: unless-stopped
+    restart: always
     # Only on the private tenant network — unreachable except via oauth2-proxy.
     networks: [tenant]
     depends_on:
@@ -112,7 +112,7 @@ services:
   postgres:
     image: docker.io/library/postgres:18-alpine
     container_name: postgres-__CODENAME__
-    restart: unless-stopped
+    restart: always
     networks: [tenant]
     # Run as the postgres user (uid 70) so the entrypoint skips gosu — gosu spins
     # under no-new-privileges (see keycloak-db in platform.compose.yml). `:U`
