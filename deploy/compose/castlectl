@@ -12,7 +12,13 @@
 #   castlectl renew-pool            batch-renew the whole pool's certs together
 #   castlectl allocate              pick a free codename, issue its cert, canary it
 #   castlectl promote <codename>    turn a canary into a real tenant (no new cert)
-#   castlectl demote <codename>     turn a tenant back into a canary (cert kept)
+#   castlectl demote <codename> --yes
+#                                   export a tenant, then turn it back into a
+#                                   canary: data, people and secrets go, cert stays
+#   castlectl export <codename>     one tenant's data and people as a bundle
+#   castlectl import <file> <codename>
+#                                   load a tenant bundle into a canary
+#   castlectl users <codename>      who is in a codename's realm, and as what
 #   castlectl deprovision <codename>
 #   castlectl list
 #   castlectl upgrade [<codename>]  recreate running instances from the templates
