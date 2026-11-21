@@ -143,6 +143,7 @@ images; which codenames belong to clients; credentials and sessions.
 | Threat | Answer |
 |--------|--------|
 | Forged identity headers | castle reads them only from a request that carries the secret it shares with its own proxy; the proxy sets them itself, in place of what a browser sends; the tenant's network is internal and castle publishes no port; the edge removes `X-Forwarded-Uri` |
+| A request that another site starts in a signed-in browser | the session cookie is `SameSite=Lax`, and castle refuses a changing request that the browser does not mark as coming from the portal's own pages |
 | One client reading another's findings | per tenant: its own castle, database, network, realm and secrets; within a tenant: membership per project |
 | A client reading drafts | drafts and their comments go to project staff only: a manager, or someone who is staff both to Keycloak and on that project |
 | Access outliving the person's role | the role is read on every request, the session is refreshed with Keycloak every four minutes and ends after ten hours, a disabled account is refused at once, and management removes memberships |
@@ -151,7 +152,7 @@ images; which codenames belong to clients; credentials and sessions.
 | Guessed passwords | temporary lockout in Keycloak, no self-registration, no self-service password reset; the built-in login of `jwt` mode is throttled |
 | Keycloak's administration reached from outside | to the world the sign-in host serves the pool's realms and Keycloak's static files; the master realm, the admin console and the admin API answer only a request that starts on the server; `castlectl` signs in as a service account with a secret and no password; the master realm locks out after failed sign-ins |
 | Script in a finding or comment | Markdown goes through a sanitizer, diagrams render in mermaid's strict mode, and the Content-Security-Policy denies everything by default: scripts come from the portal's own files only, with no inline script or handler. The text itself is stored as written, since a finding may quote a payload |
-| A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served with `nosniff` to signed-in users |
+| A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served to signed-in users with `nosniff` and a policy of its own under which it loads and runs nothing; a text can show an upload as an image and nothing else |
 | Finding out which codenames are in use | tenants and canaries answer alike at the edge; certificates for the whole pool are issued and renewed in one batch; promoting a canary changes neither certificate nor DNS; a request by address or unknown name gets a neutral certificate; the bundled DNS allows no zone transfer |
 | A sign-in code that reaches someone else | it is of no use in another browser: Keycloak redeems it only for the verifier kept for the browser that asked (PKCE), and the proxy accepts the tokens only with that browser's nonce; a code is used once and lives a minute |
 | A stolen backup | bundles are encrypted on the host to a public key whose private half is kept elsewhere |

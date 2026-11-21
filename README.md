@@ -71,7 +71,9 @@ default.
   so a change there takes effect at once. Only `/api/auth/current` and
   `/api/auth/mode` are mounted. Castle reads those headers only from a request
   that carries the secret it shares with its proxy, and does not start in this
-  mode without one: see
+  mode without one. They are read strictly (one value each, a group by its
+  exact name), and a request that changes something has to come from the
+  portal's own pages: see
   [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md).
 
 Both modes resolve the request's user through one `CurrentUser` extractor in
