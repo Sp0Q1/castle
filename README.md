@@ -4,12 +4,17 @@ A [loco.rs](https://loco.rs) JSON API and React SPA for a security **reporting
 company**: management opens projects, onboards staff and clients, staff write
 findings, and clients read the published findings and comment on them.
 
+How the pieces fit in a deployment, how a request and a sign-in travel through
+them, and what the design defends against:
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Domain model
 
 ```
-users (role: manager | staff | client; status: invited | active)
+users (role: manager | staff | client; status: invited | active | disabled)
   │  1─* projects            created_by
-  │  1─* project_members     the onboarding join (role: staff | client)
+  │  1─* project_members     who is on a project and as what (role: staff |
+  │                          client; manager marks who opened it)
   │  1─* findings            author_id
   │  1─* comments            user_id
 projects  1─* project_members, 1─* findings
@@ -40,33 +45,39 @@ member without the right role gets 403.
 
 ## Authentication
 
-Selected by `settings.auth_mode`; the settings block is parsed strictly and a
-malformed one refuses to boot rather than falling back.
+Selected by `settings.auth_mode`. The settings block is parsed strictly when
+castle starts, and a malformed one stops it rather than falling back to a
+default.
 
 - **`jwt`** (development, tests): built-in email/password login issuing a JWT,
   plus verification, password reset and magic-link endpoints.
-- **`proxy`** (production): castle runs behind **oauth2-proxy**, which does the
-  OIDC flow with **Keycloak** and forwards identity as request headers. Castle
-  handles no credentials: users are provisioned on first sign-in and the role
-  is derived from Keycloak groups on every request. Only `/api/auth/current`
-  and `/api/auth/mode` are mounted. See
-  [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md),
-  including the network-isolation requirement.
-- **`honeypot`**: the same auth paths as `jwt`, but every handler captures the
-  attempt instead of authenticating. Used by decoy instances.
+- **`proxy`** (every deployment): castle runs behind **oauth2-proxy**, which
+  does the OIDC flow with **Keycloak** and forwards the identity as request
+  headers. Castle handles no credentials: a user is provisioned on first
+  sign-in, and the role is read from their Keycloak groups on every request,
+  so a change there takes effect at once. Only `/api/auth/current` and
+  `/api/auth/mode` are mounted. Castle trusts those headers, so it must be
+  reachable through the proxy and nothing else: see
+  [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md).
 
-All modes resolve the request's user through one `CurrentUser` extractor in
-`src/security.rs`, so controllers are identical across modes. Onboarding a
-not-yet-registered person by email creates an `invited` user that becomes
-`active` on first login.
+Both modes resolve the request's user through one `CurrentUser` extractor in
+`src/security.rs`, so controllers are identical across modes. Onboarding
+someone who has not signed in yet creates an `invited` user that becomes
+`active` on first sign-in. A `disabled` user is refused on every request, in
+both modes, whatever session they still hold.
+
+`settings.honeypot` is a separate switch: with it, the auth endpoints of `jwt`
+mode record what is submitted and authenticate nobody. The decoys of the
+Compose deployment do not use it; they run no castle at all.
 
 ## API
 
-Everything except the auth endpoints requires an authenticated user (a
-`Bearer` JWT in `jwt` mode, the proxy headers in `proxy` mode).
+Apart from signing in itself, `/api/auth/mode` and the logo, everything
+requires an authenticated user (a `Bearer` JWT in `jwt` mode, the proxy headers
+in `proxy` mode).
 
 ```
-GET    /api/auth/mode                              # which auth mode is running
+GET    /api/auth/mode                              # the auth mode, and the logo if one is set
 GET    /api/auth/current
 POST   /api/auth/register | login | forgot | reset # jwt mode only
 GET    /api/auth/verify/{token}                    # jwt mode only
@@ -93,6 +104,8 @@ POST   /api/findings/{finding_id}/comments         # { body }
 
 POST   /api/uploads                                # multipart image -> { url }
 GET    /api/uploads/{name}                         # authenticated, like the rest
+
+GET    /api/brand/logo                             # the deployment's logo, when configured
 ```
 
 The long fields and comment bodies are markdown; images pasted into the editor
@@ -100,6 +113,27 @@ go through `POST /api/uploads` and are embedded as `![](/api/uploads/<name>)`.
 Serving an upload requires authentication too. An `<img>` cannot send a token,
 so the SPA fetches each image through its API client and renders it from an
 object URL instead of pointing the browser at the endpoint.
+
+## Configuration and tasks
+
+`config/<environment>.yaml`. In production these come from the environment:
+
+| Variable | Meaning |
+|----------|---------|
+| `DATABASE_URL`, `JWT_SECRET` | required; without them castle does not start |
+| `CASTLE_AUTH_MODE` | `proxy` (the production default) or `jwt` |
+| `CASTLE_PROXY_SECRET` | optional: a secret the proxy must send with every request |
+| `CASTLE_LOGOUT_URL` | where sign-out sends the browser |
+| `CASTLE_LOGO` | path of an image shown instead of the built-in brand: PNG, JPEG, GIF, WebP or SVG, at most 1 MiB. One that cannot be served stops the server from starting |
+| `CASTLE_HONEYPOT` | `true` turns the instance into a decoy, see above |
+| `HOST`, `PORT` | public URL and listening port |
+
+Accounts are managed from the command line of the instance:
+
+```bash
+castle-cli task user:status email:someone@example.com status:disabled   # or status:active
+castle-cli task user:create email:… name:… password:…                   # jwt mode
+```
 
 ## Running it locally
 
@@ -130,5 +164,9 @@ One VPS, Podman Compose, Caddy at the edge, one Keycloak realm per tenant, and
 a pool of indistinguishable codename instances with certificates issued in
 bulk. Start at [`deploy/compose/README.md`](deploy/compose/README.md); the
 `castlectl` script there provisions, upgrades, backs up and restores. Host
-preparation, DNS, backups and admin rotation each have a page in
-[`deploy/compose/docs/`](deploy/compose/docs/).
+preparation, DNS, upgrades and backups, and admin rotation each have a page in
+[`deploy/compose/docs/`](deploy/compose/docs/). Sign-in, roles and sessions are
+in [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md).
+
+Every push to `main` builds the image and publishes it as
+`ghcr.io/sp0q1/castle:main`, with build provenance and an SBOM attached.

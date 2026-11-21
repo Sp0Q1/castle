@@ -34,12 +34,12 @@ src/
   api/
     types.ts             TS types mirroring the API responses
     client.ts            fetch wrapper (attaches the JWT) + typed endpoints
-  auth/session.ts        auth mode + token storage + the root loader
+  auth/session.ts        auth mode + token storage + the root loader + who is project staff
   App.tsx                route tree, header, error element
   pages/                 each exports Component + loader/action
     LoginPage.tsx  RegisterPage.tsx   (jwt mode only)
     ProjectsPage.tsx        list + (manager) create
-    ProjectDetailPage.tsx   members + findings + (manager) onboard + (staff) new finding
+    ProjectDetailPage.tsx   members + findings + (manager) onboard, change, remove + (staff) new finding
     FindingDetailPage.tsx   the four report sections + (staff) publish + comments
 ```
 

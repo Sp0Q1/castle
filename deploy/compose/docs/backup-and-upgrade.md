@@ -2,19 +2,45 @@
 
 ## Upgrading
 
-The castle app runs pending schema migrations on boot (`auto_migrate: true`), so
-an app upgrade is just a new image plus a recreate:
+An upgrade has two parts: the platform (Caddy, Keycloak and its database,
+BIND) and the instances (every tenant and canary).
 
+```bash
+cd /opt/castle/deploy/compose
+git pull                          # templates, version pins, castlectl itself
+./castlectl backup                # before anything changes
+
+# the platform
+podman compose -f platform.compose.yml --profile self-dns pull
+podman compose -f platform.compose.yml --profile self-dns up -d --force-recreate
+
+# the instances
+./castlectl upgrade               # every running one (or: upgrade <codename>)
+./castlectl list
 ```
-# bump CASTLE_IMAGE in .env to the new tag/digest, then:
-./castlectl upgrade            # every running instance (or: upgrade <codename>)
-```
 
-`upgrade` re-renders each running instance, pulls, and `up -d`s it — **data
-volumes are kept**, and migrations apply on boot. It handles the per-tenant
-fan-out for you.
+Then sign in once. (Leave out `--profile self-dns` if you do not run the
+bundled nameserver.)
 
-Two things it does **not** paper over:
+**The platform needs `--force-recreate`.** podman-compose replaces a container
+only when its definition changed. A newer image pulled under the same tag is
+not such a change, so without the flag the old containers keep running. While
+it recreates, it may report that a network "has associated containers": the
+instances' proxies are attached to it, and they stay up.
+
+**`castlectl upgrade`** renders every running instance again from the
+templates, rewrites its vhost, pulls, and recreates what changed. **Data
+volumes are kept**, and castle applies pending schema migrations when it starts
+(`auto_migrate: true`). One instance that fails does not stop the others; the
+summary at the end names it and the exit status is non-zero.
+
+`CASTLE_IMAGE` in `.env` names the castle image. `ghcr.io/sp0q1/castle:main`
+follows the `main` branch. `upgrade` resolves it to a digest once, so every
+tenant gets the same build, and prints the first twelve characters of the
+digest it moved each tenant to. Compare that with the build you meant to
+deploy. Setting `CASTLE_IMAGE` to a digest pins that build, for a rollback.
+
+Two things an upgrade does **not** paper over:
 
 - **Postgres *major* upgrades are not a tag bump.** A new major won't boot on the
   old major's data dir ("database files are incompatible"), so it needs a
@@ -84,6 +110,8 @@ can't be re-derived:
 can never orphan the data — the trap where you restore a database but lose the
 JWT/DB/oauth secrets that make it usable.
 
+Not in the bundle: a logo in `branding/`. Keep a copy of that file.
+
 ### Key custody (do this once, off the VPS)
 
 ```
@@ -100,8 +128,8 @@ backups. `restore` needs the identity via `BACKUP_AGE_IDENTITY`.
 ./castlectl backup                     # -> ./backups/castle-backup-<ts>.tar.age
 ```
 
-Schedule it from cron, and copy the `.age` files off-box (or let your VPS
-snapshots carry them). This is a *complement* to VPS snapshots: snapshots are your
+Run it from the timer below, and copy the `.age` files off-box. This is a
+*complement* to VPS snapshots: snapshots are your
 whole-box disaster recovery; these bundles add portability, per-tenant granular
 restore, and off-provider safety — and, unlike re-issuing, they preserve the
 existing certs so a restore creates **no new Certificate Transparency entries**.
@@ -152,12 +180,16 @@ On a fresh box:
 ```
 export BACKUP_AGE_IDENTITY=/path/to/castle-backup.key
 ./castlectl restore backups/castle-backup-<ts>.tar.age --yes   # restores secrets, certs, .env
-docker compose -f platform.compose.yml --profile self-dns up -d
+podman compose -f platform.compose.yml --profile self-dns up -d
 ./castlectl restore backups/castle-backup-<ts>.tar.age --yes   # now loads Keycloak realms/users
-./castlectl provision-pool                                     # brings tenant stacks up on the restored secrets
+./castlectl provision-pool                                     # every codename comes up as a canary
+./castlectl promote <codename>                                 # once per tenant, on its restored secrets
 ./castlectl restore backups/castle-backup-<ts>.tar.age --yes   # loads each tenant DB + uploads
 ```
 
-Re-running is harmless: each pass loads whatever is now reachable and reports what
-still needs a stack brought up. The `--yes` flag is required because a restore
-overwrites secrets/certs and reloads databases.
+Re-running is harmless: each pass loads whatever is now reachable and names
+the tenants it could not reach yet. The `--yes` flag is required because a
+restore overwrites secrets/certs and reloads databases.
+
+Try this on a spare machine before you depend on it, and again after a change
+to the backup or the templates.

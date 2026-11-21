@@ -61,8 +61,7 @@ podman compose -f platform.compose.yml up -d keycloak   # or: docker compose ...
 
 The account steps (1–4) can be scripted with `kcadm.sh` inside the running
 container; TOTP enrolment (step 5) is interactive by design and still done in the
-browser. Ask if you want a `castlectl rotate-admin` helper that does the kcadm
-part — it's a small addition, left out here because a one-time, security-critical
+browser. There is no `castlectl` command for it: a one-time, security-critical
 rotation is clearest done deliberately by hand.
 
 ## Recovery
