@@ -85,6 +85,7 @@ caddy/
 castlectl                 provisioner: issue-pool · allocate · promote · deprovision · list
 keycloak-realm.sh         creates a tenant's (or an empty canary's) Keycloak realm
 codenames.txt             the pool every tenant and decoy is named from
+branding/                 a file named `logo` here replaces the built-in brand (git-ignored)
 .env.example             configuration
 ```
 
