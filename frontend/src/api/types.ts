@@ -50,7 +50,7 @@ export interface Project {
 
 export interface Member {
   id: number;
-  /** capacity onboarded in: "staff" | "client" */
+  /** capacity on the project: "staff" | "client", or "manager" for who opened it */
   role: string;
   user: UserSummary;
   created_at: string;

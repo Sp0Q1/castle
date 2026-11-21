@@ -1,8 +1,8 @@
 //! Projects are opened by management and are the container into which staff and
 //! clients are onboarded. Access rules enforced here:
-//!   * create a project ...... management only
-//!   * onboard a member ...... management only
-//!   * view a project ........ management, or a user onboarded to it
+//!   * create a project ................... management only
+//!   * onboard, change or remove a member . management only
+//!   * view a project ..................... management, or a user onboarded to it
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -28,9 +28,28 @@ pub struct OnboardParams {
     pub role: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MemberRoleParams {
+    /// Capacity the member holds from now on.
+    pub role: String,
+}
+
 /// Loads a project by id or returns 404.
 async fn load_project(ctx: &AppContext, id: i64) -> Result<projects::Model> {
     projects::Entity::find_by_id(id)
+        .one(&ctx.db)
+        .await?
+        .ok_or_else(|| Error::NotFound)
+}
+
+/// Loads a membership of `project_id` by its id or returns 404.
+async fn load_member(
+    ctx: &AppContext,
+    project_id: i64,
+    member_id: i64,
+) -> Result<project_members::Model> {
+    project_members::Entity::find_by_id(member_id)
+        .filter(project_members::Column::ProjectId.eq(project_id))
         .one(&ctx.db)
         .await?
         .ok_or_else(|| Error::NotFound)
@@ -168,6 +187,50 @@ pub async fn onboard(
 }
 
 #[debug_handler]
+pub async fn change_member(
+    CurrentUser(user): CurrentUser,
+    Path((project_id, member_id)): Path<(i64, i64)>,
+    State(ctx): State<AppContext>,
+    Json(params): Json<MemberRoleParams>,
+) -> Result<Response> {
+    if !user.is_manager() {
+        return Err(crate::security::forbidden(
+            "only management can change a member's role",
+        ));
+    }
+    let role = OnboardRole::parse(&params.role).map_err(Error::BadRequest)?;
+    let member = load_member(&ctx, project_id, member_id).await?;
+    let target = users::Entity::find_by_id(member.user_id)
+        .one(&ctx.db)
+        .await?
+        .ok_or_else(|| Error::NotFound)?;
+
+    let mut member = member.into_active_model();
+    member.role = Set(role.into());
+    let member = member.update(&ctx.db).await?;
+
+    format::json(MemberResponse::new(&member, &target))
+}
+
+#[debug_handler]
+pub async fn remove_member(
+    CurrentUser(user): CurrentUser,
+    Path((project_id, member_id)): Path<(i64, i64)>,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
+    if !user.is_manager() {
+        return Err(crate::security::forbidden(
+            "only management can remove members",
+        ));
+    }
+    load_member(&ctx, project_id, member_id)
+        .await?
+        .delete(&ctx.db)
+        .await?;
+    format::empty()
+}
+
+#[debug_handler]
 pub async fn list_members(
     CurrentUser(user): CurrentUser,
     Path(project_id): Path<i64>,
@@ -197,4 +260,6 @@ pub fn routes() -> Routes {
         .add("/{project_id}", get(show))
         .add("/{project_id}/members", post(onboard))
         .add("/{project_id}/members", get(list_members))
+        .add("/{project_id}/members/{member_id}", put(change_member))
+        .add("/{project_id}/members/{member_id}", delete(remove_member))
 }

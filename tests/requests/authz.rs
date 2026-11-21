@@ -846,6 +846,96 @@ async fn a_proxy_session_does_not_re_enable_a_disabled_account() {
     .await;
 }
 
+/// Memberships are management's to change, and a change decides what the member
+/// can do from the next request on.
+#[tokio::test]
+#[serial]
+async fn management_changes_and_removes_memberships() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let (mh, mv) = bearer(&f.manager_token);
+        let (sh, sv) = bearer(&f.staff_token);
+        let project = format!("/api/projects/{}", f.project_id);
+        let members = format!("{project}/members");
+        let draft = format!("/api/findings/{}", f.draft_id);
+        let as_client = serde_json::json!({ "role": "client" });
+
+        let listed: Vec<serde_json::Value> = request.get(&members).add_header(mh, &mv).await.json();
+        let staff = listed
+            .iter()
+            .find(|m| m["user"]["email"] == "staff@test.com")
+            .expect("the staff member");
+        let member = format!("{members}/{}", staff["id"]);
+
+        for token in [&f.staff_token, &f.client_token, &f.outsider_token] {
+            let (h, v) = bearer(token);
+            let changed = request.put(&member).add_header(h, &v).json(&as_client);
+            assert_eq!(changed.await.status_code(), 403);
+            let removed = request.delete(&member).add_header(h, &v);
+            assert_eq!(removed.await.status_code(), 403);
+        }
+        let read = request.get(&draft).add_header(sh, &sv).await;
+        assert_eq!(read.status_code(), 200);
+
+        // As a client of the project the same account reads what clients read.
+        let changed = request
+            .put(&member)
+            .add_header(mh, &mv)
+            .json(&as_client)
+            .await;
+        assert_eq!(changed.status_code(), 200);
+        assert_eq!(changed.json::<serde_json::Value>()["role"], "client");
+        let read = request.get(&draft).add_header(sh, &sv).await;
+        assert_eq!(read.status_code(), 404);
+
+        let changed = request
+            .put(&member)
+            .add_header(mh, &mv)
+            .json(&serde_json::json!({ "role": "staff" }))
+            .await;
+        assert_eq!(changed.status_code(), 200);
+        let read = request.get(&draft).add_header(sh, &sv).await;
+        assert_eq!(read.status_code(), 200);
+
+        // Management is not a capacity a membership can give.
+        let minted = request
+            .put(&member)
+            .add_header(mh, &mv)
+            .json(&serde_json::json!({ "role": "manager" }))
+            .await;
+        assert_eq!(minted.status_code(), 400);
+
+        // A membership is reached through its own project only.
+        let other: serde_json::Value = request
+            .post("/api/projects")
+            .add_header(mh, &mv)
+            .json(&serde_json::json!({ "name": "Other" }))
+            .await
+            .json();
+        let elsewhere = format!("/api/projects/{}/members/{}", other["id"], staff["id"]);
+        let changed = request
+            .put(&elsewhere)
+            .add_header(mh, &mv)
+            .json(&as_client)
+            .await;
+        assert_eq!(changed.status_code(), 404);
+        let removed = request.delete(&elsewhere).add_header(mh, &mv).await;
+        assert_eq!(removed.status_code(), 404);
+
+        // Removed, the project is to them like any other they are not on.
+        let removed = request.delete(&member).add_header(mh, &mv).await;
+        assert_eq!(removed.status_code(), 200);
+        for path in [&project, &draft] {
+            let read = request.get(path).add_header(sh, &sv).await;
+            assert_eq!(read.status_code(), 404, "{path}");
+        }
+        let removed = request.delete(&member).add_header(mh, &mv).await;
+        assert_eq!(removed.status_code(), 404);
+    })
+    .await;
+}
+
 /// Staff capacity on a project takes the IdP's word and a manager's. An account
 /// the IdP calls a client stays one whatever it is onboarded as, whichever of
 /// the two happened first.
