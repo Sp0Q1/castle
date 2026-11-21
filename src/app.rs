@@ -60,6 +60,11 @@ impl Hooks for App {
                  network isolation alone — set a shared secret for defense-in-depth"
             );
         }
+        // A logo that cannot be served is a configuration error, and one an
+        // operator would otherwise only notice as a broken image in the header.
+        if let Some(path) = settings.logo_path() {
+            controllers::brand::load(path).await?;
+        }
         create_app::<Self, Migrator>(mode, environment, config).await
     }
 
@@ -82,6 +87,7 @@ impl Hooks for App {
             .add_route(controllers::findings::routes())
             .add_route(controllers::comments::routes())
             .add_route(controllers::uploads::routes())
+            .add_route(controllers::brand::routes())
     }
     /// Castle runs no background jobs — every operation it performs is
     /// request-scoped — but `Hooks` requires the registration point.

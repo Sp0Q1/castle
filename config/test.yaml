@@ -97,3 +97,4 @@ auth:
 # that production runs.
 settings:
   auth_mode: <%= get_env(name="CASTLE_AUTH_MODE", default="jwt") %>
+  logo: <%= get_env(name="CASTLE_LOGO", default="") %>

@@ -106,3 +106,4 @@ auth:
 # so the login page works locally; production runs behind oauth2-proxy ("proxy").
 settings:
   auth_mode: jwt
+  logo: <%= get_env(name="CASTLE_LOGO", default="") %>

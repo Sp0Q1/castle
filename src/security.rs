@@ -77,9 +77,19 @@ pub struct Settings {
     /// metadata and return believable responses, without ever touching a real
     /// DB. Set on canary/honeypot instances only.
     pub honeypot: bool,
+    /// Path of an image that replaces the built-in brand in the portal's header
+    /// (see `controllers::brand`). Empty or absent: the built-in brand.
+    pub logo: Option<String>,
 }
 
 impl Settings {
+    /// The configured logo, if there is one. An empty value means "not set", so
+    /// a deployment can always pass the variable.
+    #[must_use]
+    pub fn logo_path(&self) -> Option<&str> {
+        self.logo.as_deref().filter(|path| !path.is_empty())
+    }
+
     #[must_use]
     pub fn from_ctx(ctx: &AppContext) -> Self {
         // `settings` is validated at boot (`try_from_config`, called from

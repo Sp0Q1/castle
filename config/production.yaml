@@ -110,6 +110,8 @@ settings:
   # `castle::honeypot` log target and return believable responses (no real DB).
   # Set only on canary instances (the chart sets it from .Values.honeypot).
   honeypot: <%= get_env(name="CASTLE_HONEYPOT", default="false") %>
+  # An image file that replaces the built-in brand in the header. Empty: none.
+  logo: <%= get_env(name="CASTLE_LOGO", default="") %>
   proxy:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
     # x-forwarded-* variants; an nginx/ingress auth_request setup with

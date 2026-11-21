@@ -209,19 +209,24 @@ async fn current(
 #[derive(Serialize)]
 struct ModeResponse {
     mode: &'static str,
+    /// Where the deployment's own logo is, when it has one.
+    logo: Option<&'static str>,
 }
 
-/// Reports the auth mode so the SPA knows whether to render its own login form
-/// (`jwt`) or leave signing in to the proxy (`proxy`). Needs no identity and
+/// What the SPA has to know before it has a user: the auth mode, so it renders
+/// its own login form (`jwt`) or leaves signing in to the proxy (`proxy`), and
+/// whether the deployment brings its own logo. Needs no identity and
 /// exposes nothing sensitive. In proxy mode the proxy exempts no path, so only
 /// signed-in browsers and the container healthcheck ever reach it.
 #[debug_handler]
 async fn mode(State(ctx): State<AppContext>) -> Result<Response> {
-    let mode = match crate::security::Settings::from_ctx(&ctx).auth_mode {
+    let settings = crate::security::Settings::from_ctx(&ctx);
+    let mode = match settings.auth_mode {
         crate::security::AuthMode::Proxy => "proxy",
         crate::security::AuthMode::Jwt => "jwt",
     };
-    format::json(ModeResponse { mode })
+    let logo = settings.logo_path().map(|_| super::brand::LOGO_URL);
+    format::json(ModeResponse { mode, logo })
 }
 
 /// Magic link authentication provides a secure and passwordless way to log in to the application.
