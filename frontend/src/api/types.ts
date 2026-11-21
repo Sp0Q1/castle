@@ -3,6 +3,13 @@ export type Role = "manager" | "staff" | "client";
 /** GET /api/auth/mode — "jwt" has built-in login/register, "proxy" defers to the IdP. */
 export type AuthMode = "jwt" | "proxy";
 
+/** GET /api/auth/mode — what the server says about itself before anyone signs in. */
+export interface About {
+  mode: AuthMode;
+  /** Where the deployment's own logo is served, when it has one. */
+  logo: string | null;
+}
+
 /** GET /api/auth/current */
 export interface CurrentUser {
   id: number;

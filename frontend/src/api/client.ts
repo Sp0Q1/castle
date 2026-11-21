@@ -1,5 +1,5 @@
 import type {
-  AuthMode,
+  About,
   Comment,
   CreateFindingParams,
   CurrentUser,
@@ -86,8 +86,7 @@ export const api = {
   currentUser: (): Promise<CurrentUser> =>
     request<CurrentUser>("/auth/current"),
 
-  authMode: (): Promise<{ mode: AuthMode }> =>
-    request<{ mode: AuthMode }>("/auth/mode"),
+  about: (): Promise<About> => request<About>("/auth/mode"),
 
   listProjects: (): Promise<Project[]> => request<Project[]>("/projects"),
 

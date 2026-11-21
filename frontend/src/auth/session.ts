@@ -18,14 +18,17 @@ const TOKEN_KEY = "castle.token";
 // Resolved once at startup and fixed for the life of the page. Loaders and
 // actions run outside React, so this cannot live in component state.
 let mode: AuthMode = "jwt";
+let logo: string | null = null;
+
+/** The deployment's own logo, when it has one; otherwise the built-in brand is shown. */
+export const brandLogo = (): string | null => logo;
 
 /** Resolves the server's auth mode and restores a jwt session. Call once, before routing. */
 export async function initAuth(): Promise<AuthMode> {
-  mode = await api
-    .authMode()
-    .then((r) => r.mode)
-    // Mode unknown (API unreachable): behave like jwt and show the local form.
-    .catch((): AuthMode => "jwt");
+  // Unknown (API unreachable): behave like jwt and show the local form.
+  const about = await api.about().catch(() => null);
+  mode = about?.mode ?? "jwt";
+  logo = about?.logo ?? null;
   if (mode === "jwt") {
     setAuthToken(sessionStorage.getItem(TOKEN_KEY));
   }
