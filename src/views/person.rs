@@ -44,10 +44,7 @@ impl PersonResponse {
             created_at: user.created_at.to_rfc3339(),
             projects: memberships
                 .iter()
-                // An older row naming who opened a project is not a membership.
-                .filter(|(member, _)| {
-                    member.user_id == user.id && member.role != MemberRole::Manager
-                })
+                .filter(|(member, _)| member.user_id == user.id)
                 .filter_map(|(member, project)| {
                     project.as_ref().map(|project| PersonProject {
                         id: project.id,
