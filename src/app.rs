@@ -41,10 +41,24 @@ impl Hooks for App {
         environment: &Environment,
         config: Config,
     ) -> Result<BootResult> {
-        // Fail closed: a malformed `settings:` block stops boot rather than
-        // silently reverting to jwt mode (the least-safe default) in a
+        // loco's `start` command calls `create_app` directly; only the test
+        // harness comes through here. What must stop a start lives in the two
+        // hooks below.
+        create_app::<Self, Migrator>(mode, environment, config).await
+    }
+
+    /// Runs for every command, as soon as there is a context.
+    async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        // Fail closed: a malformed `settings:` block stops everything rather
+        // than silently reverting to jwt mode (the least-safe default) in a
         // proxy-mode tenant — see `Settings::try_from_config`.
-        let settings = crate::security::Settings::try_from_config(&config)?;
+        crate::security::Settings::try_from_config(&ctx.config)?;
+        Ok(ctx)
+    }
+
+    /// Runs when the app is about to serve.
+    async fn before_run(ctx: &AppContext) -> Result<()> {
+        let settings = crate::security::Settings::from_ctx(ctx);
         // Proxy mode trusts x-forwarded-* headers. If the defense-in-depth shared
         // secret isn't set the app leans on network isolation alone — say so
         // loudly instead of leaving it a silent no-op.
@@ -65,7 +79,7 @@ impl Hooks for App {
         if let Some(path) = settings.logo_path() {
             controllers::brand::load(path).await?;
         }
-        create_app::<Self, Migrator>(mode, environment, config).await
+        Ok(())
     }
 
     fn routes(ctx: &AppContext) -> AppRoutes {
