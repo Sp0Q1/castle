@@ -25,7 +25,9 @@ Then sign in once. (Leave out `--profile self-dns` if you do not run the
 bundled nameserver.)
 
 **The platform needs `--force-recreate`.** podman-compose replaces a container
-only when its definition changed. A newer image pulled under the same tag is
+only when its definition changed. A change to `caddy/Caddyfile` needs it too:
+the file is mounted on its own, so the running Caddy keeps the one it started
+with. A newer image pulled under the same tag is
 not such a change, so without the flag the old containers keep running. While
 it recreates, it may report that a network "has associated containers": the
 instances' proxies are attached to it, and they stay up.
