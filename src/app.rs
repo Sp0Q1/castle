@@ -49,9 +49,10 @@ impl Hooks for App {
 
     /// Runs for every command, as soon as there is a context.
     async fn after_context(ctx: AppContext) -> Result<AppContext> {
-        // Fail closed: a malformed `settings:` block stops everything rather
-        // than silently reverting to jwt mode (the least-safe default) in a
-        // proxy-mode tenant — see `Settings::try_from_config`.
+        // Fail closed: a malformed `settings:` block, or proxy mode without the
+        // proxy's secret, stops everything rather than silently reverting to
+        // jwt mode or believing whoever reaches the port — see
+        // `Settings::try_from_config`.
         crate::security::Settings::try_from_config(&ctx.config)?;
         Ok(ctx)
     }
@@ -59,21 +60,6 @@ impl Hooks for App {
     /// Runs when the app is about to serve.
     async fn before_run(ctx: &AppContext) -> Result<()> {
         let settings = crate::security::Settings::from_ctx(ctx);
-        // Proxy mode trusts x-forwarded-* headers. If the defense-in-depth shared
-        // secret isn't set the app leans on network isolation alone — say so
-        // loudly instead of leaving it a silent no-op.
-        if matches!(settings.auth_mode, crate::security::AuthMode::Proxy)
-            && settings
-                .proxy
-                .shared_secret
-                .as_deref()
-                .is_none_or(str::is_empty)
-        {
-            tracing::warn!(
-                "proxy auth mode without CASTLE_PROXY_SECRET: identity headers are trusted on \
-                 network isolation alone — set a shared secret for defense-in-depth"
-            );
-        }
         // A logo that cannot be served is a configuration error, and one an
         // operator would otherwise only notice as a broken image in the header.
         if let Some(path) = settings.logo_path() {

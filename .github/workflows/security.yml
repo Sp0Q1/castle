@@ -194,6 +194,12 @@ jobs:
           help="$(docker run --rm castle:ci --help)"
           grep -q '^  start' <<<"$help" \
             || { echo "::error::image binary does not behave like castle-cli"; exit 1; }
+          # Proxy mode is what a deployment runs, and it must not start without
+          # the secret it shares with its proxy.
+          out="$(timeout 60 docker run --rm -e JWT_SECRET=smoke \
+            -e 'DATABASE_URL=sqlite:///tmp/smoke.sqlite?mode=rwc' castle:ci 2>&1 || true)"
+          grep -qF "CASTLE_PROXY_SECRET" <<<"$out" \
+            || { echo "::error::proxy mode started without its proxy's secret"; exit 1; }
           # A malformed auth setting must stop the binary that ships, so the
           # image is asked as well as the tests.
           out="$(timeout 60 docker run --rm -e CASTLE_AUTH_MODE=Proxy -e JWT_SECRET=smoke \
