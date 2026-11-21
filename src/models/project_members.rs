@@ -5,19 +5,16 @@ use serde::{Deserialize, Serialize};
 pub use super::_entities::project_members::{ActiveModel, Column, Entity, Model};
 use super::_entities::users;
 
-/// The capacity a manager onboarded a user in *on one project* — distinct from
-/// their platform-wide [`crate::models::users::UserRole`], which an IdP group
-/// decides. Finding authorization asks both: see
-/// [`crate::models::users::Model::is_project_staff`].
+/// The capacity a manager put a user in *on one project* — distinct from their
+/// platform-wide [`crate::models::users::UserRole`], which an IdP group decides.
+/// Finding authorization asks both: see
+/// [`crate::models::users::Model::is_project_staff`]. Management is not a
+/// capacity: a manager's access comes from the role, on every project, so there
+/// is no value for it here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "lowercase")]
 pub enum MemberRole {
-    /// No longer written and never read as a membership: a manager's access
-    /// comes from the role, on every project. Older rows still say this for
-    /// the manager who opened a project.
-    #[sea_orm(string_value = "manager")]
-    Manager,
     /// May author, edit and publish findings.
     #[sea_orm(string_value = "staff")]
     Staff,
@@ -26,34 +23,16 @@ pub enum MemberRole {
     Client,
 }
 
-/// The capacities a manager may onboard someone in. Onboarding cannot mint
-/// another manager, so that is not representable here rather than checked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OnboardRole {
-    Staff,
-    Client,
-}
-
-impl OnboardRole {
-    /// Parses a caller-supplied onboarding role.
+impl MemberRole {
+    /// Parses a caller-supplied capacity.
     ///
     /// # Errors
-    /// When `value` names anything other than the capacities a manager may grant.
+    /// When `value` names anything other than the capacities a membership can hold.
     pub fn parse(value: &str) -> std::result::Result<Self, String> {
         match value {
             "staff" => Ok(Self::Staff),
             "client" => Ok(Self::Client),
             _ => Err("role must be one of: staff, client".to_string()),
-        }
-    }
-}
-
-impl From<OnboardRole> for MemberRole {
-    fn from(role: OnboardRole) -> Self {
-        match role {
-            OnboardRole::Staff => Self::Staff,
-            OnboardRole::Client => Self::Client,
         }
     }
 }
@@ -76,13 +55,6 @@ impl ActiveModelBehavior for super::_entities::project_members::ActiveModel {
 
 // read-oriented logic
 impl Model {
-    /// The rows that put someone on a project. Everything that reads a
-    /// membership starts here.
-    #[must_use]
-    pub fn memberships() -> sea_orm::Select<Entity> {
-        Entity::find().filter(Column::Role.ne(MemberRole::Manager))
-    }
-
     /// Returns the membership row for `user_id` in `project_id`, if the user is
     /// onboarded to that project.
     ///
@@ -93,7 +65,7 @@ impl Model {
         project_id: i64,
         user_id: i64,
     ) -> ModelResult<Option<Self>> {
-        let member = Self::memberships()
+        let member = Entity::find()
             .filter(Column::ProjectId.eq(project_id))
             .filter(Column::UserId.eq(user_id))
             .one(db)
@@ -123,7 +95,7 @@ impl Model {
         db: &DatabaseConnection,
         project_id: i64,
     ) -> ModelResult<Vec<(Self, Option<users::Model>)>> {
-        let members = Self::memberships()
+        let members = Entity::find()
             .filter(Column::ProjectId.eq(project_id))
             .find_also_related(users::Entity)
             .all(db)

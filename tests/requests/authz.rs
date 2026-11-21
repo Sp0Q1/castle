@@ -251,33 +251,6 @@ async fn managers_are_listed_and_are_not_members() {
             .add_header(oh, &ov)
             .await;
         assert_eq!(hidden.status_code(), 404);
-
-        // A row from before, naming who opened a project, is not a membership:
-        // it opens nothing, is not listed and cannot be reached.
-        let outsider = users::Model::find_by_email(&ctx.db, "outsider@test.com")
-            .await
-            .expect("outsider");
-        let marker = project_members::ActiveModel {
-            project_id: Set(f.project_id),
-            user_id: Set(outsider.id),
-            role: Set(MemberRole::Manager),
-            ..Default::default()
-        }
-        .insert(&ctx.db)
-        .await
-        .expect("insert the old kind of row");
-        let opened = request.get(&shared).add_header(oh, &ov).await;
-        assert_eq!(opened.status_code(), 404);
-        let listed = request
-            .get(&format!("{shared}/members"))
-            .add_header(mh, &mv)
-            .await;
-        assert!(!listed.text().contains("outsider@test.com"));
-        let removed = request
-            .delete(&format!("{shared}/members/{}", marker.id))
-            .add_header(mh, &mv)
-            .await;
-        assert_eq!(removed.status_code(), 404);
     })
     .await;
 }
@@ -605,7 +578,7 @@ async fn severity_and_status_stay_lowercase_strings_on_the_wire() {
         assert!(
             roles
                 .iter()
-                .all(|r| ["manager", "staff", "client"].contains(&r.as_str())),
+                .all(|r| ["staff", "client"].contains(&r.as_str())),
             "member roles changed shape on the wire: {roles:?}"
         );
     })
@@ -629,7 +602,7 @@ async fn rows_written_as_plain_strings_still_load() {
                 f.draft_id
             ),
             format!(
-                "UPDATE project_members SET role = 'manager' WHERE project_id = {}",
+                "UPDATE project_members SET role = 'client' WHERE project_id = {}",
                 f.project_id
             ),
             "UPDATE users SET status = 'invited' WHERE email = 'client@test.com'".to_string(),
@@ -652,7 +625,7 @@ async fn rows_written_as_plain_strings_still_load() {
             .await
             .expect("load members");
         assert!(
-            !members.is_empty() && members.iter().all(|m| m.role == MemberRole::Manager),
+            !members.is_empty() && members.iter().all(|m| m.role == MemberRole::Client),
             "membership roles did not load from their stored strings"
         );
 
