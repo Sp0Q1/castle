@@ -120,6 +120,17 @@ BACKUP_PUSH_CMD="${BACKUP_PUSH_CMD:-}"             # optional off-box copy per b
 UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:18-alpine}"
 
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+# A directory for what must not outlive the command: database dumps, an opened
+# bundle. It is removed when the shell that asked for it ends, whichever way
+# that is: on a return, on `die`, on a signal. The trap is set here and not
+# once at the top because a subshell starts without its parent's traps.
+WORK=()
+remove_work(){ [[ ${#WORK[@]} -eq 0 ]] || rm -rf "${WORK[@]}"; }
+workdir(){ # <name of the variable that gets the path>
+  local -n into="$1"
+  into="$(mktemp -d)" || die "could not make a work directory"
+  WORK+=("$into"); trap remove_work EXIT
+}
 # Run a command silently on success but, on failure, die WITH its output — so the
 # operator sees the actual cause (a failed pull, a compose conflict) instead of a
 # generic line. Replaces the old `>/dev/null 2>&1 || die "..."` that hid it. (Only
@@ -156,6 +167,8 @@ hostport_of(){ echo "$1.$BASE_DOMAIN${EXTERNAL_PORT:+:$EXTERNAL_PORT}"; }
 realm_of(){ echo "${KC_REALM_PREFIX}$1"; }
 rand(){ openssl rand -base64 "${1:-32}" | tr -d '\n'; }
 proj_of(){ echo "castle-$1"; }
+# The volumes of a codename's project: a tenant's database and uploads.
+volumes_of(){ "$ENGINE" volume ls --format '{{.Name}}' | grep -E "^$(proj_of "$1")_" || true; }
 mkdir -p "$RUN"
 
 pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
@@ -463,6 +476,11 @@ demote(){ # <codename> --yes [--no-export]
   compose_instance "$cn" down -v >/dev/null 2>&1
   rm -f "$RUN/$cn".{client,cookie,jwt,db,upstream}
   provision_canary "$cn"; reload_caddy
+  # "Destroyed" is said when it is so. The codename answers as a canary again
+  # either way, so it does not go dark; a volume that `down -v` left behind is
+  # the client's data, and this ends by naming it.
+  local left; left="$(volumes_of "$cn")"
+  [[ -z "$left" ]] || die "'$cn' is a canary again, but its data is still on this host. Remove it: $ENGINE volume rm ${left//$'\n'/ }"
 }
 
 deprovision(){ # <codename>
@@ -664,7 +682,7 @@ backup(){
   need age; need "$ENGINE"; need tar
   local ts work out cn
   ts="$(date +%Y%m%d-%H%M%S)"
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  workdir work
   echo "backup: platform + tenants -> encrypted bundle"
   # Platform: Keycloak realms/users, plus the re-derivable-only state (all
   # per-codename secrets, the whole pre-issued cert pool, the dehydrated account,
@@ -712,8 +730,7 @@ backup(){
 
   # The bundle was written (and pushed/pruned) so the tenants that DID dump are
   # safe, but if any tenant was incomplete, exit nonzero — a cron/timer run must
-  # not look clean when a tenant's data is missing. (return, not exit, so the
-  # RETURN trap still clears $work.)
+  # not look clean when a tenant's data is missing.
   batch_result backup "$tcount" "${bfails[@]}" || return 1
 }
 
@@ -730,7 +747,7 @@ restore(){ # <backup-file> [--yes]
   local work cn
   local -a rfails=()
   local attempted=0 kerr terr uerr
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  workdir work
   echo "restore: decrypting $file"
   age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
 
@@ -787,8 +804,7 @@ restore(){ # <backup-file> [--yes]
     fi
   done
   # A pass where nothing was reachable (attempted=0) is fine — the multi-pass flow
-  # expects it. Fail only when something we DID try to load errored. (return, not
-  # exit, so the RETURN trap still clears $work.)
+  # expects it. Fail only when something we DID try to load errored.
   batch_result restore "$attempted" "${rfails[@]}" || return 1
   echo "restore pass complete."
 }
@@ -805,7 +821,7 @@ export_tenant(){ # <codename>
   [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted export"
   need age; need jq; need "$ENGINE"; need tar
   ts="$(date +%Y%m%d-%H%M%S)"
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  workdir work
   err="$($ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle 2>&1 > "$work/db.sql")" \
     || die "pg_dump failed for $cn — ${err##*"$NL"}"
   err="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" tar cf - -C /data . 2>&1 > "$work/uploads.tar")" \
@@ -824,7 +840,7 @@ import_tenant(){ # <tenant-bundle> <codename>
   [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
   [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary — a tenant bundle goes into a codename that is not in use"
   need age; need jq; need "$ENGINE"; need tar
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  workdir work
   age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
   [[ -f "$work/db.sql" && -f "$work/uploads.tar" ]] && jq -e 'type == "array"' "$work/people.json" >/dev/null 2>&1 \
     || die "$file is not a tenant bundle"
