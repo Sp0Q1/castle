@@ -78,6 +78,15 @@ role from Keycloak and the capacity from the manager.
 | disable or delete the user in Keycloak, or remove them from a group | within four minutes, at the session's next refresh |
 | `podman exec castle-<codename> castle-cli task --environment production user:status email:<email> status:disabled` | at the next request |
 | remove them from a project in the portal | at the next request, for that project |
+| `podman exec castle-<codename> castle-cli task --environment production user:anonymize email:<email>` | at the next request: the account is disabled, off every project, and carries a placeholder in place of the name and address |
+
+Someone who leaves for good is anonymized, not deleted, so the findings and
+comments they wrote stay in place. Delete them in Keycloak as well, or their
+next sign-in starts a new account.
+
+Managers see everyone with an account, with role, status and projects, under
+"People" in the portal; `./castlectl users <codename>` prints what the realm
+holds.
 
 ## Sessions
 

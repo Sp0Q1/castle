@@ -42,6 +42,7 @@ member without the right role gets 403.
 | Read findings | those who may write them: all; **every other member: only `published`** |
 | Comment | any project member who can see the finding |
 | View a project | managers; otherwise members of that project |
+| See everyone with an account, their role and their projects | `manager` |
 
 The role comes from the IdP and is read on every request. The membership is
 management's statement about one project, and only management changes it. A
@@ -138,10 +139,14 @@ object URL instead of pointing the browser at the endpoint.
 | `CASTLE_HONEYPOT` | `true` turns the instance into a decoy, see above |
 | `HOST`, `PORT` | public URL and listening port |
 
-Accounts are managed from the command line of the instance:
+Accounts are managed from the command line of the instance. A user is never
+deleted: `user:anonymize` replaces the name and address with a placeholder,
+disables the account and takes it off every project, and what they wrote stays.
+On Postgres the database refuses to delete a user that anything points at.
 
 ```bash
 castle-cli task user:status email:someone@example.com status:disabled   # or status:active
+castle-cli task user:anonymize email:someone@example.com                # for someone who left
 castle-cli task user:create email:… name:… password:…                   # jwt mode
 ```
 

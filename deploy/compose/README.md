@@ -141,8 +141,10 @@ Before a client's data arrives: replace the first-boot Keycloak admin
 |----|-----|
 | see every codename and whether it is a tenant, a canary or only has a cert | `./castlectl list` |
 | take a client on | `./castlectl promote <codename>`, then add their people (below) |
-| end a tenant, **destroying its data**, and leave a canary in its place | `./castlectl demote <codename>` |
-| remove an instance and its realm, keeping the cert for reuse | `./castlectl deprovision <codename>` |
+| see who is in a codename's realm, and with which role | `./castlectl users <codename>` |
+| move a tenant to another codename or host | `./castlectl export <codename>`, `./castlectl import <bundle> <codename>` (`docs/moving-and-retiring-a-tenant.md`) |
+| end a tenant: export it, then destroy its data, people and secrets and leave a canary | `./castlectl demote <codename> --yes` |
+| remove a canary and its realm, keeping the cert for reuse | `./castlectl deprovision <codename>` |
 | add one more codename to the pool | `./castlectl allocate` |
 | roll out a new castle image, proxy version or vhost template | `./castlectl upgrade` (`docs/backup-and-upgrade.md`) |
 | back up, restore | `./castlectl backup`, `./castlectl restore <file> --yes` (`docs/backup-and-upgrade.md`) |
