@@ -125,6 +125,17 @@ function MemberRow({ member, manage }: { member: Member; manage: boolean }) {
               value="set-role"
               className="btn btn-ghost btn-small"
               disabled={busy}
+              onClick={(e) => {
+                if (
+                  !window.confirm(
+                    other === "staff"
+                      ? `Make ${member.user.email} staff on this project? Staff read drafts and write, publish and delete findings.`
+                      : `Make ${member.user.email} a client on this project? A client reads published findings only.`,
+                  )
+                ) {
+                  e.preventDefault();
+                }
+              }}
             >
               Make {other}
             </button>
