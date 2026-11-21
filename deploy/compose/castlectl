@@ -425,11 +425,30 @@ promote(){ # <codename>
   echo "  ok (tenant) — now add the client's users to realm $(realm_of "$cn")"
 }
 
-demote(){ # <codename> — back to a canary; keeps the cert and realm
-  local cn="${1:?demote needs a <codename>}"
+# Back to a canary like any other: the data, the people in the realm and the
+# codename's secrets all go, so nothing of the client is left and no session of
+# theirs survives. Only the cert and the name stay. A tenant bundle is written
+# first; every step that can refuse does so before anything is destroyed, and a
+# run that stopped half-way can be repeated.
+demote(){ # <codename> --yes [--no-export]
+  local cn="${1:?demote needs a <codename>}" yes="" keep=1 arg; shift
+  for arg in "$@"; do
+    case "$arg" in --yes) yes=1 ;; --no-export) keep="" ;; *) die "demote: unknown option '$arg'" ;; esac
+  done
   [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
-  echo "demoting tenant '$cn' -> canary (cert kept; DATA IS DESTROYED)"
+  [[ -n "$yes" ]] || die "demote destroys the data, the people and the secrets of '$cn' — re-run with --yes to confirm"
+  compose_instance "$cn" stop castle >/dev/null 2>&1      # nobody writes from here on
+  if [[ -n "$keep" ]] && ! (export_tenant "$cn"); then
+    compose_instance "$cn" start castle >/dev/null 2>&1
+    die "export failed — nothing was destroyed (use --no-export to demote without one)"
+  fi
+  if ! realm_sh delete "$cn"; then
+    compose_instance "$cn" start castle >/dev/null 2>&1
+    die "could not delete the realm of '$cn' — nothing was destroyed"
+  fi
+  echo "demoting tenant '$cn' -> canary (cert kept; data, people and secrets are destroyed)"
   compose_instance "$cn" down -v >/dev/null 2>&1
+  rm -f "$RUN/$cn".{client,cookie,jwt,db}
   provision_canary "$cn"; reload_caddy
 }
 
@@ -438,6 +457,7 @@ deprovision(){ # <codename>
   # Validate before $cn reaches `rm -f` below (same regex provision_canary uses):
   # an unchecked codename with a slash or glob could delete outside its own files.
   [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
+  [[ "$(kind_of "$cn")" != tenant ]] || die "'$cn' is a tenant — demote it first"
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
@@ -602,6 +622,18 @@ upgrade(){ # [<codename>]  (default: every running codename)
 # DB *with its secrets and cert*, so a restore can never orphan the data.
 platform_exec(){ $COMPOSE -f platform.compose.yml exec -T "$@"; }
 
+# Off-box copy (optional). BACKUP_PUSH_CMD runs once per bundle; {} expands to
+# its path (otherwise the path is appended), so any transport works:
+#   BACKUP_PUSH_CMD='rclone copy {} b2:castle-backups/'
+#   BACKUP_PUSH_CMD='rsync -a {} backups@vault:/srv/castle/'
+push_bundle(){ # <bundle>
+  [[ -n "$BACKUP_PUSH_CMD" ]] || return 0
+  local out="$1" push="$BACKUP_PUSH_CMD"
+  case "$push" in *'{}'*) push="${push//\{\}/$out}" ;; *) push="$push \"$out\"" ;; esac
+  echo "off-box copy"
+  eval "$push" || die "BACKUP_PUSH_CMD failed (bundle kept locally at $out)"
+}
+
 backup(){
   [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted backup of secrets + client data"
   need age; need "$ENGINE"; need tar
@@ -644,16 +676,7 @@ backup(){
   ( cd "$work" && tar cf - . ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
   echo "wrote $out ($(du -h "$out" | cut -f1)) — decrypt needs your offline age identity."
 
-  # Off-box copy (optional). BACKUP_PUSH_CMD runs once per bundle; {} expands to
-  # its path (otherwise the path is appended), so any transport works:
-  #   BACKUP_PUSH_CMD='rclone copy {} b2:castle-backups/'
-  #   BACKUP_PUSH_CMD='rsync -a {} backups@vault:/srv/castle/'
-  if [[ -n "$BACKUP_PUSH_CMD" ]]; then
-    local push="$BACKUP_PUSH_CMD"
-    case "$push" in *'{}'*) push="${push//\{\}/$out}" ;; *) push="$push \"$out\"" ;; esac
-    echo "backup: off-box copy"
-    eval "$push" || die "BACKUP_PUSH_CMD failed (bundle kept locally at $out)"
-  fi
+  push_bundle "$out"
 
   # Retention: keep the newest $BACKUP_KEEP bundles locally — they're
   # age-encrypted, so pruning old local copies is safe once they're off-box.
@@ -745,6 +768,70 @@ restore(){ # <backup-file> [--yes]
   echo "restore pass complete."
 }
 
+# --- one tenant, portable --------------------------------------------------
+# A tenant bundle holds one client's database, uploads and people (who they are
+# and their groups, no credentials), encrypted like a backup. It is what brings
+# a client up under another codename or on another host.
+realm_sh(){ KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" "$@"; }
+
+export_tenant(){ # <codename>
+  local cn="${1:?export needs a <codename>}" ts work out err
+  [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
+  [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted export"
+  need age; need jq; need "$ENGINE"; need tar
+  ts="$(date +%Y%m%d-%H%M%S)"
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  err="$($ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle 2>&1 > "$work/db.sql")" \
+    || die "pg_dump failed for $cn — ${err##*"$NL"}"
+  err="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" tar cf - -C /data . 2>&1 > "$work/uploads.tar")" \
+    || die "uploads tar failed for $cn — ${err##*"$NL"}"
+  realm_sh people "$cn" > "$work/people.json" || die "could not list the people of '$cn'"
+  mkdir -p "$BACKUP_DIR"
+  out="$BACKUP_DIR/castle-tenant-$cn-$ts.tar.age"
+  ( cd "$work" && tar cf - db.sql uploads.tar people.json ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
+  echo "exported '$cn' ($(jq length "$work/people.json") people) -> $out ($(du -h "$out" | cut -f1))"
+  push_bundle "$out"
+}
+
+import_tenant(){ # <tenant-bundle> <codename>
+  local file="${1:-}" cn="${2:-}" work err
+  [[ -n "$file" && -f "$file" && -n "$cn" ]] || die "usage: castlectl import <tenant-bundle> <codename>"
+  [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
+  [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary — a tenant bundle goes into a codename that is not in use"
+  need age; need jq; need "$ENGINE"; need tar
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
+  [[ -f "$work/db.sql" && -f "$work/uploads.tar" ]] && jq -e 'type == "array"' "$work/people.json" >/dev/null 2>&1 \
+    || die "$file is not a tenant bundle"
+
+  promote "$cn"
+  wait_healthy "castle-$cn" health || die "castle-$cn did not come up (see: $ENGINE logs castle-$cn)"
+  compose_instance "$cn" stop castle >/dev/null 2>&1
+  err="$($ENGINE exec -i "postgres-$cn" psql -v ON_ERROR_STOP=1 -U castle -d castle < "$work/db.sql" 2>&1 >/dev/null)" \
+    || die "database load failed — ${err##*"$NL"} ('$cn' is left half-loaded: demote it with --no-export and import again)"
+  err="$($ENGINE run --rm -i -v "$(proj_of "$cn")_castle_uploads:/data" "$UTIL_IMAGE" sh -c 'cd /data && tar xf -' < "$work/uploads.tar" 2>&1)" \
+    || die "uploads load failed — ${err##*"$NL"} ('$cn' is left half-loaded: demote it with --no-export and import again)"
+  compose_instance "$cn" start castle >/dev/null 2>&1
+  wait_healthy "castle-$cn" health || die "castle-$cn did not come back (see: $ENGINE logs castle-$cn)"
+  echo "  data loaded; adding the people to realm $(realm_of "$cn")"
+  realm_sh add-people "$cn" < "$work/people.json" || die "the data is in place but not everyone could be added to the realm"
+  echo "imported into '$cn'. Nobody has a password yet: give each person one in Keycloak before they sign in."
+}
+
+users(){ # <codename>
+  local cn="${1:?users needs a <codename>}"
+  [[ -n "$(kind_of "$cn")" ]] || die "'$cn' is not running"
+  need jq
+  realm_sh people "$cn" | jq -r '
+    ["EMAIL", "NAME", "ROLE", "ENABLED"],
+    (sort_by(.email)[] | [
+      (.email // .username),
+      ([.firstName, .lastName] | map(select(. != null)) | join(" ")),
+      (if (.groups | index("castle-managers")) then "manager" elif (.groups | index("castle-staff")) then "staff" else "client" end),
+      (if .enabled then "yes" else "no" end)
+    ]) | @tsv' | awk -F '\t' '{ printf "%-36s %-24s %-8s %s\n", $1, $2, $3, $4 }'
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   issue-certs)     issue_certs "${1:-10}" ;;
@@ -752,7 +839,10 @@ case "$cmd" in
   renew-pool)      renew_pool ;;
   allocate)        allocate ;;
   promote)         promote "${1:-}" ;;
-  demote)          demote "${1:-}" ;;
+  demote)          demote "$@" ;;
+  export)          export_tenant "${1:-}" ;;
+  import)          import_tenant "${1:-}" "${2:-}" ;;
+  users)           users "${1:-}" ;;
   deprovision)     deprovision "${1:-}" ;;
   list)            list ;;
   dns-init)        dns_init ;;
@@ -765,7 +855,12 @@ usage: castlectl <command>
   issue-certs [N]        bulk-issue certs for N codenames (one CA batch)
   provision-pool         stand up a canary for every codename that has a cert
   allocate               pick a free codename, issue its cert, canary it
-  promote|demote <cn>    canary <-> tenant (cert/subdomain/realm unchanged)
+  promote <cn>           turn a canary into a tenant (cert and subdomain unchanged)
+  demote <cn> --yes      turn a tenant back into a canary: exports it, then destroys its
+                         data, people and secrets (--no-export skips the export)
+  export <cn>            write one tenant's data and people as an encrypted bundle
+  import <file> <cn>     load a tenant bundle into a canary, which becomes that tenant
+  users <cn>             list the people in a codename's realm and their roles
   deprovision <cn>       tear an instance down (cert kept)
   renew-pool             batch-renew the pool's certs
   list                   show codenames and their state

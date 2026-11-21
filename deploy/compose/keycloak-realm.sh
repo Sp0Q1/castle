@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# keycloak-realm.sh — create, delete or render a tenant's Keycloak realm.
+# keycloak-realm.sh — create, delete or render a tenant's Keycloak realm, and
+# list or add the people in it.
 #
 # Castle uses realm-per-tenant: a realm is an isolation boundary in Keycloak, so
 # one client's users, sessions, password policy and login events cannot reach
@@ -10,7 +11,9 @@
 #
 #   ./keycloak-realm.sh render  <codename>            # print the realm JSON
 #   ./keycloak-realm.sh create  <codename>            # create it (idempotent)
-#   ./keycloak-realm.sh delete  <codename>
+#   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
+#   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
+#   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
 #
 # Env:
 #   BASE_DOMAIN     hostname suffix for the tenant       (required for create/render)
@@ -41,7 +44,7 @@ fi
 
 cmd="${1:-}"; codename="${2:-}"
 [[ -n "$cmd" && -n "$codename" ]] || {
-  echo "usage: keycloak-realm.sh {render|create|delete} <codename>" >&2; exit 1; }
+  echo "usage: keycloak-realm.sh {render|create|delete|people|add-people} <codename>" >&2; exit 1; }
 [[ "$codename" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || {
   echo "keycloak-realm.sh: invalid codename '$codename'" >&2; exit 1; }
 
@@ -184,14 +187,72 @@ create() {
 
 delete() {
   local url="${KC_URL:?KC_URL required}" token; token="$(kc_token)"
+  [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; exit 1; }
+  if ! realm_exists "$url" "$token"; then
+    echo "realm ${realm} does not exist — nothing to delete" >&2
+    return 0
+  fi
   curl -sSf "${CURL_TLS[@]}" -X DELETE "${url}/admin/realms/${realm}" \
     -H "Authorization: Bearer ${token}" >/dev/null
   echo "deleted realm ${realm}" >&2
+}
+
+# One authenticated call to the realm's admin API. The admin token lives for a
+# minute, so each call fetches its own rather than share one across a long list.
+kc() { # <path under the realm> [curl args...]
+  local url="${KC_URL:?KC_URL required}" path="$1" token; shift
+  token="$(kc_token)"
+  [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; return 1; }
+  curl -sSf "${CURL_TLS[@]}" -H "Authorization: Bearer ${token}" "$@" "${url}/admin/realms/${realm}${path}"
+}
+
+# Who is in the realm and which groups give them a role: a JSON array on stdout.
+# No credentials: a password hash or an authenticator's secret stays in Keycloak.
+people() {
+  local first=0 page user id groups
+  while :; do
+    page="$(kc "/users?first=${first}&max=100")"
+    [[ "$(jq length <<<"$page")" -gt 0 ]] || break
+    while read -r user; do
+      id="$(jq -r .id <<<"$user")"
+      groups="$(kc "/users/${id}/groups" | jq -c '[.[].name]')"
+      jq -c --argjson groups "$groups" \
+        '{username, email, firstName, lastName, enabled, emailVerified, groups: $groups}' <<<"$user"
+    done < <(jq -c '.[]' <<<"$page")
+    first=$((first + 100))
+  done | jq -s .
+}
+
+# Creates the people of a `people` listing (stdin) in this realm, in the groups
+# they were in. They get no credentials, so nobody can sign in until an admin
+# gives them a password. Someone already there is left as they are.
+add_people() {
+  local known person username status id group gid
+  known="$(kc "/groups" | jq -c 'map({(.name): .id}) | add // {}')"
+  while read -r person; do
+    username="$(jq -r .username <<<"$person")"
+    status="$(jq -c '{username, email, firstName, lastName, enabled, emailVerified}' <<<"$person" \
+      | kc "/users" -o /dev/null -w '%{http_code}' -X POST -H "Content-Type: application/json" --data-binary @- 2>/dev/null || true)"
+    case "$status" in
+      201) ;;
+      409) echo "  ${username}: already there, left as is" >&2; continue ;;
+      *)   echo "keycloak-realm.sh: could not add ${username} (HTTP ${status})" >&2; exit 1 ;;
+    esac
+    id="$(kc "/users" -G --data-urlencode "username=${username}" --data-urlencode "exact=true" | jq -r '.[0].id')"
+    while read -r group; do
+      gid="$(jq -r --arg g "$group" '.[$g] // empty' <<<"$known")"
+      [[ -n "$gid" ]] || { echo "  ${username}: no group '${group}' in ${realm}, skipped" >&2; continue; }
+      kc "/users/${id}/groups/${gid}" -o /dev/null -X PUT
+    done < <(jq -r '.groups[]' <<<"$person")
+    echo "  ${username}: added ($(jq -r '.groups | join(", ")' <<<"$person"))" >&2
+  done < <(jq -c '.[]')
 }
 
 case "$cmd" in
   render) render ;;
   create) create ;;
   delete) delete ;;
-  *) echo "usage: keycloak-realm.sh {render|create|delete} <codename>" >&2; exit 1 ;;
+  people) people ;;
+  add-people) add_people ;;
+  *) echo "usage: keycloak-realm.sh {render|create|delete|people|add-people} <codename>" >&2; exit 1 ;;
 esac

@@ -1,5 +1,7 @@
 # Upgrading, backing up, and restoring
 
+One tenant on its own, to move or retire it: [`moving-and-retiring-a-tenant.md`](moving-and-retiring-a-tenant.md).
+
 ## Upgrading
 
 An upgrade has two parts: the platform (Caddy, Keycloak and its database,
