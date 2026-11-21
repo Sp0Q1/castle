@@ -16,10 +16,13 @@ networks:
   kc:
     name: castle_kc
     external: true
-  # Private to this tenant. Not external — created per project, isolating
-  # castle+pg from everything else.
+  # Private to this tenant, and internal: only the containers that join it
+  # reach castle and its database, and those two reach nothing outside it.
+  # `internal` is what closes it: podman routes between ordinary bridge
+  # networks.
   tenant:
     name: castle_tenant___CODENAME__
+    internal: true
 
 volumes:
   castle_uploads: {}
@@ -61,6 +64,11 @@ services:
       - --cookie-expire=10h
       - --pass-user-headers=true
       - --set-xauthrequest=true
+      # Every forwarded request carries the secret this proxy shares with its
+      # castle (the password below, in a Basic Authorization header that
+      # replaces whatever the browser sent). Castle believes identity headers
+      # from nothing else.
+      - --pass-basic-auth=true
       - --skip-oidc-discovery=true
       - --oidc-issuer-url=__KC_PUBLIC__/realms/__REALM__
       - --login-url=__KC_PUBLIC__/realms/__REALM__/protocol/openid-connect/auth
@@ -71,6 +79,7 @@ services:
       # Injected from the environment by castlectl (see canary template note).
       OAUTH2_PROXY_CLIENT_SECRET: ${OAP_CLIENT_SECRET}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAP_COOKIE_SECRET}
+      OAUTH2_PROXY_BASIC_AUTH_PASSWORD: ${CASTLE_UPSTREAM_SECRET}
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
@@ -89,6 +98,7 @@ services:
       # CASTLE_DB_PW is hex (URL-safe); JWT_SECRET is base64 (loco decodes it).
       DATABASE_URL: postgres://castle:${CASTLE_DB_PW}@postgres-__CODENAME__:5432/castle
       JWT_SECRET: ${CASTLE_JWT}
+      CASTLE_PROXY_SECRET: ${CASTLE_UPSTREAM_SECRET}
       HOST: https://__HOST__
       # Set by castlectl when branding/logo exists; empty keeps the built-in brand.
       CASTLE_LOGO: ${CASTLE_LOGO}

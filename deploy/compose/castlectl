@@ -39,6 +39,9 @@
 # a codename belongs to in your own store, off this host.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+# What this writes is secrets, rendered files that name them, and bundles:
+# for the user who runs it and nobody else.
+umask 077
 # Defined first so the startup cd below can use it: a function isn't callable
 # before the line that defines it runs, and this is the earliest thing that can fail.
 die(){ echo "castlectl: $*" >&2; exit 1; }
@@ -60,6 +63,9 @@ TPL="$HERE/templates"
 SITES="$HERE/caddy/sites"
 CERTS="$HERE/caddy/certs"
 RUN="$HERE/.instances"                        # per-codename generated compose files
+# Files from before the umask above are closed as well.
+[[ -d "$RUN" ]] && chmod -R go= "$RUN"
+[[ -f .env ]] && chmod go= .env
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN in .env}"
 KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
 # The IdP's bare hostname (no scheme/port) — used by issue-certs' pool-vs-IdP-apex
@@ -341,6 +347,7 @@ compose_instance(){ # <codename> <compose args...>
   OAP_COOKIE_SECRET="$(cookie_for "$cn")" \
   CASTLE_JWT="$(ensure_secret "$cn" jwt 48)" \
   CASTLE_DB_PW="$(ensure_secret "$cn" db 24 hex)" \
+  CASTLE_UPSTREAM_SECRET="$(ensure_secret "$cn" upstream 32 hex)" \
   CASTLE_LOGO="$(logo)" \
     $COMPOSE -p "$(proj_of "$cn")" -f "$RUN/$cn.compose.yml" "$@"
 }
@@ -454,7 +461,7 @@ demote(){ # <codename> --yes [--no-export]
   fi
   echo "demoting tenant '$cn' -> canary (cert kept; data, people and secrets are destroyed)"
   compose_instance "$cn" down -v >/dev/null 2>&1
-  rm -f "$RUN/$cn".{client,cookie,jwt,db}
+  rm -f "$RUN/$cn".{client,cookie,jwt,db,upstream}
   provision_canary "$cn"; reload_caddy
 }
 
@@ -468,7 +475,7 @@ deprovision(){ # <codename>
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
   KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
-  rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db}
+  rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db,upstream}
   reload_caddy
   echo "  removed (cert left in place for reuse)"
 }
