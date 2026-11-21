@@ -9,6 +9,7 @@ import type {
   Member,
   Project,
   UpdateFindingParams,
+  UserSummary,
 } from "./types";
 
 /** Error carrying the HTTP status and the message the API returned. */
@@ -101,6 +102,9 @@ export const api = {
 
   listMembers: (projectId: number): Promise<Member[]> =>
     request<Member[]>(`/projects/${projectId}/members`),
+
+  listManagers: (projectId: number): Promise<UserSummary[]> =>
+    request<UserSummary[]>(`/projects/${projectId}/managers`),
 
   onboard: (
     projectId: number,
