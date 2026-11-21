@@ -5,5 +5,10 @@
 # {$KC_HOST} is substituted from the environment when Caddy starts.
 {$KC_HOST} {
 	log   # login attempts hit /realms/<realm>/login-actions/authenticate here
+	# Keycloak sends its own security headers; only what names the software goes.
+	header {
+		-Server
+		-Via
+	}
 	reverse_proxy keycloak:8080
 }
