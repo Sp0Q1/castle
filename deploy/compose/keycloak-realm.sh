@@ -11,6 +11,7 @@
 #
 #   ./keycloak-realm.sh render  <codename>            # print the realm JSON
 #   ./keycloak-realm.sh create  <codename>            # create it (idempotent)
+#   ./keycloak-realm.sh update  <codename>            # an existing realm's client, as `create` makes it today
 #   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
 #   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
 #   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
@@ -44,7 +45,7 @@ fi
 
 cmd="${1:-}"; codename="${2:-}"
 [[ -n "$cmd" && -n "$codename" ]] || {
-  echo "usage: keycloak-realm.sh {render|create|delete|people|add-people} <codename>" >&2; exit 1; }
+  echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2; exit 1; }
 [[ "$codename" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || {
   echo "keycloak-realm.sh: invalid codename '$codename'" >&2; exit 1; }
 
@@ -77,6 +78,10 @@ render() {
   #                           widened by a stray redirect entry.
   #   post.logout.redirect  — MUST cover the app root or RP-initiated logout dies
   #                           on Keycloak's "We are sorry..." page.
+  #   pkce.code.challenge   — S256 required: Keycloak starts no sign-in for this
+  #     .method               client without a challenge, and redeems a code only
+  #                           for the verifier that goes with it. The proxy sends
+  #                           one (--code-challenge-method=S256).
   cat <<JSON
 {
   "realm": "${realm}",
@@ -125,7 +130,8 @@ render() {
       "webOrigins": ["https://${host}"],
       "attributes": {
         "post.logout.redirect.uris": "https://${host}/*",
-        "backchannel.logout.session.required": "true"
+        "backchannel.logout.session.required": "true",
+        "pkce.code.challenge.method": "S256"
       },
       "protocolMappers": [
         {
@@ -251,11 +257,37 @@ add_people() {
   done < <(jq -c '.[]')
 }
 
+# Brings the `castle` client of an existing realm in line with what `render`
+# makes today: its attributes, which is where a setting lives that came after
+# the realm did (the PKCE requirement). `create` leaves an existing realm
+# alone, so this is how every realm of a pool gets the same client, and a realm
+# cannot be told from another by its age. Nothing else of the realm is touched,
+# and a client that is already as it should be is not written to.
+update() {
+  local found id wanted current
+  found="$(kc "/clients" -G --data-urlencode "clientId=castle")" \
+    || { echo "keycloak-realm.sh: Keycloak did not answer for realm ${realm}" >&2; exit 1; }
+  id="$(jq -er '.[0].id' <<<"$found" 2>/dev/null)" \
+    || { echo "keycloak-realm.sh: no castle client in realm ${realm}" >&2; exit 1; }
+  wanted="$(render | jq -c '.clients[0].attributes')"
+  current="$(kc "/clients/${id}")"
+  if jq -e --argjson wanted "$wanted" '.attributes as $has | $wanted | to_entries | all($has[.key] == .value)' \
+      <<<"$current" >/dev/null; then
+    echo "realm ${realm}: the client is as it should be" >&2
+    return 0
+  fi
+  # The secret is left out of what is sent back, which leaves it as it is.
+  jq -c --argjson wanted "$wanted" 'del(.secret) | .attributes += $wanted' <<<"$current" \
+    | kc "/clients/${id}" -o /dev/null -X PUT -H "Content-Type: application/json" --data-binary @-
+  echo "realm ${realm}: the client was brought up to date" >&2
+}
+
 case "$cmd" in
   render) render ;;
   create) create ;;
+  update) update ;;
   delete) delete ;;
   people) people ;;
   add-people) add_people ;;
-  *) echo "usage: keycloak-realm.sh {render|create|delete|people|add-people} <codename>" >&2; exit 1 ;;
+  *) echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2; exit 1 ;;
 esac
