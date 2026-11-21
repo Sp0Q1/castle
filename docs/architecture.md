@@ -84,11 +84,11 @@ sequenceDiagram
   participant P as oauth2-proxy
   participant K as Keycloak
   B->>P: any page, no session
-  P-->>B: redirect to the codename's realm
+  P-->>B: redirect to the codename's realm, with a challenge and a nonce
   B->>K: sign in
   K-->>B: redirect back with a one-time code
   B->>P: the code
-  P->>K: code and client secret, over the internal network
+  P->>K: code, client secret and the challenge's verifier, over the internal network
   K-->>P: tokens
   P-->>B: session cookie, encrypted, for this codename only
   loop every 4 minutes while the portal is used
@@ -96,6 +96,10 @@ sequenceDiagram
     K-->>P: new tokens, or a refusal that ends the session
   end
 ```
+
+The code is bound to the browser that started the sign-in: Keycloak redeems
+it only for the verifier the proxy kept for that browser (PKCE), and the proxy
+accepts the tokens only with the nonce it sent along.
 
 A session lasts at most ten hours. Because it is refreshed with Keycloak every
 four minutes, disabling a user there, ending their session or changing their
@@ -139,6 +143,7 @@ images; which codenames belong to clients; credentials and sessions.
 | Script in a finding or comment | Markdown goes through a sanitizer, diagrams render in mermaid's strict mode, and the Content-Security-Policy allows scripts from the portal's origin only. The text itself is stored as written, since a finding may quote a payload |
 | A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served with `nosniff` to signed-in users |
 | Finding out which codenames are in use | tenants and canaries answer alike at the edge; certificates for the whole pool are issued and renewed in one batch; promoting a canary changes neither certificate nor DNS; a request by address or unknown name gets a neutral certificate; the bundled DNS allows no zone transfer |
+| A sign-in code that reaches someone else | it is of no use in another browser: Keycloak redeems it only for the verifier kept for the browser that asked (PKCE), and the proxy accepts the tokens only with that browser's nonce; a code is used once and lives a minute |
 | A stolen backup | bundles are encrypted on the host to a public key whose private half is kept elsewhere |
 | An instance serving with a broken configuration | the settings are parsed strictly at start, `DATABASE_URL` and `JWT_SECRET` have no default, and a logo that cannot be served stops the start |
 | A tampered dependency or image | lockfiles; `cargo audit`, `npm audit`, Trivy, Semgrep and TruffleHog on every pull request and weekly; CI builds the image with provenance and an SBOM; `castlectl upgrade` resolves the image to a digest once, so every instance runs the same build |
