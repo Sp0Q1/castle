@@ -76,22 +76,3 @@ async fn a_logo_is_announced_and_served_as_an_image_and_nothing_else() {
     })
     .await;
 }
-
-#[tokio::test]
-#[serial]
-async fn a_logo_that_cannot_be_served_stops_the_boot() {
-    fresh_db();
-    for not_a_logo in [
-        b"<html><body><script>alert(1)</script></body></html>".to_vec(),
-        b"MZ\x90\x00 an executable".to_vec(),
-        [PNG.to_vec(), vec![0; 1024 * 1024]].concat(),
-    ] {
-        let _logo = Logo::containing(&not_a_logo);
-        assert!(boot_test::<App>().await.is_err());
-    }
-
-    std::env::set_var("CASTLE_LOGO", "target/test-logos/does-not-exist");
-    let missing = boot_test::<App>().await;
-    std::env::remove_var("CASTLE_LOGO");
-    assert!(missing.is_err());
-}

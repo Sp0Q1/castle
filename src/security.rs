@@ -92,9 +92,10 @@ impl Settings {
 
     #[must_use]
     pub fn from_ctx(ctx: &AppContext) -> Self {
-        // `settings` is validated at boot (`try_from_config`, called from
-        // `App::boot`), so parsing the same value here cannot fail in a running
-        // app — the default is unreachable, not a silent fallback to jwt.
+        // `settings` is validated before anything runs (`try_from_config`,
+        // called from `App::after_context`), so parsing the same value here
+        // cannot fail in a running app — the default is unreachable, not a
+        // silent fallback to jwt.
         ctx.config
             .settings
             .as_ref()
