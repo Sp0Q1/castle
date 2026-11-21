@@ -87,8 +87,14 @@ updates:
   # live pin stayed on 26.7.2. security.yml's platform-images job scans these
   # same pins weekly for CVEs; this is the other half, a PR when a newer tag
   # ships.
+  #
+  # Both directories are named because Dependabot does not descend into
+  # subdirectories: the per-codename templates, which carry the oauth2-proxy
+  # pin, sit one level down and were never read.
   - package-ecosystem: docker-compose
-    directory: "/deploy/compose"
+    directories:
+      - "/deploy/compose"
+      - "/deploy/compose/templates"
     schedule:
       interval: weekly
     cooldown:
