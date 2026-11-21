@@ -85,6 +85,14 @@ jobs:
             echo "::error::the oauth2-proxy flag above lets requests through without a session"
             exit 1
           fi
+          # A sign-in code is bound to the browser that asked for it, on a tenant
+          # and on a canary alike.
+          for flag in '--code-challenge-method=S256' '--insecure-oidc-skip-nonce=false'; do
+            for template in deploy/compose/templates/{tenant,canary}.compose.yml; do
+              grep -qF -- "- $flag" "$template" \
+                || { echo "::error file=$template::the proxy runs without $flag"; exit 1; }
+            done
+          done
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
