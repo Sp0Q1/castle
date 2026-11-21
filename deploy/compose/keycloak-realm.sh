@@ -149,20 +149,35 @@ JSON
 }
 
 # Admin API token. Uses the password grant against the master realm's built-in
-# admin-cli client, which is how Keycloak's own kcadm authenticates.
+# admin-cli client, which is how Keycloak's own kcadm authenticates. The
+# password reaches curl on standard input: an argument would sit in the process
+# list, readable by every user of the host.
 kc_token() {
   local url="${KC_URL:?KC_URL required}"
-  curl -sSf "${CURL_TLS[@]}" --data-urlencode "username=${KC_ADMIN_USER:?KC_ADMIN_USER required}" \
-       --data-urlencode "password=${KC_ADMIN_PASS:?KC_ADMIN_PASS required}" \
-       -d "grant_type=password" -d "client_id=admin-cli" \
-       "${url}/realms/master/protocol/openid-connect/token" \
-    | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+  printf '%s' "${KC_ADMIN_PASS:?KC_ADMIN_PASS required}" \
+    | curl -sSf "${CURL_TLS[@]}" --data-urlencode "username=${KC_ADMIN_USER:?KC_ADMIN_USER required}" \
+        --data-urlencode "password@-" \
+        -d "grant_type=password" -d "client_id=admin-cli" \
+        "${url}/realms/master/protocol/openid-connect/token" \
+    | jq -er '.access_token'
 }
 
+# The token as a header file for curl (`-H @<(bearer "$token")`), for the same
+# reason: not an argument.
+bearer() { printf 'Authorization: Bearer %s\n' "$1"; }
+
+# Whether the realm exists. Only Keycloak saying so counts: 200 is yes, 404 is
+# no, and anything else (it could not be asked, or it refused) stops the script
+# rather than pass for either.
 realm_exists() {
-  local url="$1" token="$2"
-  curl -sS "${CURL_TLS[@]}" -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer ${token}" "${url}/admin/realms/${realm}" | grep -q '^200$'
+  local url="$1" token="$2" status
+  status="$(curl -sS "${CURL_TLS[@]}" -o /dev/null -w '%{http_code}' \
+    -H @<(bearer "$token") "${url}/admin/realms/${realm}")" || status="unreachable"
+  case "$status" in
+    200) return 0 ;;
+    404) return 1 ;;
+    *) echo "keycloak-realm.sh: could not tell whether realm ${realm} exists (${status})" >&2; exit 1 ;;
+  esac
 }
 
 create() {
@@ -179,7 +194,7 @@ create() {
   # The realm JSON carries the client secret, so it goes over the pipe and never
   # onto disk or into the process list.
   render | curl -sSf "${CURL_TLS[@]}" -X POST "${url}/admin/realms" \
-      -H "Authorization: Bearer ${token}" \
+      -H @<(bearer "$token") \
       -H "Content-Type: application/json" \
       --data-binary @- >/dev/null
   echo "created realm ${realm}" >&2
@@ -193,7 +208,7 @@ delete() {
     return 0
   fi
   curl -sSf "${CURL_TLS[@]}" -X DELETE "${url}/admin/realms/${realm}" \
-    -H "Authorization: Bearer ${token}" >/dev/null
+    -H @<(bearer "$token") >/dev/null
   echo "deleted realm ${realm}" >&2
 }
 
@@ -203,7 +218,7 @@ kc() { # <path under the realm> [curl args...]
   local url="${KC_URL:?KC_URL required}" path="$1" token; shift
   token="$(kc_token)"
   [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; return 1; }
-  curl -sSf "${CURL_TLS[@]}" -H "Authorization: Bearer ${token}" "$@" "${url}/admin/realms/${realm}${path}"
+  curl -sSf "${CURL_TLS[@]}" -H @<(bearer "$token") "$@" "${url}/admin/realms/${realm}${path}"
 }
 
 # Who is in the realm and which groups give them a role: a JSON array on stdout.
