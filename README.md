@@ -61,8 +61,9 @@ default.
   headers. Castle handles no credentials: a user is provisioned on first
   sign-in, and the role is read from their Keycloak groups on every request,
   so a change there takes effect at once. Only `/api/auth/current` and
-  `/api/auth/mode` are mounted. Castle trusts those headers, so it must be
-  reachable through the proxy and nothing else: see
+  `/api/auth/mode` are mounted. Castle reads those headers only from a request
+  that carries the secret it shares with its proxy, and does not start in this
+  mode without one: see
   [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md).
 
 Both modes resolve the request's user through one `CurrentUser` extractor in
@@ -132,7 +133,7 @@ object URL instead of pointing the browser at the endpoint.
 |----------|---------|
 | `DATABASE_URL`, `JWT_SECRET` | required; without them castle does not start |
 | `CASTLE_AUTH_MODE` | `proxy` (the production default) or `jwt` |
-| `CASTLE_PROXY_SECRET` | optional: a secret the proxy must send with every request |
+| `CASTLE_PROXY_SECRET` | required in `proxy` mode: the secret castle shares with its proxy, which sends it with every request |
 | `CASTLE_LOGOUT_URL` | where sign-out sends the browser |
 | `CASTLE_LOGO` | path of an image shown instead of the built-in brand: PNG, JPEG, GIF, WebP or SVG, at most 1 MiB. One that cannot be served stops the server from starting |
 | `CASTLE_HONEYPOT` | `true` turns the instance into a decoy, see above |
