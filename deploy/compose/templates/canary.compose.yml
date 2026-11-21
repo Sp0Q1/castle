@@ -38,7 +38,6 @@ services:
       - --skip-provider-button=true
       - --cookie-secure=true
       - --cookie-csrf-per-request=true
-      - --skip-auth-route=^/api/auth/mode$
       # Split-horizon: browser is sent to the public IdP URL; token/keys are
       # fetched over the in-container network. Identical to a real tenant.
       - --skip-oidc-discovery=true

@@ -53,9 +53,6 @@ services:
       - --cookie-csrf-per-request=true
       - --pass-user-headers=true
       - --set-xauthrequest=true
-      # castle reads the auth mode unauthenticated so the SPA knows to hand off
-      # to the IdP; everything else requires a session.
-      - --skip-auth-route=^/api/auth/mode$
       - --skip-oidc-discovery=true
       - --oidc-issuer-url=__KC_PUBLIC__/realms/__REALM__
       - --login-url=__KC_PUBLIC__/realms/__REALM__/protocol/openid-connect/auth
@@ -93,7 +90,7 @@ services:
     healthcheck:
       # Liveness so a boot can be told apart from a crash-loop (up -d returns at
       # container-create, long before loco is serving): /api/auth/mode is the one
-      # route oauth2-proxy leaves unauthenticated and it 200s with {"mode":...},
+      # route castle answers without an identity and it 200s with {"mode":...},
       # so a 200 here proves the app is actually up, not just that the port opened.
       # The runtime image is debian-slim — no curl/wget, and its /bin/sh is dash
       # (no /dev/tcp) — and podman-compose flattens an exec-form ["CMD",...] test

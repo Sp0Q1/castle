@@ -76,6 +76,16 @@ jobs:
           fi
           echo "OK: CI and deployment agree on Postgres major $ci_major."
 
+      # oauth2-proxy must let nothing past it without a session. An exempted path
+      # is how an unauthenticated request reaches castle at all, and it answers
+      # differently on a tenant than on a canary, which tells the two apart.
+      - name: Guard the proxy against exemptions
+        run: |
+          if grep -rnE -- '--(skip-auth|skip-jwt-bearer-tokens|trusted-ip)' deploy/compose/templates; then
+            echo "::error::the oauth2-proxy flag above lets requests through without a session"
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           # Pin rustc to the Dockerfile's `rust:1.98` base so fmt/clippy/test run on

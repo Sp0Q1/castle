@@ -211,10 +211,10 @@ struct ModeResponse {
     mode: &'static str,
 }
 
-/// Public (unauthenticated) endpoint reporting the auth mode so the SPA knows
-/// whether to render its own login form (`jwt`) or hand off to the proxy/IdP
-/// (`proxy`) on an unauthenticated request. Exposes nothing sensitive. In proxy
-/// mode oauth2-proxy must be told to skip auth for this path.
+/// Reports the auth mode so the SPA knows whether to render its own login form
+/// (`jwt`) or leave signing in to the proxy (`proxy`). Needs no identity and
+/// exposes nothing sensitive. In proxy mode the proxy exempts no path, so only
+/// signed-in browsers and the container healthcheck ever reach it.
 #[debug_handler]
 async fn mode(State(ctx): State<AppContext>) -> Result<Response> {
     let mode = match crate::security::Settings::from_ctx(&ctx).auth_mode {
