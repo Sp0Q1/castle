@@ -2,15 +2,15 @@
 //! sections (description, technical description, impact, recommendation) plus a
 //! severity and a draft/published status. Access rules enforced here:
 //!
-//! * write / edit / publish — project staff (a "staff" member or management)
-//! * read — management and staff see everything; clients see only *published*
+//! * write / edit / publish — project staff: management, or someone who is staff
+//!   both to the IdP and on the project
+//! * read — project staff see everything; other members see only *published*
 //!   findings
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{comments, findings, project_members, projects, users};
 use crate::models::findings::{FindingStatus, Severity};
-use crate::models::project_members::MemberRole;
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_LABEL, MAX_SECTION, MAX_TITLE};
 use crate::views::comment::CommentResponse;
@@ -86,20 +86,10 @@ async fn load_finding(ctx: &AppContext, id: i64) -> Result<findings::Model> {
         .ok_or_else(|| Error::NotFound)
 }
 
-/// Staff (a "staff" member of the project, or any manager) may read drafts;
-/// clients may not.
-fn is_privileged(user: &users::Model, membership: &Option<project_members::Model>) -> bool {
-    user.is_manager()
-        || membership
-            .as_ref()
-            .is_some_and(|m| m.role == MemberRole::Staff)
-}
-
-/// Write authorization for a finding's project: a platform manager or a project
-/// "staff" member may write. A non-member gets **404** (existence stays hidden,
-/// like the read paths); a client member gets **403** (they can already see the
-/// project). Authorship grants nothing on its own, so an IdP demotion that
-/// downgrades a `staff` membership genuinely revokes write access.
+/// Write authorization for a finding's project: project staff may write (see
+/// [`users::Model::is_project_staff`]). A non-member gets **404** (existence
+/// stays hidden, like the read paths); any other member gets **403** (they can
+/// already see the project). Authorship grants nothing on its own.
 fn require_write(
     user: &users::Model,
     membership: &Option<project_members::Model>,
@@ -108,11 +98,7 @@ fn require_write(
     if !(user.is_manager() || membership.is_some()) {
         return Err(Error::NotFound);
     }
-    if user.is_manager()
-        || membership
-            .as_ref()
-            .is_some_and(|m| m.role == MemberRole::Staff)
-    {
+    if user.is_project_staff(membership.as_ref()) {
         Ok(())
     } else {
         Err(crate::security::forbidden(action))
@@ -120,9 +106,8 @@ fn require_write(
 }
 
 /// Write authorization for an *existing* finding. Like [`require_write`], but a
-/// non-privileged member acting on a **draft** gets 404 (a client must not learn
-/// a draft exists — matching the read path), and on a **published** finding gets
-/// 403.
+/// member who is not staff gets 404 on a **draft** (a client must not learn a
+/// draft exists — matching the read path), and 403 on a **published** finding.
 fn require_finding_write(
     user: &users::Model,
     membership: &Option<project_members::Model>,
@@ -132,13 +117,12 @@ fn require_finding_write(
     if !(user.is_manager() || membership.is_some()) {
         return Err(Error::NotFound);
     }
-    if !is_privileged(user, membership) && !finding.is_published() {
-        return Err(Error::NotFound);
-    }
-    if is_privileged(user, membership) {
+    if user.is_project_staff(membership.as_ref()) {
         Ok(())
-    } else {
+    } else if finding.is_published() {
         Err(crate::security::forbidden(action))
+    } else {
+        Err(Error::NotFound)
     }
 }
 
@@ -221,7 +205,7 @@ pub async fn list(
     }
 
     let mut items = findings::Model::list_for_project(&ctx.db, project.id).await?;
-    if !is_privileged(&user, &membership) {
+    if !user.is_project_staff(membership.as_ref()) {
         items.retain(findings::Model::is_published);
     }
 
@@ -245,7 +229,7 @@ pub async fn show(
         return Err(Error::NotFound);
     }
     // Drafts are invisible to clients — behave as if the finding does not exist.
-    if !is_privileged(&user, &membership) && !finding.is_published() {
+    if !user.is_project_staff(membership.as_ref()) && !finding.is_published() {
         return Err(Error::NotFound);
     }
 

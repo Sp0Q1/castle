@@ -12,7 +12,7 @@ import {
 } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import type { Finding, FindingDetail, Member, Project } from "../api/types";
-import { useUser } from "../auth/session";
+import { isProjectStaff, useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import {
   FindingFields,
@@ -96,12 +96,7 @@ function FindingDetailPage() {
   const actions = useFetcher<{ error: string }>();
   const composer = useFetcher<{ error: string }>();
 
-  const myMembership = members.find((m) => m.user.pid === user.pid);
-  // Same rule the API enforces: author, a "staff" member of the project, or a manager.
-  const canModify =
-    user.role === "manager" ||
-    finding.author_id === user.id ||
-    myMembership?.role === "staff";
+  const canModify = isProjectStaff(user, members);
   const busy = actions.state !== "idle";
 
   return (

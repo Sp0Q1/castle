@@ -12,7 +12,7 @@ import {
   type Project,
   SEVERITIES,
 } from "../api/types";
-import { useUser } from "../auth/session";
+import { isProjectStaff, useUser } from "../auth/session";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import {
   FindingFields,
@@ -82,9 +82,8 @@ function ProjectDetailPage() {
   const newFinding = useFetcher<{ error: string }>();
   const onboard = useFetcher<{ error: string }>();
 
-  const myMembership = members.find((m) => m.user.pid === user.pid);
   const isManager = user.role === "manager";
-  const canWriteFindings = isManager || myMembership?.role === "staff";
+  const canWriteFindings = isProjectStaff(user, members);
 
   const severitySlices: Slice[] = SEVERITIES.map((sev) => ({
     label: cap(sev),

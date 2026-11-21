@@ -5,7 +5,6 @@ use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::_entities::{comments, findings, project_members, users};
-use crate::models::project_members::MemberRole;
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_COMMENT};
 use crate::views::comment::CommentResponse;
@@ -35,11 +34,7 @@ async fn load_viewable_finding(
         return Err(Error::NotFound);
     }
 
-    let privileged = user.is_manager()
-        || membership
-            .as_ref()
-            .is_some_and(|m| m.role == MemberRole::Staff);
-    if !privileged && !finding.is_published() {
+    if !user.is_project_staff(membership.as_ref()) && !finding.is_published() {
         return Err(Error::NotFound);
     }
 

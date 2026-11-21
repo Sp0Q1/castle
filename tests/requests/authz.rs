@@ -846,6 +846,90 @@ async fn a_proxy_session_does_not_re_enable_a_disabled_account() {
     .await;
 }
 
+/// Staff capacity on a project takes the IdP's word and a manager's. An account
+/// the IdP calls a client stays one whatever it is onboarded as, whichever of
+/// the two happened first.
+#[tokio::test]
+#[serial]
+async fn a_membership_does_not_outrank_the_idp() {
+    fresh_db();
+    let _proxy = ProxyMode::on();
+    request::<App, _, _>(|request, _ctx| async move {
+        let get = |path: &str, email: &str, group: &str| {
+            request
+                .get(path)
+                .add_header("x-forwarded-email", email)
+                .add_header("x-forwarded-groups", group)
+        };
+        let post = |path: &str, email: &str, group: &str| {
+            request
+                .post(path)
+                .add_header("x-forwarded-email", email)
+                .add_header("x-forwarded-groups", group)
+        };
+        let manager = "manager@example.com";
+        let finding = serde_json::json!({
+            "title": "Draft",
+            "description": "d",
+            "technical_description": "t",
+            "impact": "i",
+            "recommendation": "r",
+        });
+
+        let project: serde_json::Value = post("/api/projects", manager, "castle-managers")
+            .json(&serde_json::json!({ "name": "Engagement" }))
+            .await
+            .json();
+        let members = format!("/api/projects/{}/members", project["id"]);
+        let findings = format!("/api/projects/{}/findings", project["id"]);
+        let draft: serde_json::Value = post(&findings, manager, "castle-managers")
+            .json(&finding)
+            .await
+            .json();
+        let draft = format!("/api/findings/{}", draft["id"]);
+
+        // One account has signed in before it is onboarded, the other has not.
+        let seen = get("/api/auth/current", "early@example.com", "castle-clients").await;
+        assert_eq!(seen.status_code(), 200);
+
+        for email in ["early@example.com", "late@example.com"] {
+            let onboarded = post(&members, manager, "castle-managers")
+                .json(&serde_json::json!({ "user_email": email, "role": "staff" }))
+                .await;
+            assert_eq!(onboarded.status_code(), 200, "onboarding {email}");
+
+            let listed: Vec<serde_json::Value> =
+                get(&findings, email, "castle-clients").await.json();
+            assert!(listed.is_empty(), "{email} is shown a draft");
+            let read = get(&draft, email, "castle-clients").await;
+            assert_eq!(read.status_code(), 404, "{email} reads a draft");
+            let written = post(&findings, email, "castle-clients")
+                .json(&finding)
+                .await;
+            assert_eq!(written.status_code(), 403, "{email} writes a finding");
+            let published = post(&format!("{draft}/publish"), email, "castle-clients").await;
+            assert_eq!(published.status_code(), 404, "{email} publishes a draft");
+            let commented = post(&format!("{draft}/comments"), email, "castle-clients")
+                .json(&serde_json::json!({ "body": "hello" }))
+                .await;
+            assert_eq!(commented.status_code(), 404, "{email} comments on a draft");
+        }
+
+        // The same membership does make staff of someone the IdP calls staff.
+        let onboarded = post(&members, manager, "castle-managers")
+            .json(&serde_json::json!({ "user_email": "tester@example.com", "role": "staff" }))
+            .await;
+        assert_eq!(onboarded.status_code(), 200);
+        let read = get(&draft, "tester@example.com", "castle-staff").await;
+        assert_eq!(read.status_code(), 200);
+        let written = post(&findings, "tester@example.com", "castle-staff")
+            .json(&finding)
+            .await;
+        assert_eq!(written.status_code(), 200);
+    })
+    .await;
+}
+
 #[tokio::test]
 #[serial]
 async fn the_status_task_refuses_what_it_does_not_understand() {
