@@ -1121,6 +1121,18 @@ async fn a_membership_does_not_outrank_the_idp() {
             assert_eq!(commented.status_code(), 404, "{email} comments on a draft");
         }
 
+        // The member list says so too: staff by membership, a client by what
+        // they may do.
+        let listed: Vec<serde_json::Value> = get(&members, manager, "castle-managers").await.json();
+        for email in ["early@example.com", "late@example.com"] {
+            let row = listed
+                .iter()
+                .find(|m| m["user"]["email"] == email)
+                .expect("listed");
+            assert_eq!(row["role"], "staff", "{email}");
+            assert_eq!(row["access"], "client", "{email}");
+        }
+
         // The same membership does make staff of someone the IdP calls staff.
         let onboarded = post(&members, manager, "castle-managers")
             .json(&serde_json::json!({ "user_email": "tester@example.com", "role": "staff" }))

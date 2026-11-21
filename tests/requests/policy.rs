@@ -484,6 +484,55 @@ async fn every_address_answers_each_kind_of_person_as_stated() {
     .await;
 }
 
+/// The page is sent what the person may do, so it never works the rule out
+/// again: each project carries the reader's access, and each member row what
+/// that member may do.
+#[tokio::test]
+#[serial]
+async fn a_project_tells_the_reader_what_they_may_do() {
+    fresh_db();
+    request::<App, _, _>(|request, ctx| async move {
+        let f = seed(&ctx).await;
+        let project = format!("/api/projects/{}", f.project_id);
+        for (token, expected) in [
+            (&f.manager_token, "staff"),
+            (&f.staff_token, "staff"),
+            (&f.client_token, "client"),
+        ] {
+            let (h, v) = bearer(token);
+            let one: serde_json::Value = request.get(&project).add_header(h, &v).await.json();
+            assert_eq!(one["access"], expected);
+            let all: Vec<serde_json::Value> =
+                request.get("/api/projects").add_header(h, &v).await.json();
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0]["access"], expected);
+        }
+
+        let (h, v) = bearer(&f.manager_token);
+        let members: Vec<serde_json::Value> = request
+            .get(&format!("{project}/members"))
+            .add_header(h, &v)
+            .await
+            .json();
+        let access_of = |email: &str| {
+            members
+                .iter()
+                .find(|m| m["user"]["email"] == email)
+                .map(|m| (m["role"].clone(), m["access"].clone()))
+                .expect("listed")
+        };
+        assert_eq!(
+            access_of("staff@test.com"),
+            ("staff".into(), "staff".into())
+        );
+        assert_eq!(
+            access_of("client@test.com"),
+            ("client".into(), "client".into())
+        );
+    })
+    .await;
+}
+
 /// A deployment runs in proxy mode, and there the sign-in endpoints of jwt
 /// mode are not served at all.
 #[tokio::test]

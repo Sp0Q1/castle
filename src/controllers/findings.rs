@@ -2,15 +2,16 @@
 //! sections (description, technical description, impact, recommendation) plus a
 //! severity and a draft/published status. Access rules enforced here:
 //!
-//! * write / edit / publish — project staff: management, or someone who is staff
-//!   both to the IdP and on the project
-//! * read — project staff see everything; other members see only *published*
-//!   findings
+//! * write / edit / publish — whoever has [`Access::Staff`] on the project
+//! * read — staff see everything; with [`Access::Client`] only *published*
+//!   findings exist
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::models::_entities::{comments, findings, project_members, projects, users};
+use super::access;
+use crate::models::_entities::{comments, findings, projects, users};
 use crate::models::findings::{FindingStatus, Severity};
+use crate::models::project_members::Access;
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_LABEL, MAX_SECTION, MAX_TITLE};
 use crate::views::comment::CommentResponse;
@@ -86,43 +87,23 @@ async fn load_finding(ctx: &AppContext, id: i64) -> Result<findings::Model> {
         .ok_or_else(|| Error::NotFound)
 }
 
-/// Write authorization for a finding's project: project staff may write (see
-/// [`users::Model::is_project_staff`]). A non-member gets **404** (existence
-/// stays hidden, like the read paths); any other member gets **403** (they can
-/// already see the project). Authorship grants nothing on its own.
-fn require_write(
-    user: &users::Model,
-    membership: &Option<project_members::Model>,
-    action: &str,
-) -> Result<()> {
-    if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::NotFound);
-    }
-    if user.is_project_staff(membership.as_ref()) {
-        Ok(())
-    } else {
-        Err(crate::security::forbidden(action))
+/// Writing to a project is for its staff. A client on it gets **403**: they
+/// know the project. Authorship grants nothing on its own.
+fn require_staff(access: Access, action: &str) -> Result<()> {
+    match access {
+        Access::Staff => Ok(()),
+        Access::Client => Err(crate::security::forbidden(action)),
     }
 }
 
-/// Write authorization for an *existing* finding. Like [`require_write`], but a
-/// member who is not staff gets 404 on a **draft** (a client must not learn a
-/// draft exists — matching the read path), and 403 on a **published** finding.
-fn require_finding_write(
-    user: &users::Model,
-    membership: &Option<project_members::Model>,
-    finding: &findings::Model,
-    action: &str,
-) -> Result<()> {
-    if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::NotFound);
-    }
-    if user.is_project_staff(membership.as_ref()) {
-        Ok(())
-    } else if finding.is_published() {
-        Err(crate::security::forbidden(action))
-    } else {
-        Err(Error::NotFound)
+/// Changing an *existing* finding is for project staff. For a client a draft
+/// does not exist (**404**, matching the read path), and a published finding
+/// is known and not theirs to change (**403**).
+fn require_finding_write(access: Access, finding: &findings::Model, action: &str) -> Result<()> {
+    match access {
+        Access::Staff => Ok(()),
+        Access::Client if finding.is_published() => Err(crate::security::forbidden(action)),
+        Access::Client => Err(Error::NotFound),
     }
 }
 
@@ -134,9 +115,8 @@ pub async fn create(
     Json(params): Json<CreateFindingParams>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
-
-    require_write(&user, &membership, "only project staff can write findings")?;
+    let access = access(&ctx, &user, project.id).await?;
+    require_staff(access, "only project staff can write findings")?;
 
     let CreateFindingParams {
         title,
@@ -196,18 +176,10 @@ pub async fn list(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let project = load_project(&ctx, project_id).await?;
-    let membership = project_members::Model::find_membership(&ctx.db, project.id, user.id).await?;
-
-    // Non-members must not be able to distinguish a forbidden project from a
-    // nonexistent one, so hide it as 404 rather than 401.
-    if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::NotFound);
-    }
+    let access = access(&ctx, &user, project.id).await?;
 
     let mut items = findings::Model::list_for_project(&ctx.db, project.id).await?;
-    if !user.is_project_staff(membership.as_ref()) {
-        items.retain(findings::Model::is_published);
-    }
+    items.retain(|finding| access.sees(finding));
 
     let response: Vec<FindingResponse> = items.iter().map(FindingResponse::new).collect();
     format::json(response)
@@ -220,16 +192,10 @@ pub async fn show(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
-
-    // A non-member gets 404 (hide existence); a member who can't see drafts
-    // gets 404 below. Either way existence is never disclosed via the status.
-    if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::NotFound);
-    }
-    // Drafts are invisible to clients — behave as if the finding does not exist.
-    if !user.is_project_staff(membership.as_ref()) && !finding.is_published() {
+    let access = access(&ctx, &user, finding.project_id).await?;
+    // A draft does not exist for a client: the same 404 as a project they
+    // cannot open, so nothing is disclosed through the status.
+    if !access.sees(&finding) {
         return Err(Error::NotFound);
     }
 
@@ -263,15 +229,9 @@ pub async fn update(
     Json(params): Json<UpdateFindingParams>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
+    let access = access(&ctx, &user, finding.project_id).await?;
 
-    require_finding_write(
-        &user,
-        &membership,
-        &finding,
-        "only project staff can edit findings",
-    )?;
+    require_finding_write(access, &finding, "only project staff can edit findings")?;
 
     let severity = params
         .severity
@@ -337,15 +297,9 @@ pub async fn publish(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
+    let access = access(&ctx, &user, finding.project_id).await?;
 
-    require_finding_write(
-        &user,
-        &membership,
-        &finding,
-        "only project staff can publish findings",
-    )?;
+    require_finding_write(access, &finding, "only project staff can publish findings")?;
 
     let mut item = finding.into_active_model();
     item.status = Set(FindingStatus::Published);
@@ -360,12 +314,10 @@ pub async fn unpublish(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
+    let access = access(&ctx, &user, finding.project_id).await?;
 
     require_finding_write(
-        &user,
-        &membership,
+        access,
         &finding,
         "only project staff can unpublish findings",
     )?;
@@ -384,15 +336,9 @@ pub async fn remove(
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
     let finding = load_finding(&ctx, finding_id).await?;
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
+    let access = access(&ctx, &user, finding.project_id).await?;
 
-    require_finding_write(
-        &user,
-        &membership,
-        &finding,
-        "only project staff can delete findings",
-    )?;
+    require_finding_write(access, &finding, "only project staff can delete findings")?;
 
     // Comments are removed explicitly rather than by ON DELETE CASCADE: SQLite
     // cannot alter a constraint in place, so declaring one now would rebuild the

@@ -4,7 +4,8 @@
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::models::_entities::{comments, findings, project_members, users};
+use super::access;
+use crate::models::_entities::{comments, findings, users};
 use crate::security::CurrentUser;
 use crate::validation::{self, MAX_COMMENT};
 use crate::views::comment::CommentResponse;
@@ -27,14 +28,7 @@ async fn load_viewable_finding(
         .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let membership =
-        project_members::Model::find_membership(&ctx.db, finding.project_id, user.id).await?;
-
-    if !(user.is_manager() || membership.is_some()) {
-        return Err(Error::NotFound);
-    }
-
-    if !user.is_project_staff(membership.as_ref()) && !finding.is_published() {
+    if !access(ctx, user, finding.project_id).await?.sees(&finding) {
         return Err(Error::NotFound);
     }
 
