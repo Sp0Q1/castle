@@ -112,6 +112,42 @@ four minutes, disabling a user there, ending their session or changing their
 groups reaches the portal within that time. Sign-out ends the Keycloak session
 as well.
 
+## Several hosts, one overview
+
+A host is complete in itself and shares nothing with another. What tells the
+operator how all of them are is a page made on a machine of the operator's
+own, from what each host says about itself.
+
+```mermaid
+flowchart LR
+  subgraph host["A host"]
+    app["castle of each tenant"]
+    engine["containers, certificates, timers"]
+    ctl["castlectl status, every five minutes"]
+    file[("status.json")]
+    account["account castle-status: prints the file, nothing else"]
+  end
+  subgraph own["The operator's machine"]
+    overview["overview.py"]
+    page["one static page"]
+  end
+  app -->|"summary: ids, counts, times"| ctl
+  engine --> ctl --> file --> account
+  overview -->|"ssh: pinned host key, a key for that account"| account
+  overview --> page
+  page -.->|"links"| portal(["a client's portal, signing in as always"])
+```
+
+A tenant's castle gives its host a summary: for each project its id, how many
+findings there are by status and severity, and the comments of the last seven
+days as times, ids and the role of who wrote them. `castlectl status` puts
+those together with what it reads itself: which instances run and how, the
+images, until when the served certificates are valid, the newest backup, the
+host's disk and timers. No name, title or text is in that document, and none
+is read to make it. Nothing listens for the overview: it asks, each host on its
+own, and only reads ([`deploy/compose/docs/status.md`](../deploy/compose/docs/status.md),
+[`deploy/overview/README.md`](../deploy/overview/README.md)).
+
 ## Security model
 
 What is protected: the findings, drafts above all, with their discussion and
@@ -140,6 +176,16 @@ images; which codenames belong to clients; credentials and sessions.
    Someone who is not on a project gets 404 for everything in it.
 5. **The host.** The host, its operator and Keycloak's administrators are
    trusted. Tenants share a kernel.
+6. **Castle to host, host to overview.** Neither is taken at its word. The
+   host reads at most a megabyte of what a tenant's castle prints and rebuilds
+   the summary field by field; one that is not exactly a summary is left out.
+   The status is put together in one place, which holds every value to what
+   the overview takes and keeps the whole within what the overview reads:
+   where it would not fit, the largest summaries are left out first, so no
+   tenant crowds out the status of its host. The overview does the same with
+   a host's status, and asks a host only after it has shown the host key that
+   is pinned for it. The account it asks signs in with a key and can print
+   the status and nothing else.
 
 ### Threats and answers
 
@@ -161,6 +207,9 @@ images; which codenames belong to clients; credentials and sessions.
 | A sign-in code that reaches someone else | it is of no use in another browser: Keycloak redeems it only for the verifier kept for the browser that asked (PKCE), and the proxy accepts the tokens only with that browser's nonce; a code is used once and lives a minute |
 | A stolen backup | bundles are encrypted on the host to a public key whose private half is kept elsewhere |
 | An instance serving with a broken configuration | the settings are parsed strictly at start, `DATABASE_URL` and `JWT_SECRET` have no default, proxy mode does not start without its proxy's secret, and a logo that cannot be served stops the start |
+| A stolen status key | it reads one host's status and does nothing else there: the account runs one command whatever is asked, without terminal, forwarding or an environment of the other side's choosing, a connection that asks for nothing is closed, and all its connections together are held to a dozen processes. The status says which codenames are tenants and how much goes on in them, and carries no name, title or text. Deleting the key's line on the host ends it |
+| A host that lies to the overview | it lies about itself alone: every host is asked on its own, an answer is read up to a megabyte and shown only if every field is what a status has there, links are built from a codename and the domain the overview was configured with, and a status older than fifteen minutes is shown as old. Why a host gave no status is what ssh reported, which a host that is spoken to can influence: every such host is one to look at |
+| A client's text reaching the overview | none is read for it: a summary is ids, counts, times and words from a fixed list, the host drops one that has anything else in it, and the page has no script and a policy under which it loads nothing |
 | A tampered dependency or image | lockfiles; `cargo audit`, `npm audit`, Trivy, Semgrep and TruffleHog on every pull request and weekly; CI builds the image with provenance and an SBOM; `castlectl upgrade` resolves the image to a digest once, so every instance runs the same build |
 
 ### Limits
@@ -170,3 +219,5 @@ images; which codenames belong to clients; credentials and sessions.
 - Tenants are separated by containers and networks on one kernel, not by
   virtual machines.
 - One host is one copy of everything. The backups are what survives it.
+- The overview shows what each host says about itself. A host that is taken
+  over can say that all is well.
