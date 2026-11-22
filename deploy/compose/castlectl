@@ -73,11 +73,27 @@ KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
 # `set -u` can't abort issue-certs (bring-up step 1) with a cryptic "unbound
 # variable" when it's missing from .env.
 KC_HOST="${KC_HOST:?set KC_HOST in .env (IdP hostname, e.g. sso.example.com)}"
-# Where castlectl reaches Keycloak's admin API FROM THIS HOST. Same as the
-# browser-facing URL in prod; differs only when the public port is a tunnel that
-# doesn't exist on the box (e.g. lab: browser :8443 -> box :443), where this is
-# the bare :443 host.
+# Where castlectl reaches Keycloak's admin API: the sign-in host (or
+# KC_ADMIN_URL, when the browser-facing port is not the one this server listens
+# on), asked on the server's own loopback. The name and its certificate are
+# still the ones checked, and the request starts here, which is what the
+# sign-in host's vhost asks of anything but signing in (caddy/sites/sso.caddy).
+# An empty KC_RESOLVE asks by name instead.
 KC_ADMIN_URL="${KC_ADMIN_URL:-$KC_PUBLIC_URL}"
+admin_at="${KC_ADMIN_URL#*://}"; admin_at="${admin_at%%/*}"
+case "$admin_at" in
+  *:*) admin_at="${admin_at%%:*}:${admin_at##*:}" ;;
+  *)   admin_at="$admin_at:443" ;;
+esac
+export KC_RESOLVE="${KC_RESOLVE-$admin_at:127.0.0.1}"
+# The secret of castlectl's own account at Keycloak, once `keycloak-setup` has
+# made it. With it, that account is who asks, and no administrator's password
+# is needed here.
+KC_SERVICE="$RUN/_keycloak.secret"
+if [[ -s "$KC_SERVICE" ]]; then
+  KC_CLIENT_SECRET="$(cat "$KC_SERVICE")"
+  export KC_CLIENT_ID=castlectl KC_CLIENT_SECRET
+fi
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 CASTLE_IMAGE="${CASTLE_IMAGE:?set CASTLE_IMAGE in .env}"
 ENGINE="${ENGINE:-podman}"
@@ -888,9 +904,29 @@ users(){ # <codename>
     ]) | @tsv' | awk -F '\t' '{ printf "%-36s %-24s %-8s %s\n", $1, $2, $3, $4 }'
 }
 
+# Gives castlectl an account of its own at Keycloak, so that from here on it
+# asks with that account's secret and no administrator's password has to stay
+# in .env. An administrator signs in once to make it: KC_ADMIN_USER and
+# KC_ADMIN_PASS, from .env or the environment of this one run. Running it again
+# brings the account back to this state with the secret it has.
+keycloak_setup(){
+  need jq; need openssl
+  local secret out
+  [[ -n "${KC_ADMIN_USER:-}" && -n "${KC_ADMIN_PASS:-}" ]] \
+    || die "keycloak-setup signs in as an administrator once: give KC_ADMIN_USER and KC_ADMIN_PASS for this run"
+  if [[ -s "$KC_SERVICE" ]]; then secret="$(cat "$KC_SERVICE")"; else secret="$(openssl rand -hex 32)"; fi
+  out="$(env -u KC_CLIENT_SECRET SERVICE_SECRET="$secret" KC_URL="$KC_ADMIN_URL" "$REALM_SH" service-account 2>&1)" \
+    || die "could not set up the service account:"$'\n'"$out"
+  printf '%s' "$secret" > "$KC_SERVICE"
+  echo "castlectl has its own account at Keycloak now ($(basename "$KC_SERVICE"), in .instances/)."
+  echo "The master realm locks out after failed sign-ins. The first administrator's"
+  echo "password is no longer needed here: see docs/admin-rotation.md."
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   issue-certs)     issue_certs "${1:-10}" ;;
+  keycloak-setup)  keycloak_setup ;;
   provision-pool)  provision_pool ;;
   renew-pool)      renew_pool ;;
   allocate)        allocate ;;

@@ -15,13 +15,18 @@
 #   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
 #   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
 #   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
+#   ./keycloak-realm.sh service-account               # the account castlectl signs in with
 #   ./keycloak-realm.sh await                         # wait until Keycloak answers
 #
 # Env:
 #   BASE_DOMAIN     hostname suffix for the tenant       (required for create, update and render)
 #   KC_URL          Keycloak base URL, e.g. https://sso.example.com
-#   KC_ADMIN_USER   admin username           (create/delete only)
-#   KC_ADMIN_PASS   admin password           (create/delete only)
+#   KC_CLIENT_SECRET  the secret of castlectl's service account (KC_CLIENT_ID,
+#                   default castlectl). With it, that account is who asks.
+#   KC_ADMIN_USER   admin username           (without a service account)
+#   KC_ADMIN_PASS   admin password           (without a service account)
+#   KC_RESOLVE      <host>:<port>:<address>: ask that host at that address. The
+#                   name, and the certificate for it, stay the ones checked.
 #   KC_REALM_PREFIX realm name prefix                    (default: castle-)
 #   KC_WAIT         how many seconds `await` waits for Keycloak (default: 120)
 #   EXTERNAL_PORT   port in browser-facing URLs          (default: none = 443)
@@ -45,15 +50,17 @@ if [[ "${KC_INSECURE:-0}" == "1" ]]; then
   echo "keycloak-realm.sh: WARNING - TLS verification disabled (KC_INSECURE=1)" >&2
 fi
 
+[[ -z "${KC_RESOLVE:-}" ]] || CURL_TLS+=(--resolve "$KC_RESOLVE")
+
 usage() {
   echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2
-  echo "       keycloak-realm.sh await" >&2
+  echo "       keycloak-realm.sh {service-account|await}" >&2
   exit 1
 }
 cmd="${1:-}"; codename="${2:-}"
 case "$cmd" in
   # About Keycloak itself, not about a codename's realm.
-  await) [[ -z "$codename" ]] || usage ;;
+  service-account|await) [[ -z "$codename" ]] || usage ;;
   *)
     [[ -n "$cmd" && -n "$codename" ]] || usage
     [[ "$codename" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || {
@@ -166,18 +173,24 @@ render() {
 JSON
 }
 
-# Admin API token. Uses the password grant against the master realm's built-in
-# admin-cli client, which is how Keycloak's own kcadm authenticates. The
-# password reaches curl on standard input: an argument would sit in the process
-# list, readable by every user of the host.
+# Admin API token. With KC_CLIENT_SECRET it is the service account's: a client
+# of the master realm that signs in with its secret and nothing else. Without
+# one it is an administrator's, by the password grant of the built-in admin-cli
+# client, which is how Keycloak's own kcadm authenticates. Either secret
+# reaches curl on standard input: an argument would sit in the process list,
+# readable by every user of the host.
 kc_token() {
   local url="${KC_URL:?KC_URL required}"
-  printf '%s' "${KC_ADMIN_PASS:?KC_ADMIN_PASS required}" \
-    | curl -sSf "${CURL_TLS[@]}" --data-urlencode "username=${KC_ADMIN_USER:?KC_ADMIN_USER required}" \
-        --data-urlencode "password@-" \
-        -d "grant_type=password" -d "client_id=admin-cli" \
-        "${url}/realms/master/protocol/openid-connect/token" \
-    | jq -er '.access_token'
+  local at="${url}/realms/master/protocol/openid-connect/token"
+  if [[ -n "${KC_CLIENT_SECRET:-}" ]]; then
+    printf '%s' "$KC_CLIENT_SECRET" \
+      | curl -sSf "${CURL_TLS[@]}" -d "grant_type=client_credentials" \
+          --data-urlencode "client_id=${KC_CLIENT_ID:-castlectl}" --data-urlencode "client_secret@-" "$at"
+  else
+    printf '%s' "${KC_ADMIN_PASS:?KC_ADMIN_PASS required}" \
+      | curl -sSf "${CURL_TLS[@]}" --data-urlencode "username=${KC_ADMIN_USER:?KC_ADMIN_USER required}" \
+          --data-urlencode "password@-" -d "grant_type=password" -d "client_id=admin-cli" "$at"
+  fi | jq -er '.access_token'
 }
 
 # The token as a header file for curl (`-H @<(bearer "$token")`), for the same
@@ -309,6 +322,42 @@ update() {
   echo "realm ${realm}: the client was brought up to date" >&2
 }
 
+# The account castlectl signs in to Keycloak with: a client of the master
+# realm that has a secret and no browser sign-in, whose service account holds
+# the admin role and whose tokens are issued for the admin API. It is made, or
+# brought to that state, by an administrator; castlectl needs only the secret
+# from then on (SERVICE_SECRET, from the environment). The same step switches
+# on the lock-out after failed sign-ins for the master realm, as the pool's
+# realms have it.
+service_account() {
+  local id="${KC_CLIENT_ID:-castlectl}" client account role scope
+  : "${SERVICE_SECRET:?SERVICE_SECRET required}"
+  export SERVICE_SECRET
+  realm=master
+  client="$(kc "/clients" -G --data-urlencode "clientId=${id}" | jq -r '.[0].id // empty')"
+  if [[ -z "$client" ]]; then
+    jq -n --arg id "$id" '{clientId: $id, enabled: true, publicClient: false, secret: env.SERVICE_SECRET,
+        serviceAccountsEnabled: true, standardFlowEnabled: false, implicitFlowEnabled: false,
+        directAccessGrantsEnabled: false}' \
+      | kc "/clients" -o /dev/null -X POST -H "Content-Type: application/json" --data-binary @-
+    client="$(kc "/clients" -G --data-urlencode "clientId=${id}" | jq -er '.[0].id')"
+  else
+    kc "/clients/${client}" | jq -c '.secret = env.SERVICE_SECRET' \
+      | kc "/clients/${client}" -o /dev/null -X PUT -H "Content-Type: application/json" --data-binary @-
+  fi
+  account="$(kc "/clients/${client}/service-account-user" | jq -er '.id')"
+  role="$(kc "/roles/admin")"
+  jq -c '[.]' <<<"$role" \
+    | kc "/users/${account}/role-mappings/realm" -o /dev/null -X POST -H "Content-Type: application/json" --data-binary @-
+  # The admin API takes only tokens issued for it, which this scope sees to.
+  scope="$(kc "/client-scopes" | jq -r '.[] | select(.name == "kc-admin-api") | .id')"
+  [[ -z "$scope" ]] || kc "/clients/${client}/default-client-scopes/${scope}" -o /dev/null -X PUT
+  jq -n '{bruteForceProtected: true, permanentLockout: false, failureFactor: 8, waitIncrementSeconds: 60,
+      maxFailureWaitSeconds: 900, quickLoginCheckMilliSeconds: 1000, minimumQuickLoginWaitSeconds: 60}' \
+    | kc "" -o /dev/null -X PUT -H "Content-Type: application/json" --data-binary @-
+  echo "the service account ${id} is in place, and the master realm locks out after failed sign-ins" >&2
+}
+
 # Keycloak takes a minute to answer after it is started. Waits until it does,
 # for KC_WAIT seconds at most.
 await() {
@@ -323,6 +372,7 @@ case "$cmd" in
   render) render ;;
   create) create ;;
   update) update ;;
+  service-account) service_account ;;
   delete) delete ;;
   people) people ;;
   add-people) add_people ;;
