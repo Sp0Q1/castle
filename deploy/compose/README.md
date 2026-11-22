@@ -205,7 +205,9 @@ in the portal. Adding and removing people, sessions and what ends them are in
 [`../oauth2-proxy-keycloak.md`](../oauth2-proxy-keycloak.md).
 
 **Your own logo.** Put an image file named `logo` in `branding/` (PNG, JPEG,
-GIF, WebP or SVG, at most 1 MiB) and run `./castlectl upgrade`. The file is
+GIF, WebP or SVG, at most 1 MiB) and run `./castlectl upgrade`. Castle does not
+run as root, so the file has to be readable by everyone (`chmod 644
+branding/logo`); `castlectl` says so before it touches a tenant. The file is
 git-ignored and is not part of a backup bundle, so keep a copy. To go back to
 the built-in brand, delete the file and run `./castlectl upgrade` again: a
 tenant that was started with a logo does not start without it.

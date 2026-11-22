@@ -375,6 +375,14 @@ short_ref(){ # <image-ref> -> 12 chars of its digest, or the ref if it has none
 
 # The deployment's own logo: a file named `logo` in branding/, as castle sees it.
 logo(){ [[ -f "$HERE/branding/logo" ]] && echo /app/branding/logo; }
+# Castle does not run as root, so it reads the logo as anybody on the host
+# would. Asked before a tenant is touched: a castle that is given a logo it
+# cannot read does not start.
+check_logo(){
+  [[ -f "$HERE/branding/logo" ]] || return 0
+  [[ "$(stat -Lc %a "$HERE/branding")" == *[1357] && "$(stat -Lc %a "$HERE/branding/logo")" == *[4567] ]] \
+    || die "branding/logo is not readable by everyone, and castle does not run as root. Run: chmod 755 branding && chmod 644 branding/logo"
+}
 
 # Run a compose command for a codename with its secrets exported, so compose
 # substitutes ${OAP_*}/${CASTLE_*} from the environment. The DB password is hex
@@ -474,6 +482,7 @@ renew_pool(){
 promote(){ # <codename>
   local cn="${1:?promote needs a <codename>}"
   [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary"
+  check_logo
   echo "promoting canary '$cn' -> real tenant (cert + subdomain + realm unchanged)"
   compose_instance "$cn" down >/dev/null 2>&1
   render_instance "$cn" "$TPL/tenant.compose.yml"
@@ -631,6 +640,7 @@ upgrade(){ # [<codename>]  (default: every running codename)
   local app_img="" has_tenant=0
   for cn in "${targets[@]}"; do [[ "$(kind_of "$cn")" == tenant ]] && { has_tenant=1; break; }; done
   if (( has_tenant )); then
+    check_logo
     run_or_die "pull failed for $CASTLE_IMAGE" "$ENGINE" pull "$CASTLE_IMAGE"
     app_img="$(resolve_digest "$CASTLE_IMAGE")"
     [[ "$app_img" == *@sha256:* ]] || die "could not resolve a digest for $CASTLE_IMAGE (is it pulled?)"
