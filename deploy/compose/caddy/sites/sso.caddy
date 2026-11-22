@@ -2,8 +2,8 @@
 # is always-on and not a decoy, so Caddy manages its cert itself via ACME
 # (HTTP-01 / TLS-ALPN-01) over its permanent listeners and renews it
 # automatically — no dehydrated, no pre-issue, no manual step.
-# {$KC_HOST} is substituted from the environment when Caddy starts.
-{$KC_HOST} {
+# {$SSO_HOST} is KC_HOST of .env, substituted when Caddy starts.
+{$SSO_HOST} {
 	log   # login attempts hit /realms/<realm>/login-actions/authenticate here
 	# Keycloak sends its own security headers; only what names the software goes.
 	header {
