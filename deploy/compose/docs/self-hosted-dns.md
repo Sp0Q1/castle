@@ -89,11 +89,12 @@ Then the normal flow works with no provider API key:
 ## The IdP host is a separate apex — and takes care of itself
 
 `KC_HOST` (e.g. `sso.example.com`) is on a different apex than `$BASE_DOMAIN`, so
-this nameserver isn't authoritative for it and `issue-certs` skips it. It needs
-no manual cert step: the IdP is always-on and not a decoy, so **Caddy manages the
-`sso` vhost's cert itself via ACME** (HTTP-01 / TLS-ALPN-01 over its permanent
-listeners) and renews it automatically. Just point `KC_HOST`'s A record at the
-box, set `ACME_EMAIL`, and keep `:80` open for the challenge.
+this nameserver isn't authoritative for it, and `issue-certs` is about the pool
+only. It needs no manual cert step: the IdP is always-on and not a decoy, so
+**Caddy manages the `sso` vhost's cert itself via ACME** (HTTP-01 / TLS-ALPN-01
+over its permanent listeners) and renews it automatically. Just point
+`KC_HOST`'s A record at the box, set `ACME_EMAIL`, and keep `:80` open for the
+challenge.
 
 The pool stays pre-issued and CA-untouched by Caddy: every pool vhost pins an
 explicit cert, so `sso` is the only vhost Caddy ever issues for.

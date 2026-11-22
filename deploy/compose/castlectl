@@ -4,9 +4,10 @@
 # Docker Compose + Caddy: codename pool, per-tenant Keycloak realm, one shared
 # client secret, codename-only — the host never learns a client's real name.
 #
-#   castlectl issue-certs [N]       bulk-issue certs for the IdP + N codenames in
-#                                   ONE CA batch (the only CT event). No Keycloak
-#                                   needed — run this BEFORE bringing up platform.
+#   castlectl issue-certs [N]       issue certificates for N more codenames in
+#                                   one batch. Needs no Keycloak; with the
+#                                   bundled nameserver it needs that one running
+#                                   (docs/self-hosted-dns.md).
 #   castlectl provision-pool        stand up a canary for every codename that has
 #                                   a cert but no instance (platform must be up)
 #   castlectl renew-pool            batch-renew the whole pool's certs together
@@ -68,10 +69,8 @@ RUN="$HERE/.instances"                        # per-codename generated compose f
 [[ -f .env ]] && chmod go= .env
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN in .env}"
 KC_PUBLIC_URL="${KC_PUBLIC_URL:?set KC_PUBLIC_URL in .env}"
-# The IdP's bare hostname (no scheme/port) — used by issue-certs' pool-vs-IdP-apex
-# check and matching the caddy service's ${KC_HOST}. Guarded like the two above so
-# `set -u` can't abort issue-certs (bring-up step 1) with a cryptic "unbound
-# variable" when it's missing from .env.
+# The sign-in host's bare name, which the platform's Caddy serves. Asked for
+# here as well, so a .env without it stops castlectl before it stops Caddy.
 KC_HOST="${KC_HOST:?set KC_HOST in .env (IdP hostname, e.g. sso.example.com)}"
 # Where castlectl reaches Keycloak's admin API: the sign-in host (or
 # KC_ADMIN_URL, when the browser-facing port is not the one this server listens
@@ -416,24 +415,16 @@ ensure_secret(){ # <codename> <name> <bytes> [hex]
 issue_certs(){ # [N]
   need openssl
   local n="${1:-10}" cn picked=()
-  # The self-hosted nameserver is authoritative for $BASE_DOMAIN only, so it
-  # answers DNS-01 for the codename pool but not for an IdP host on another apex.
-  # That's fine: Caddy auto-manages the IdP (sso) cert itself via ACME — nothing
-  # to issue here. See docs/self-hosted-dns.md.
-  if [[ -n "$SELF_HOSTED_DNS" && "$KC_HOST" != *".$BASE_DOMAIN" ]]; then
-    echo "note: pool certs only; the IdP cert for $KC_HOST is auto-managed by Caddy." >&2
-    echo "adding $n codenames to the pool, then one batch issuance"
-  else
-    echo "adding IdP + $n codenames to the pool, then one batch issuance"
-    add_domain "$KC_HOST"
-  fi
+  # The pool only. The sign-in host's certificate is Caddy's to obtain and
+  # renew, over its own listeners (caddy/sites/sso.caddy).
+  echo "adding $n codenames to the pool, then one batch issuance"
   for _ in $(seq 1 "$n"); do
     cn="$(next_codename)"; picked+=("$cn")   # next_codename skips names already in the pool
     add_domain "$(host_of "$cn")"
   done
   sync_certs
   echo "issued for: ${picked[*]}"
-  echo "next: bring up platform, then 'castlectl provision-pool'"
+  echo "next: 'castlectl provision-pool', once the platform is up"
 }
 
 # Stand up a canary for every codename that has a cert but isn't provisioned yet.
@@ -945,7 +936,7 @@ case "$cmd" in
   restore)         restore "${1:-}" "${2:-}" ;;
   *) cat >&2 <<'USAGE'
 usage: castlectl <command>
-  issue-certs [N]        bulk-issue certs for N codenames (one CA batch)
+  issue-certs [N]        issue certs for N more codenames (one CA batch)
   provision-pool         stand up a canary for every codename that has a cert
   allocate               pick a free codename, issue its cert, canary it
   promote <cn>           turn a canary into a tenant (cert and subdomain unchanged)
