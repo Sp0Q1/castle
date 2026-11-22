@@ -10,5 +10,23 @@
 		-Server
 		-Via
 	}
-	reverse_proxy keycloak:8080
+	# To the world this host is for signing in: the pool's realms and Keycloak's
+	# static files. The rest of Keycloak (the master realm, the admin console,
+	# the admin API) answers only a request that starts on this server, which
+	# is how castlectl asks, and how an administrator's browser arrives through
+	# an SSH tunnel. Anyone else gets 404 for it.
+	@signin {
+		path /realms/{$SSO_REALM_PREFIX:castle-}* /resources/* /robots.txt
+		not path /realms/master /realms/master/*
+	}
+	@here remote_ip {$SSO_ADMIN_FROM:private_ranges}
+	handle @signin {
+		reverse_proxy keycloak:8080
+	}
+	handle @here {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		respond 404
+	}
 }
