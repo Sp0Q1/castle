@@ -27,6 +27,7 @@ use validator::ValidateEmail;
 
 use crate::models::_entities::users;
 use crate::models::users::{Recognized, UserRole, UserStatus};
+use crate::validation::MAX_EMAIL;
 
 /// How people sign in. There is no default: a configuration that does not say
 /// is not started.
@@ -292,8 +293,6 @@ struct ProxyIdentity {
 }
 
 impl ProxyIdentity {
-    /// An address is at most this long (RFC 5321).
-    const EMAIL_MAX: usize = 254;
     /// More than any identity provider's id for a person needs.
     const SUBJECT_MAX: usize = 255;
 
@@ -316,7 +315,7 @@ impl ProxyIdentity {
         let email = one(&proxy.email_header)?
             .ok_or(Refusal::NoIdentity)?
             .to_lowercase();
-        if email.len() > Self::EMAIL_MAX || !email.validate_email() {
+        if email.len() > MAX_EMAIL || !email.validate_email() {
             return Err(Refusal::NoIdentity);
         }
         let name = one(&proxy.name_header)?.map(str::to_string);
