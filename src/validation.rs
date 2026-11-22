@@ -30,8 +30,9 @@ pub const MAX_SECTION: usize = 64 * 1024;
 pub const MAX_COMMENT: usize = 16 * 1024;
 /// Project description (plain summary, not a report section).
 pub const MAX_DESCRIPTION: usize = 4 * 1024;
-/// RFC 5321 caps an address at 320 characters.
-pub const MAX_EMAIL: usize = 320;
+/// An address is at most this long: RFC 5321 gives a path 256 characters, its
+/// two angle brackets included.
+pub const MAX_EMAIL: usize = 254;
 
 /// Control characters are rejected except the three that legitimately occur in
 /// markdown. NUL in particular is not storable in a Postgres `text` column, so
