@@ -25,6 +25,8 @@
 #                                   Keycloak (docs/admin-rotation.md)
 #   castlectl deprovision <codename>
 #   castlectl list
+#   castlectl status              how this server is, as JSON for the overview
+#                                   (docs/status.md)
 #   castlectl upgrade [<codename>]  recreate running instances from the templates
 #   castlectl backup | restore      an encrypted bundle of everything not re-derivable
 #   castlectl dns-init | dns-sync   the bundled nameserver's key and records
@@ -561,6 +563,208 @@ list(){
   done
 }
 
+# --- status ----------------------------------------------------------------
+# How this server is, as one JSON document for the overview (docs/status.md).
+# What is gathered here goes, one line for each thing, to status.jq, which
+# makes the document and holds every value to what a status has there. What
+# could not be read is empty here and null there, never a value that reads as
+# fine. Every question to the engine or to systemd is given a time to answer.
+
+# Whether a container is there. An engine that does not say is not taken for
+# "no": where status_lines asks, which decides what a codename is, that ends
+# the run; inside a `$(...)`, as in state_of, it ends that one question, whose
+# value is then empty and null in the document.
+there(){ # <container>
+  local code=0 said
+  if [[ "$ENGINE" == *podman ]]; then
+    timeout 20 "$ENGINE" container exists "$1" || code=$?
+  else
+    said="$(timeout 20 "$ENGINE" container inspect "$1" 2>&1 >/dev/null)" && return 0
+    [[ "$said" == *"No such container"* ]] && return 1
+    code=2
+  fi
+  case "$code" in 0|1) return "$code" ;; esac
+  die "the engine did not say whether $1 is there"
+}
+# A container in one word: healthy, starting or unhealthy. One that runs and
+# has no health check is healthy, which is what `upgrade` takes it for. Prints
+# nothing when the engine does not say.
+state_of(){ # <container>
+  local s
+  there "$1" || { echo unhealthy; return; }
+  s="$(timeout 20 "$ENGINE" inspect --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$1" 2>/dev/null)" || return 0
+  case "$s" in
+    running/|running/healthy) echo healthy ;;
+    running/starting)         echo starting ;;
+    ?*/*)                     echo unhealthy ;;
+  esac
+}
+# Several of those as one: unhealthy if any is; else nothing if any is unknown;
+# else starting if any is; else healthy.
+worst_of(){ # <word>...
+  local w unknown="" starting=""
+  for w in "$@"; do
+    case "$w" in
+      unhealthy) echo unhealthy; return ;;
+      starting)  starting=1 ;;
+      healthy)   ;;
+      *)         unknown=1 ;;
+    esac
+  done
+  [[ -z "$unknown" ]] || return 0
+  [[ -z "$starting" ]] || { echo starting; return; }
+  echo healthy
+}
+# One of the platform's services, found by the labels compose gives its
+# containers. A service without a container is not running; a listing can come
+# back empty for a moment while containers are recreated, so an empty one is
+# asked for once more before it counts.
+platform_state(){ # <service>
+  local names="" n again; local -a states=()
+  for again in "" once; do
+    names="$(timeout 20 "$ENGINE" ps -a --format '{{.Names}}' \
+      --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-$(basename "$HERE")}" \
+      --filter "label=com.docker.compose.service=$1" 2>/dev/null)" || return 0
+    [[ -z "$names" && -z "$again" ]] || break
+    sleep 2
+  done
+  [[ -n "$names" ]] || { echo unhealthy; return; }
+  for n in $names; do states+=("$(state_of "$n")"); done
+  worst_of "${states[@]}"
+}
+# The twelve characters `upgrade` prints for the image a container runs, also
+# for a tenant that was promoted from a tag and has not been upgraded since.
+image_of(){ # <container>
+  local ref
+  ref="$(timeout 20 "$ENGINE" inspect --format '{{.ImageName}}' "$1" 2>/dev/null)"
+  [[ "$ref" == *@sha256:* ]] \
+    || ref="$(timeout 20 "$ENGINE" image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' \
+              "$(timeout 20 "$ENGINE" inspect --format '{{.Image}}' "$1" 2>/dev/null)" 2>/dev/null)"
+  [[ "$ref" =~ @sha256:([0-9a-f]{12})[0-9a-f]{52}$ ]] && echo "${BASH_REMATCH[1]}"
+  return 0
+}
+# When the certificate ends that this server hands out for a name, asked on
+# its own loopback: what a browser is given, whatever the files say.
+served_until(){ # <host>
+  local answer end
+  answer="$(timeout 5 openssl s_client -connect "127.0.0.1:${admin_at##*:}" -servername "$1" </dev/null 2>/dev/null)" || return 0
+  openssl x509 -noout -checkhost "$1" <<<"$answer" 2>/dev/null | grep -qxF "Hostname $1 does match certificate" || return 0
+  end="$(openssl x509 -noout -enddate -dateopt iso_8601 <<<"$answer" 2>/dev/null)"
+  [[ "$end" =~ ^notAfter=(20[0-9]{2}-[0-9]{2}-[0-9]{2})\ ([0-9]{2}:[0-9]{2}:[0-9]{2})Z$ ]] \
+    && echo "${BASH_REMATCH[1]}T${BASH_REMATCH[2]}Z"
+  return 0
+}
+# A tenant's summary. What a container prints is taken for what it is: at most
+# a megabyte is read, the one line that is a summary is rebuilt by summary.jq,
+# and anything else gives nothing. The task is given 50 seconds where it runs,
+# so that one that hangs does not stay behind in the container.
+summary_of(){ # <codename>
+  timeout -k 5 60 "$ENGINE" exec "castle-$1" timeout 50 castle-cli task --environment production summary 2>/dev/null \
+    | head -c 1048576 \
+    | jq -cnR -L "$HERE" 'include "summary";
+        [inputs | fromjson? | select(type == "object" and has("summary_version"))]
+        | select(length == 1) | .[0] | summary' 2>/dev/null
+}
+# true or false, or nothing where systemd does not answer.
+timer_active(){ # <unit>
+  case "$(timeout 10 systemctl is-active "$1" 2>/dev/null)" in
+    active) echo true ;;
+    inactive|failed|activating|deactivating) echo false ;;
+  esac
+}
+# /run/reboot-required is left by a package's hook. Where no such hook is
+# installed, its absence says nothing.
+reboot_required(){
+  if [[ -e /run/reboot-required ]]; then echo true
+  elif [[ -e /etc/kernel/postinst.d/unattended-upgrades || -x /usr/share/update-notifier/notify-reboot-required ]]; then echo false
+  fi
+}
+failed_units(){
+  local out
+  out="$(timeout 10 systemctl list-units --state=failed --no-legend --plain --no-pager 2>/dev/null)" || return 0
+  grep -c . <<<"$out" || true
+}
+# How full the filesystem is that holds the containers' volumes, in percent.
+disk_used(){
+  local root used
+  if [[ "$ENGINE" == *podman ]]; then root="$(timeout 20 "$ENGINE" info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
+  else root="$(timeout 20 "$ENGINE" info --format '{{.DockerRootDir}}' 2>/dev/null)"; fi
+  [[ -n "$root" ]] || return 0
+  used="$(timeout 10 df --output=pcent "$root" 2>/dev/null | tail -n 1)"
+  [[ "$used" =~ ^\ *([0-9]{1,3})%$ ]] && echo "${BASH_REMATCH[1]}"
+  return 0
+}
+newest_backup(){
+  local newest
+  newest="$(ls -1t "$BACKUP_DIR"/castle-backup-*.tar.age 2>/dev/null | head -n 1)"
+  [[ -z "$newest" ]] || date -u -r "$newest" +%Y-%m-%dT%H:%M:%SZ
+}
+# The two questions that wait for an answer from outside castlectl's own
+# reach, a tenant's summary and a served certificate, share one time for the
+# run, so that many slow ones together stay within what the unit gives a run
+# (systemd/castle-status.service). Past it they are not asked: their values
+# are empty, and the run says how many.
+STATUS_SECONDS="${STATUS_SECONDS:-120}"
+in_time(){ (( SECONDS < STATUS_SECONDS )); }
+# The lines status.jq makes the document from: `instance`, `platform` or
+# `fact`, and then the values, separated by tabs. Only names of a codename's
+# shape are asked about. A pool that cannot be read, or that has names and
+# none of them a codename, is no pool to make a status of.
+status_lines(){
+  local cn kind health image ends summary service sign_in="" odd=0 unasked=0
+  local -a names=()
+  [[ -r "$POOL" ]] || die "the pool's names cannot be read ($POOL): no status"
+  while IFS= read -r cn; do
+    if [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]]; then names+=("$cn"); else odd=$((odd + 1)); fi
+  done < <(pool_codenames)
+  (( ${#names[@]} > 0 || odd == 0 )) || die "none of the $odd names in $POOL is a codename: no status"
+  (( odd == 0 )) || echo "castlectl: the status leaves out $odd pool names that are not of a codename's shape" >&2
+  SECONDS=0
+  for cn in "${names[@]}"; do
+    health=""; image=""; ends=""; summary=""
+    if there "castle-$cn"; then
+      kind=tenant
+      health="$(worst_of "$(state_of "castle-$cn")" "$(state_of "postgres-$cn")" "$(state_of "oauth2-proxy-$cn")")"
+      image="$(image_of "castle-$cn")"
+      if in_time; then summary="$(summary_of "$cn")" || summary=""; else unasked=$((unasked + 1)); fi
+    elif there "oauth2-proxy-$cn"; then
+      kind=canary
+      health="$(state_of "oauth2-proxy-$cn")"
+    elif has_cert "$cn"; then
+      kind=cert-only
+    else
+      continue
+    fi
+    if [[ "$kind" != cert-only ]]; then
+      if in_time; then ends="$(served_until "$(host_of "$cn")")"; else unasked=$((unasked + 1)); fi
+    fi
+    printf 'instance\t%s\t%s\t%s\t%s\t%s\t%s\n' "$cn" "$kind" "$health" "$image" "$ends" "$summary"
+  done
+  if in_time; then sign_in="$(served_until "$KC_HOST")"; else unasked=$((unasked + 1)); fi
+  (( unasked == 0 )) || echo "castlectl: the status ran out of its $STATUS_SECONDS seconds: $unasked summaries and certificates were not asked for and are null" >&2
+  for service in caddy keycloak keycloak-db ${SELF_HOSTED_DNS:+dns}; do
+    printf 'platform\t%s\t%s\n' "$service" "$(platform_state "$service")"
+  done
+  printf 'fact\t%s\t%s\n' \
+    now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" sign_in "$sign_in" backup "$(newest_backup)" \
+    reboot "$(reboot_required)" failed "$(failed_units)" disk "$(disk_used)" \
+    renewal "$(timer_active castle-renew.timer)" backups "$(timer_active castle-backup.timer)"
+}
+
+status(){
+  need jq; need openssl
+  [[ "$STATUS_SECONDS" =~ ^[0-9]{1,3}$ ]] || die "STATUS_SECONDS is not a number of seconds"
+  local lines made
+  lines="$(status_lines)" || die "what runs here could not be read: no status"
+  # Two lines: the document, and how much of what was gathered is not in it.
+  made="$(jq -cnR -L "$HERE" 'include "status"; assembled | .document, .left_out' <<<"$lines")" \
+    || die "could not put the status together"
+  jq -r '(select(.names > 0) | "castlectl: the status leaves out \(.names) pool names: listed twice, or past the 500th"),
+         (select(.summaries > 0) | "castlectl: the status leaves out \(.summaries) summaries, the largest, to stay within what the overview reads")' \
+    <<<"${made##*$'\n'}" >&2
+  printf '%s\n' "${made%%$'\n'*}"
+}
+
 # allocate = issue one cert + provision it as a canary (platform must be up).
 allocate(){
   local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"
@@ -986,6 +1190,7 @@ case "$cmd" in
   users)           users "${1:-}" ;;
   deprovision)     deprovision "${1:-}" ;;
   list)            list ;;
+  status)          status ;;
   dns-init)        dns_init ;;
   dns-sync)        dns_sync ;;
   upgrade)         upgrade "${1:-}" ;;
@@ -1006,6 +1211,7 @@ usage: castlectl <command>
   deprovision <cn>       tear an instance down (cert kept)
   renew-pool             renew the pool's certs that are due, in one run
   list                   show codenames and their state
+  status                 print how this server is, as JSON for the overview
   upgrade [<cn>]         recreate running instance(s) with current images (keeps data)
   backup                 write an age-encrypted bundle (DBs + secrets + certs)
   restore <file> --yes   restore from a bundle

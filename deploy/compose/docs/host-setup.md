@@ -15,10 +15,12 @@ apt -y install git age jq podman podman-compose dehydrated bind9-dnsutils curl c
 
 `podman` + `podman-compose` are the container engine (this deployment is
 validated on podman 5.x / podman-compose 1.3.x — the versions Debian 13 ships).
-`age` is for `castlectl backup`, `jq` for the commands that talk to Keycloak,
-`dehydrated` issues and renews the pool's certificates, `bind9-dnsutils` gives
-`dig` + `nsupdate` (the self-hosted-DNS path uses them), and `runc` is the
-container runtime — see next.
+`age` is for `castlectl backup`, `jq` for the commands that talk to Keycloak
+and for `castlectl status`, `dehydrated` issues and renews the pool's
+certificates, `bind9-dnsutils` gives `dig` + `nsupdate` (the self-hosted-DNS
+path uses them), and `runc` is the container runtime — see next. `flock`,
+`timeout` and `sync`, which `backup` and `status` use as well, are part of
+every Debian (util-linux, coreutils).
 
 ## 2. Container runtime: runc, not crun (REQUIRED)
 

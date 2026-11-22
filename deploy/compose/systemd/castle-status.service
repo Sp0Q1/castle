@@ -1,0 +1,19 @@
+[Unit]
+Description=Castle status for the overview (castlectl status)
+Documentation=https://github.com/Sp0Q1/castle/blob/main/deploy/compose/docs/status.md
+
+[Service]
+Type=oneshot
+# castlectl sources ./.env itself, so it only needs the right cwd.
+# Adjust the paths if you cloned somewhere other than /opt/castle.
+WorkingDirectory=/opt/castle/deploy/compose
+# The document goes to a file beside the one that is read, and takes its place
+# in one step once it has been written to the end. A run that fails leaves the
+# file that is read as it was, and its age shows.
+ExecStart=/bin/sh -c 'exec ./castlectl status > /var/lib/castle-status/status.json.new'
+ExecStartPost=/bin/mv /var/lib/castle-status/status.json.new /var/lib/castle-status/status.json
+User=root
+# For root and the directory's group (docs/status.md), and nobody else.
+UMask=0027
+# A run that has not ended by then is ended, and the next one starts on time.
+TimeoutStartSec=4min

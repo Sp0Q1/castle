@@ -1,0 +1,10 @@
+[Unit]
+Description=Castle status for the overview, every five minutes
+Documentation=https://github.com/Sp0Q1/castle/blob/main/deploy/compose/docs/status.md
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
