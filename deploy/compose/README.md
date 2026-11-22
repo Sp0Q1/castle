@@ -50,9 +50,29 @@ Certs for the whole codename pool are issued **once, in one bulk batch**
 (`castlectl issue-certs N`), so CT shows them appearing together — no
 per-onboarding timeline. Every pool vhost pins its pre-issued cert, so Caddy
 never asks a CA for one. Renewal is also **batched** (`castlectl renew-pool` —
-the whole pool together) to keep CT showing synchronized events, never a
-per-instance trickle. Individual certs (not a wildcard) mean one leaked key
-never exposes the whole swarm.
+the whole pool together), so CT shows the pool moving as one. Individual certs
+(not a wildcard) mean one leaked key never exposes the whole swarm.
+`castlectl allocate` is the exception: it adds a single codename and issues its
+certificate alone, which CT shows as one event of its own. Grow the pool with
+`issue-certs` when that matters.
+
+Nothing renews the pool unless it is asked to. `systemd/castle-renew.timer`
+asks once a week: it runs `renew-pool`, and dehydrated renews every certificate
+that has fewer days left than its `RENEW_DAYS` (32, unless `dehydrated/config`
+says otherwise). Caddy is restarted only when a certificate changed. A name
+that fails does not hold up the others: what was renewed is served, and the run
+ends non-zero. Enable the timer once:
+
+```bash
+# paths in the unit assume /opt/castle — edit them if you cloned elsewhere
+cp systemd/castle-renew.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now castle-renew.timer
+```
+
+A run that failed shows in `systemctl --failed` and in
+`journalctl -u castle-renew.service`. With the bundled nameserver a renewal
+needs that one running.
 
 The sign-in host is the exception: it is always on and no decoy, so Caddy
 obtains and renews that one certificate itself.
@@ -99,8 +119,8 @@ codenames.txt             the pool every tenant and decoy is named from
 branding/                 a file named `logo` here replaces the built-in brand (git-ignored)
 dehydrated/               ACME client config and the DNS-01 hook
 dns/                      the bundled nameserver's templates
-systemd/                  the backup timer
-docs/                     host setup, DNS, upgrades and backups, admin rotation
+systemd/                  the backup and the renewal timer
+docs/                     host setup, DNS, upgrades and backups, moving and retiring a tenant, Keycloak's administrators
 .env.example              configuration
 ```
 
@@ -153,7 +173,7 @@ reach the admin console: the sign-in host serves it to the server itself only), 
 | add one more codename to the pool | `./castlectl allocate` |
 | roll out a new castle image, proxy version or vhost template | `./castlectl upgrade` (`docs/backup-and-upgrade.md`) |
 | back up, restore | `./castlectl backup`, `./castlectl restore <file> --yes` (`docs/backup-and-upgrade.md`) |
-| renew the pool's certificates, all together | `./castlectl renew-pool` |
+| renew the pool's certificates, all together | `./castlectl renew-pool`, which the renewal timer runs every week (*The certificate strategy*, above) |
 | put the DNS zone back in line with what runs | `./castlectl dns-sync` (`docs/self-hosted-dns.md`) |
 
 **People and roles.** Accounts live in the codename's Keycloak realm, and the

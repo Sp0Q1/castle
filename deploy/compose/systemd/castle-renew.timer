@@ -1,0 +1,16 @@
+[Unit]
+Description=Weekly Castle pool certificate renewal
+Documentation=https://github.com/Sp0Q1/castle/blob/main/deploy/compose/README.md
+
+[Timer]
+# Weekly, on Monday at 04:30 local, delayed by up to 30 minutes. dehydrated
+# renews a certificate once it has fewer days left than its RENEW_DAYS (32
+# unless dehydrated/config says otherwise), so a pool that was issued together
+# is renewed together, in one run.
+OnCalendar=Mon *-*-* 04:30:00
+RandomizedDelaySec=1800
+# Run a missed renewal once the box is back if it was off at the scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
