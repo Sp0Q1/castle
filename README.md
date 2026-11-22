@@ -14,7 +14,7 @@ them, and what the design defends against:
 users (role: manager | staff | client; status: invited | active | disabled)
   │  1─* projects            created_by
   │  1─* project_members     who is on a project and as what (role: staff |
-  │                          client; manager marks who opened it)
+  │                          client)
   │  1─* findings            author_id
   │  1─* comments            user_id
 projects  1─* project_members, 1─* findings
