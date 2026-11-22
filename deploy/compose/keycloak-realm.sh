@@ -11,13 +11,13 @@
 #
 #   ./keycloak-realm.sh render  <codename>            # print the realm JSON
 #   ./keycloak-realm.sh create  <codename>            # create it (idempotent)
-#   ./keycloak-realm.sh update  <codename>            # an existing realm's client, as `create` makes it today
+#   ./keycloak-realm.sh update  <codename>            # the attributes of an existing realm's client, as `create` sets them
 #   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
 #   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
 #   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
 #
 # Env:
-#   BASE_DOMAIN     hostname suffix for the tenant       (required for create/render)
+#   BASE_DOMAIN     hostname suffix for the tenant       (required for create, update and render)
 #   KC_URL          Keycloak base URL, e.g. https://sso.example.com
 #   KC_ADMIN_USER   admin username           (create/delete only)
 #   KC_ADMIN_PASS   admin password           (create/delete only)
