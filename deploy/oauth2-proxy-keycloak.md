@@ -67,7 +67,8 @@ short:
 Roles are Keycloak's to give. Castle reads them on every request and has no
 way to edit them.
 
-**Adding a person.** In Keycloak's admin console, in the realm
+**Adding a person.** In Keycloak's admin console (reached through an SSH
+tunnel: [`compose/docs/admin-rotation.md`](compose/docs/admin-rotation.md)), in the realm
 `castle-<codename>`: *Users → Add user* with their email and *Email verified*
 on; *Credentials → Set password*, temporary, so they choose their own at first
 sign-in; *Groups → Join* one of the three. To make them enrol an authenticator

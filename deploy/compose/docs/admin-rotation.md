@@ -1,4 +1,46 @@
-# Rotating the Keycloak admin (do this once, before real client data)
+# Keycloak's administrators (do this once, before real client data)
+
+## Reaching the admin console
+
+To the world the sign-in host serves signing in and nothing else of Keycloak.
+The master realm, the admin console and the admin API answer only a request
+that starts on the server itself (`caddy/sites/sso.caddy`); from anywhere else
+they are 404. `castlectl` asks that way by itself. For a browser, make your
+requests start on the server with an SSH tunnel:
+
+```bash
+ssh -D 1080 -N root@<server>
+```
+
+and open `https://<KC_HOST>/admin/` in a browser profile whose proxy is
+`SOCKS5 localhost:1080`, with name lookups through the proxy. Through the
+tunnel the server asks itself by its public name, so its own public address
+has to count as the server's. In `.env`:
+
+```bash
+KC_ADMIN_FROM="private_ranges <the server's public address>"
+```
+
+then `podman compose -f platform.compose.yml up -d caddy`, which recreates
+Caddy and nothing else.
+
+## castlectl's own account
+
+`castlectl` creates and deletes realms, so it signs in to Keycloak. Out of the
+box it does that as the first-boot admin, with the password in `.env`. Give it
+an account of its own before anything else on this page:
+
+```bash
+./castlectl keycloak-setup
+```
+
+That makes a client `castlectl` in the master realm with a secret, no browser
+sign-in and the admin role, keeps the secret in `.instances/`, and switches on
+the lock-out after failed sign-ins for the master realm. From then on
+`castlectl` needs no administrator's password, and the rest of this page does
+not affect it.
+
+## Rotating the first admin
 
 A fresh deployment boots Keycloak with a **first-boot admin** created from
 `KC_BOOTSTRAP_ADMIN_USERNAME`/`_PASSWORD` (set in `.env` as `KC_ADMIN_USER` /
@@ -13,10 +55,10 @@ instance** — once any admin exists it is ignored, and deleting the bootstrap
 user does **not** bring it back. So this rotation is permanent, and the leftover
 `.env` values become inert (a dead credential mapping to no account).
 
-## Steps
+### Steps
 
-Do these in the admin console at `KC_PUBLIC_URL` (e.g. `https://sso.example.com`),
-signed in to the **`master`** realm as the bootstrap admin.
+Do these in the admin console (see above for reaching it), signed in to the
+**`master`** realm as the bootstrap admin.
 
 1. **Create the named admin.** `master` realm → **Users** → **Add user**.
    Set a username and a real email, toggle **Email verified** on, **Create**.
@@ -37,7 +79,7 @@ signed in to the **`master`** realm as the bootstrap admin.
    the original bootstrap `admin` → **Delete**. From here on there is exactly one
    admin, and it has a second factor.
 
-## Clean up the dead credential (optional but tidy)
+### Clean up the dead credential (optional but tidy)
 
 After step 6 the `.env` bootstrap values map to nothing and are never re-read, so
 this is hygiene, not security-critical. To remove them:
@@ -57,14 +99,15 @@ nothing is lost):
 podman compose -f platform.compose.yml up -d keycloak   # or: docker compose ...
 ```
 
-## Prefer the CLI?
+### Prefer the CLI?
 
 The account steps (1–4) can be scripted with `kcadm.sh` inside the running
 container; TOTP enrolment (step 5) is interactive by design and still done in the
 browser. There is no `castlectl` command for it: a one-time, security-critical
-rotation is clearest done deliberately by hand.
+rotation is clearest done deliberately by hand, and `castlectl` itself no
+longer depends on that account once it has its own.
 
-## Recovery
+### Recovery
 
 Locked out (lost the TOTP device with only one admin)? Keycloak can re-bootstrap:
 stop the stack, run the keycloak image's one-shot
