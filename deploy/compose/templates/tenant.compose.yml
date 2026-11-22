@@ -1,13 +1,17 @@
 # A real tenant: the same oauth2-proxy front as a canary, but its upstream is
-# this tenant's own castle app, backed by its own Postgres, on an isolated
-# per-tenant network. castle + postgres are reachable ONLY by this tenant's
-# oauth2-proxy — never by the edge, the IdP, or another tenant.
+# this tenant's own castle app, backed by its own Postgres, on a network of
+# their own. Of the containers on this host only this tenant's oauth2-proxy
+# reaches castle and its database: not the edge, the IdP, or another tenant.
 #
 # Promoting a canary to a tenant swaps canary.compose.yml -> this file for the
-# same codename: identical oauth2-proxy config except --upstream, plus the
-# castle+pg stack. Same subdomain, same pre-issued cert, same realm name.
+# same codename. Towards the browser and Keycloak the proxy is configured the
+# same; what differs is what it forwards to: the upstream, what it passes on
+# about the signed-in user, the secret it shares with castle, and the tenant's
+# network. Same subdomain, same pre-issued cert, same realm name.
 #
-# castlectl substitutes __CODENAME__, __REALM__, __HOST__, __IMAGE__ and secrets.
+# castlectl substitutes the __NAME__ placeholders (codename, realm, host,
+# sign-in URL, image, branding directory). The secrets are not written into
+# the rendered file: compose reads them from castlectl's environment.
 
 networks:
   edge:
@@ -95,7 +99,7 @@ services:
     image: __IMAGE__
     container_name: castle-__CODENAME__
     restart: always
-    # Only on the private tenant network — unreachable except via oauth2-proxy.
+    # On the tenant's network only, and no port is published.
     networks: [tenant]
     depends_on:
       postgres:

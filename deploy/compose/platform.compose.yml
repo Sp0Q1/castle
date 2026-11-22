@@ -1,4 +1,5 @@
-# Shared platform: the edge (Caddy) and the IdP (Keycloak + its Postgres).
+# Shared platform: the edge (Caddy), the IdP (Keycloak + its Postgres) and,
+# under the `self-dns` profile, the nameserver (BIND).
 # Brought up once; tenants and canaries are separate per-codename compose files
 # that join the `castle_edge` and `castle_kc` networks this file creates.
 #
@@ -15,11 +16,12 @@
 # Values come from .env (see .env.example).
 
 networks:
-  # Caddy <-> each codename's oauth2-proxy. Named explicitly so per-codename
-  # compose files can join it as `external`.
+  # Caddy to each codename's oauth2-proxy and to Keycloak. Named explicitly so
+  # per-codename compose files can join it as `external`.
   edge:
     name: castle_edge
-  # oauth2-proxies <-> Keycloak (OIDC backchannel).
+  # Each oauth2-proxy to Keycloak: redeeming codes, keys, renewing sessions,
+  # signing out. Caddy and Keycloak are on both.
   kc:
     name: castle_kc
   # Keycloak <-> its database, and nothing else: internal, so no other network
@@ -34,7 +36,7 @@ volumes:
   dns_data: {}
 
 services:
-  # Self-hosted authoritative DNS for $BASE_DOMAIN (Option 3). Opt-in: it only
+  # Self-hosted authoritative DNS for $BASE_DOMAIN. Opt-in: it only
   # starts under the `self-dns` profile —
   #   docker compose -f platform.compose.yml --profile self-dns up -d
   # Run `castlectl dns-init` first to generate DDNS_TSIG_SECRET, and delegate
@@ -98,10 +100,12 @@ services:
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
       - ./caddy/sites:/etc/caddy/sites:ro,z
-      # Pre-issued certs (bulk). Caddy serves these; it never issues its own.
+      # The pool's certificates, issued in advance. Caddy serves them and asks
+      # no CA for them. The one it obtains itself, for the sign-in host, is in
+      # caddy_data.
       - ./caddy/certs:/certs:ro,z
       - caddy_data:/data
-    # Drop every capability except the two Caddy needs to bind 80/443 as non-root.
+    # Drop every capability except the one Caddy needs to bind 80 and 443.
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt:

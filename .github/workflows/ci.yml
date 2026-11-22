@@ -28,9 +28,9 @@ jobs:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     # Real Postgres for the test suite (see the Test step). SQLite — the config
-    # default — is loosely typed and accepts INT4/INT8 interchangeably, which is
-    # how a BIGINT-vs-i32 entity mismatch passed CI yet 500'd on the first live
-    # tenant (PR #65). Testing on the engine we deploy on catches that class here.
+    # default — is loosely typed and accepts INT4/INT8 interchangeably, so a
+    # BIGINT-vs-i32 entity mismatch passes there and fails on Postgres. Testing
+    # on the engine we deploy on catches that class here.
     # Pin to the same major the deployment runs: the compose pins use postgres:18 —
     # keep this in lockstep with those pins.
     services:

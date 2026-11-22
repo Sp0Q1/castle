@@ -1,4 +1,4 @@
-# Self-hosted authoritative DNS (Option 3)
+# Self-hosted authoritative DNS
 
 Run castle's own authoritative nameserver for the tenant apex (`$BASE_DOMAIN`),
 so cert issuance needs **no DNS-provider API key** and a dark codename leaves
@@ -22,7 +22,9 @@ can't be abused as an open resolver or amplifier — but it must stay reachable 
 
 ## One-time setup
 
-1. **Generate the shared TSIG secret** and set the knobs in `.env`:
+1. **Generate the shared TSIG secret** and set the knobs in `.env` (which has
+   to exist already: `cp .env.example .env` and fill it first, since every
+   `castlectl` command reads it):
 
    ```
    ./castlectl dns-init
@@ -34,8 +36,14 @@ can't be abused as an open resolver or amplifier — but it must stay reachable 
    DDNS_TSIG_SECRET=<from dns-init>
    ```
    The same secret is read by the `dns` service and by castlectl — one key, two
-   consumers. `.instances/ddns.key` (the nsupdate key file) is derived from it and
-   is git-ignored.
+   consumers. `.instances/ddns.key` (the nsupdate key file) is written from it
+   once and is git-ignored. After changing the secret, delete that file, which
+   castlectl then writes again, and start the platform again with `up -d`,
+   which recreates the nameserver with the new one.
+
+   The zone names its nameserver `ns1.$BASE_DOMAIN`. `NS_NAME` in `.env` names
+   another one, for instance a name in the parent zone, so that the delegation
+   needs no glue. It is read when the zone is first made.
 
 2. **Delegate `$BASE_DOMAIN` to this box** at your registrar / the parent zone
    (e.g. in the `example.com` zone if `BASE_DOMAIN=tenants.example.com`):
@@ -44,9 +52,11 @@ can't be abused as an open resolver or amplifier — but it must stay reachable 
    tenants           IN NS  ns1.tenants.example.com.
    ns1.tenants       IN A   203.0.113.10          ; glue — the VPS public IP
    ```
-   That glue A matches the `ns1` record the zone serves itself. Most registrars
-   want **two** NS records; until you run a real secondary, you can point both
-   `ns1` and `ns2` at the same IP, but that is not true redundancy.
+   That glue A matches the `ns1` record the zone serves itself. Delegating a
+   subdomain takes this one NS record. Where two are asked for (a registrar,
+   for a whole domain), a second name in the parent zone that points at the
+   same address satisfies the form. It is not redundancy, and the zone itself
+   names `ns1` only.
 
 3. **Open `:53`** (UDP *and* TCP) to the world on the VPS firewall. TCP matters —
    large answers and Let's Encrypt's checks fall back to it.

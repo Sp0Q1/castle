@@ -7,8 +7,8 @@
 # codename is a canary or a real tenant — only what sits BEHIND oauth2-proxy
 # differs, which is invisible from here.
 __HOST__ {
-	# Access log = the canary tripwire: any request to a codename subdomain is,
-	# by definition, someone who shouldn't be there. client_ip + uri + status.
+	# The access log is what a canary has to tell: nobody has an account there,
+	# so whoever asks is worth a look. A tenant's vhost logs the same way.
 	log
 	tls /certs/__HOST__/fullchain.pem /certs/__HOST__/privkey.pem
 	# The same headers on every answer of every codename, whatever is behind it:

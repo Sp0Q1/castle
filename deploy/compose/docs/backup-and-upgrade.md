@@ -83,25 +83,39 @@ podman exec compose_keycloak-db_1 pg_dump --clean --if-exists -U keycloak -d key
   | gzip > /root/kc-pre-migration.sql.gz
 for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
   podman exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle \
-    | gzip > "/root/tenant-$cn.sql.gz"
+    | gzip > "/root/tenant-$cn-pre-migration.sql.gz"
 done
 
 # 2. Pull the new pins (postgres:NN-alpine bumped in the compose files).
 git pull
 
 # 3. Recreate keycloak-db on the new major with an empty volume, then load the dump.
+#    A stopped container still holds its volume, so the two containers go first.
 podman compose -f platform.compose.yml stop keycloak keycloak-db
+podman rm compose_keycloak_1 compose_keycloak-db_1
 podman volume rm compose_keycloak_db          # the OLD-major data dir (confirm: podman volume ls)
 podman compose -f platform.compose.yml up -d keycloak-db
 until podman exec compose_keycloak-db_1 pg_isready -U keycloak >/dev/null 2>&1; do sleep 2; done
-gunzip -c /root/kc-pre-migration.sql.gz | podman exec -i compose_keycloak-db_1 psql -U keycloak -d keycloak
+gunzip -c /root/kc-pre-migration.sql.gz \
+  | podman exec -i compose_keycloak-db_1 psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak >/dev/null
 
-# 4. Per promoted tenant (skip if all-canary): stop its castle, wipe its pg volume,
-#    up -d postgres-<cn>, load /root/tenant-<cn>.sql.gz, then ./castlectl upgrade <cn>.
-
-# 5. Bring the platform back and verify.
+# 4. Bring Keycloak back on the migrated database.
 podman compose -f platform.compose.yml up -d keycloak
-podman logs -f compose_keycloak_1             # wait until healthy
+podman ps --filter name=compose_keycloak_1    # wait until it says healthy
+
+# 5. Per tenant (skip if all-canary): the same for its database. castlectl
+#    recreates the tenant from the new pins, with an empty database, and the
+#    dump is loaded while castle is stopped.
+for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
+  podman stop "castle-$cn" "postgres-$cn"
+  podman rm "postgres-$cn"
+  podman volume rm "castle-${cn}_castle_db"
+  ./castlectl upgrade "$cn"
+  podman stop "castle-$cn"
+  gunzip -c "/root/tenant-$cn-pre-migration.sql.gz" \
+    | podman exec -i "postgres-$cn" psql -v ON_ERROR_STOP=1 -U castle -d castle >/dev/null
+  podman start "castle-$cn"
+done
 ./castlectl list
 ```
 
@@ -121,8 +135,7 @@ can't be re-derived:
   dehydrated account, and `.env`.
 
 **It bundles each tenant's DB together with its secrets and cert**, so a restore
-can never orphan the data — the trap where you restore a database but lose the
-JWT/DB/oauth secrets that make it usable.
+never leaves a database without the secrets that make it usable.
 
 Not in the bundle: a logo in `branding/`. Keep a copy of that file.
 
@@ -143,10 +156,13 @@ backups. `restore` needs the identity via `BACKUP_AGE_IDENTITY`.
 ```
 
 Run it from the timer below, and copy the `.age` files off-box. This is a
-*complement* to VPS snapshots: snapshots are your
-whole-box disaster recovery; these bundles add portability, per-tenant granular
-restore, and off-provider safety — and, unlike re-issuing, they preserve the
-existing certs so a restore creates **no new Certificate Transparency entries**.
+*complement* to VPS snapshots: snapshots are your whole-box disaster recovery;
+these bundles add portability and off-provider safety. They carry the pool's
+certificates, so a restore asks no CA for the pool and adds no Certificate
+Transparency entries for it. The sign-in host's certificate is Caddy's own and
+is not in the bundle: on a new server Caddy obtains it again. `restore` brings
+back the whole deployment; one client on its own is `castlectl export` and
+`import` ([`moving-and-retiring-a-tenant.md`](moving-and-retiring-a-tenant.md)).
 
 ## Scheduling (unattended)
 
@@ -155,15 +171,15 @@ existing certs so a restore creates **no new Certificate Transparency entries**.
 
 ```bash
 # paths in the unit assume /opt/castle — edit them if you cloned elsewhere
-cp deploy/compose/systemd/castle-backup.{service,timer} /etc/systemd/system/
+cp systemd/castle-backup.{service,timer} /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now castle-backup.timer
 systemctl list-timers castle-backup.timer   # confirm the next run
 journalctl -u castle-backup.service          # inspect the last run
 ```
 
-It fires daily at 03:30 (randomized ±30m; `Persistent=true` catches a run the box
-slept through). Run one by hand any time with `systemctl start
+It fires daily at 03:30, delayed by up to 30 minutes (`Persistent=true` catches
+a run the box slept through). Run one by hand any time with `systemctl start
 castle-backup.service` — or just `./castlectl backup`.
 
 **Retention.** `BACKUP_KEEP` (default 14) prunes the local bundle dir to the
@@ -200,6 +216,12 @@ podman compose -f platform.compose.yml --profile self-dns up -d
 ./castlectl promote <codename>                                 # once per tenant, on its restored secrets
 ./castlectl restore backups/castle-backup-<ts>.tar.age --yes   # loads each tenant DB + uploads
 ```
+
+On a server with another address than the one the bundle came from, change
+`PUBLIC_IP` in the restored `.env` before the platform starts (and the address
+in `KC_ADMIN_FROM`, if one is set there), and point the sign-in host's record
+and the delegation's glue record at the new address. With the bundled
+nameserver each codename's record is published as it is provisioned.
 
 Re-running is harmless: each pass loads whatever is now reachable and names
 the tenants it could not reach yet. The `--yes` flag is required because a

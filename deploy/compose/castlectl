@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# castlectl (compose edition) — provision castle on a single VPS with Podman/
-# Docker Compose + Caddy: codename pool, per-tenant Keycloak realm, one shared
-# client secret, codename-only — the host never learns a client's real name.
+# castlectl — runs castle on a single VPS with Podman or Docker Compose and
+# Caddy: a pool of codenames, each with its own Keycloak realm and its own
+# secrets, and nothing on the host that says which client a codename is.
 #
 #   castlectl issue-certs [N]       issue certificates for N more codenames in
 #                                   one batch. Needs no Keycloak; with the
@@ -21,16 +21,16 @@
 #   castlectl import <file> <codename>
 #                                   load a tenant bundle into a canary
 #   castlectl users <codename>      who is in a codename's realm, and as what
+#   castlectl keycloak-setup        give castlectl an account of its own at
+#                                   Keycloak (docs/admin-rotation.md)
 #   castlectl deprovision <codename>
 #   castlectl list
 #   castlectl upgrade [<codename>]  recreate running instances from the templates
 #   castlectl backup | restore      an encrypted bundle of everything not re-derivable
 #   castlectl dns-init | dns-sync   the bundled nameserver's key and records
 #
-# Canonical bring-up:
-#   castlectl issue-certs 10
-#   docker compose -f platform.compose.yml up -d
-#   castlectl provision-pool
+# Bring-up: deploy/compose/README.md has the order, which depends on who
+# serves DNS for the pool.
 #
 # THE CERT STRATEGY: certs for the whole pool are issued once, together, and
 # every pool vhost pins its own — so promoting a canary to a real tenant
@@ -108,7 +108,7 @@ DOMAINS_TXT="$RUN/domains.txt"                # dehydrated's domains.txt = the a
 
 EXTERNAL_PORT="${EXTERNAL_PORT:-}"   # port in browser-facing URLs (blank = 443)
 
-# --- self-hosted authoritative DNS (Option 3) -----------------------------
+# --- self-hosted authoritative DNS ----------------------------------------
 # When SELF_HOSTED_DNS is set, castle runs its own nameserver for $BASE_DOMAIN
 # (the `dns` service in platform.compose.yml). castlectl then publishes each
 # provisioned codename's A record and drives DNS-01 through it, both via RFC 2136
@@ -147,9 +147,8 @@ workdir(){ # <name of the variable that gets the path>
   into="$(mktemp -d)" || die "could not make a work directory"
   WORK+=("$into"); trap remove_work EXIT
 }
-# Run a command silently on success but, on failure, die WITH its output — so the
-# operator sees the actual cause (a failed pull, a compose conflict) instead of a
-# generic line. Replaces the old `>/dev/null 2>&1 || die "..."` that hid it. (Only
+# Run a command silently on success and, on failure, die with its output, so
+# the operator sees the actual cause (a failed pull, a compose conflict). (Only
 # for commands with no leading VAR=val env prefix, which `"$@"` can't carry.)
 run_or_die(){ # <what> <cmd> [args...]
   local what="$1"; shift
@@ -197,13 +196,10 @@ pool_codenames(){ grep -vE '^\s*(#|$)' "$POOL"; }
 # secrets and the certs themselves. domains.txt is just dehydrated's INPUT list
 # (what to issue), not a claim about what exists.
 has_cert(){ [[ -f "$CERTS/$(host_of "$1")/fullchain.pem" ]]; }
-# Direct per-container lookup, NOT a parse of `ps -a`. The old
-# `ps -a --format {{.Names}} | grep -qx` listed EVERY container and swallowed
-# errors (2>/dev/null), so a transient `podman ps` hiccup — store contention while
-# a mass `upgrade` recreates many pods at once — returned empty output that grep
-# read as "not found". That false-negative skipped running instances, mislabelled
-# them () and made `list` disagree with reality. `container exists` (podman) /
-# `container inspect` (docker) is a clean 0/1 for a single name, no listing.
+# One lookup per container, not a parse of `ps -a`: a listing can come back
+# empty for a moment while an `upgrade` recreates many containers at once, and
+# an empty listing reads as "not there". `container exists` (podman) /
+# `container inspect` (docker) answers 0 or 1 for a single name.
 container_exists(){
   if [[ "$ENGINE" == *podman ]]; then "$ENGINE" container exists "$1"
   else "$ENGINE" container inspect "$1" >/dev/null 2>&1; fi
@@ -224,7 +220,7 @@ next_codename(){
   echo "$free" | shuf -n 1
 }
 
-# --- self-hosted DNS (Option 3) -------------------------------------------
+# --- self-hosted DNS ------------------------------------------------------
 # The nsupdate key file is derived from DDNS_TSIG_SECRET in .env — the SAME
 # secret the `dns` service loads — so both sides share one key. Written 0600 and
 # never committed (it lives under .instances/, which is git-ignored).
@@ -352,16 +348,16 @@ render_instance(){ # <codename> <template> [<image>]  (image defaults to $CASTLE
 # keeps the same string while the digest it points at changes underneath, so
 # `up -d` sees no change to the rendered compose and leaves the old container
 # running. Rendering pinned to the resolved digest makes the reference change
-# when the image does — so a moved tag actually redeploys, and only the app
-# service, since the DB and proxy carry their own separately-pinned tags.
+# when the image does, so a moved tag is redeployed: podman-compose then
+# recreates the tenant's project, proxy and database included, and the data
+# volumes stay.
 resolve_digest(){ # <image-ref>  ->  <repo>@sha256:...
   $ENGINE image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$1" 2>/dev/null
 }
 
-# The reference a container is actually running, so upgrade can report whether
-# anything moved instead of assuming it did. `upgrade` printed the same
-# "recreated with current image" line either way, which let a digest-pinned
-# CASTLE_IMAGE hold a tenant on a months-old build while every run said ok.
+# The reference a container is actually running, so `upgrade` reports whether
+# anything moved. A CASTLE_IMAGE pinned to a digest keeps a tenant on that
+# build, and the report says so.
 running_ref(){ # <container> -> <image ref it was created from>
   $ENGINE inspect --format '{{.ImageName}}' "$1" 2>/dev/null
 }
@@ -799,8 +795,8 @@ restore(){ # <backup-file> [--yes]
   if [[ -f "$work/platform/keycloak.sql" ]] && platform_exec keycloak-db pg_isready -U keycloak >/dev/null 2>&1; then
     attempted=$((attempted + 1))
     $COMPOSE -f platform.compose.yml stop keycloak >/dev/null 2>&1 || true
-    # ON_ERROR_STOP=1 (not the old 0): without it psql exits 0 even when every
-    # statement errored, so a broken load would always report success. The dump is
+    # ON_ERROR_STOP=1: without it psql exits 0 even when every statement failed,
+    # and a broken load would report success. The dump is
     # --clean --if-exists, so re-loading over an existing DB drops cleanly first.
     # `2>&1 >/dev/null` keeps stderr (the cause) and drops psql's normal chatter.
     if kerr="$(platform_exec keycloak-db psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak < "$work/platform/keycloak.sql" 2>&1 >/dev/null)"; then
@@ -973,6 +969,7 @@ usage: castlectl <command>
   export <cn>            write one tenant's data and people as an encrypted bundle
   import <file> <cn>     load a tenant bundle into a canary, which becomes that tenant
   users <cn>             list the people in a codename's realm and their roles
+  keycloak-setup         give castlectl an account of its own at Keycloak
   deprovision <cn>       tear an instance down (cert kept)
   renew-pool             renew the pool's certs that are due, in one run
   list                   show codenames and their state
