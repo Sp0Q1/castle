@@ -83,6 +83,13 @@ services:
     environment:
       # The sso vhost substitutes {$KC_HOST}; Caddy reads it from here.
       KC_HOST: ${KC_HOST:?set KC_HOST in .env}
+      # What the sso vhost serves to the world (realms with this prefix), and
+      # the addresses from which the rest of Keycloak may be asked: this
+      # server's own. See caddy/sites/sso.caddy. The names differ from the
+      # variables they are read from on purpose: podman-compose leaves a
+      # default unexpanded when a key reads a variable of its own name.
+      SSO_REALM_PREFIX: ${KC_REALM_PREFIX:-castle-}
+      SSO_ADMIN_FROM: ${KC_ADMIN_FROM:-private_ranges}
       # The global Caddyfile sets `email {$ACME_EMAIL}` for the IdP cert's ACME
       # account; without it the directive has no argument and Caddy won't parse.
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
