@@ -10,7 +10,8 @@
 #                                   (docs/self-hosted-dns.md).
 #   castlectl provision-pool        stand up a canary for every codename that has
 #                                   a cert but no instance (platform must be up)
-#   castlectl renew-pool            batch-renew the whole pool's certs together
+#   castlectl renew-pool            renew what is due in the pool, in one run
+#                                   (systemd/castle-renew.timer asks weekly)
 #   castlectl allocate              pick a free codename, issue its cert, canary it
 #   castlectl promote <codename>    turn a canary into a real tenant (no new cert)
 #   castlectl demote <codename> --yes
@@ -283,19 +284,32 @@ sync_certs(){
   # dehydrated reads its DOMAINS_TXT + CERTDIR from the config file (see
   # dehydrated/config.example); castlectl passes the same DOMAINS_TXT via env so
   # the config can point at it. -c = cron mode: issue missing + renew due, all
-  # in one run.
+  # in one run. --keep-going: a name that fails does not stop the names after
+  # it, and the run ends non-zero.
   # Ensure the ACME account exists (idempotent; per-CA, so this covers both the
   # staging and prod accounts the first time each is used) — otherwise dehydrated
   # aborts asking you to accept the CA's terms.
+  local failed=0 host
   "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} --register --accept-terms >/dev/null 2>&1 || true
   DOMAINS_TXT="$DOMAINS_TXT" CERTDIR="$DEHYDRATED_CERTDIR" \
-    "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c ${DEHYDRATED_ARGS:-} \
-    || die "dehydrated failed"
+    "$DEHYDRATED" ${DEHYDRATED_CONFIG:+-f "$DEHYDRATED_CONFIG"} -c --keep-going ${DEHYDRATED_ARGS:-} \
+    || failed=1
+  # Every certificate dehydrated holds goes to where Caddy reads it, also after
+  # a run in which a name failed.
   while read -r host; do
-    [[ -n "$host" ]] || continue
+    [[ -n "$host" && -f "$DEHYDRATED_CERTDIR/$host/fullchain.pem" ]] || continue
     install -m600 -D "$DEHYDRATED_CERTDIR/$host/fullchain.pem" "$CERTS/$host/fullchain.pem"
     install -m600 -D "$DEHYDRATED_CERTDIR/$host/privkey.pem"  "$CERTS/$host/privkey.pem"
   done < "$DOMAINS_TXT"
+  return "$failed"
+}
+# What Caddy serves for the pool, one line per certificate.
+served_certs(){
+  local host
+  while read -r host; do
+    [[ -n "$host" && -f "$CERTS/$host/fullchain.pem" ]] && sha256sum "$CERTS/$host/fullchain.pem"
+  done < "$DOMAINS_TXT"
+  return 0
 }
 
 # Lab-only self-signed stand-in so the whole flow is testable without a CA.
@@ -422,7 +436,7 @@ issue_certs(){ # [N]
     cn="$(next_codename)"; picked+=("$cn")   # next_codename skips names already in the pool
     add_domain "$(host_of "$cn")"
   done
-  sync_certs
+  sync_certs || die "dehydrated failed for at least one of: ${picked[*]}. The next issue-certs or renew-pool tries again"
   echo "issued for: ${picked[*]}"
   echo "next: 'castlectl provision-pool', once the platform is up"
 }
@@ -442,10 +456,20 @@ provision_pool(){
 }
 
 renew_pool(){
-  echo "batch-renewing the whole pool's certs together (one dehydrated run)"
-  sync_certs      # dehydrated -c renews everything in domains.txt that's due
-  reload_caddy
-  echo "renewed."
+  echo "renewing what is due in the pool (one dehydrated run)"
+  touch "$DOMAINS_TXT"
+  local before failed=0
+  before="$(served_certs)"
+  sync_certs || failed=1      # dehydrated -c renews everything in domains.txt that's due
+  # Caddy reads a certificate when it starts, so it is restarted when one
+  # changed, and left alone otherwise.
+  if [[ "$(served_certs)" == "$before" ]]; then
+    echo "no certificate changed."
+  else
+    reload_caddy
+    echo "renewed."
+  fi
+  [[ "$failed" == 0 ]] || die "dehydrated failed for at least one name; what it did renew is served"
 }
 
 promote(){ # <codename>
@@ -517,7 +541,11 @@ list(){
 }
 
 # allocate = issue one cert + provision it as a canary (platform must be up).
-allocate(){ local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"; sync_certs; provision_canary "$cn"; reload_caddy; }
+allocate(){
+  local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"
+  sync_certs; has_cert "$cn" || die "no certificate for '$cn': dehydrated failed"
+  provision_canary "$cn"; reload_caddy
+}
 
 # --- self-hosted DNS commands ---------------------------------------------
 # Generate the shared TSIG secret. Print it for .env (the `dns` service and
@@ -946,7 +974,7 @@ usage: castlectl <command>
   import <file> <cn>     load a tenant bundle into a canary, which becomes that tenant
   users <cn>             list the people in a codename's realm and their roles
   deprovision <cn>       tear an instance down (cert kept)
-  renew-pool             batch-renew the pool's certs
+  renew-pool             renew the pool's certs that are due, in one run
   list                   show codenames and their state
   upgrade [<cn>]         recreate running instance(s) with current images (keeps data)
   backup                 write an age-encrypted bundle (DBs + secrets + certs)

@@ -15,23 +15,21 @@ CONTACT_EMAIL="ops@example.com"  # your ACME account email
 DOMAINS_TXT="${DOMAINS_TXT:-/opt/castle/deploy/compose/.instances/domains.txt}"
 CERTDIR="${CERTDIR:-/opt/castle/deploy/compose/caddy/certs/_dehydrated}"
 
-# --- challenge: pick ONE --------------------------------------------------
-# DNS-01 (recommended for the bulk pre-issue): no port 80 or running web server
-# needed, so it works BEFORE the platform is up, and issues without exposing an
-# HTTP path.
-#
-# dns-hook.sh publishes the _acme-challenge TXT via nsupdate (RFC 2136 + TSIG)
-# to castle's OWN authoritative nameserver — no DNS-provider API key. castlectl
-# exports what the hook needs (DNS_SERVER, DNS_PORT, TSIG_KEYFILE) when it runs
-# dehydrated, so you don't set them here. Requires SELF_HOSTED_DNS in .env and
-# the `dns` service up; see docs/self-hosted-dns.md. Adjust HOOK to your install
-# path if it isn't /opt/castle.
+# --- challenge ------------------------------------------------------------
+# DNS-01, answered by castle's own authoritative nameserver: dns-hook.sh
+# publishes the _acme-challenge TXT via nsupdate (RFC 2136 + TSIG), so no
+# DNS-provider API key is involved. castlectl exports what the hook needs
+# (DNS_SERVER, DNS_PORT, TSIG_KEYFILE) when it runs dehydrated, so you don't set
+# them here. Requires SELF_HOSTED_DNS in .env and the `dns` service up; see
+# docs/self-hosted-dns.md. Adjust HOOK to your install path if it isn't
+# /opt/castle.
 CHALLENGETYPE="dns-01"
 HOOK="/opt/castle/deploy/compose/dehydrated/dns-hook.sh"
 
-# HTTP-01 alternative: serve the challenge webroot on :80 for every codename
-# host. With Caddy's auto_https off you'd add a :80 vhost serving WELLKNOWN — but
-# the first batch is issued before Caddy is up, so you need a temporary web
-# server for it. DNS-01 avoids that entirely.
-# CHALLENGETYPE="http-01"
-# WELLKNOWN="/var/www/acme-challenge"
+# With DNS at a provider, point HOOK at a dehydrated DNS-01 hook for that
+# provider instead. HTTP-01 is not set up in this deployment: Caddy holds port
+# 80 and serves no challenge for the pool's hosts.
+
+# A certificate is renewed once it has fewer days left than this (dehydrated's
+# own default). castle-renew.timer asks every week.
+# RENEW_DAYS="32"
