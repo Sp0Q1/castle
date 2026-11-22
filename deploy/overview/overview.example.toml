@@ -1,0 +1,17 @@
+# Where the page is written. Open it in a browser on this machine.
+output = "/home/overview/overview/index.html"
+
+# One table for every castle server.
+[[servers]]
+name = "castle-1"                     # what the page calls it
+host = "203.0.113.10"
+port = 22
+user = "castle-status"                # the account that can read the status and do nothing else
+key = "/home/overview/.ssh/castle-status"                          # paths: letters, digits and . _ / + @ -
+known_hosts = "/home/overview/.config/castle-overview/known_hosts"   # the server's host key, from the server itself
+base_domain = "tenants.example.com"   # BASE_DOMAIN of that server: links go to https://<codename>.<base_domain>/
+
+# What you call the client behind a codename. This is the one place that says
+# so, and it stays on this machine.
+[servers.clients]
+amber = "Example BV"

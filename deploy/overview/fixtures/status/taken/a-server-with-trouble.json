@@ -1,0 +1,53 @@
+{
+  "status_version": 1,
+  "generated_at": "2026-11-22T17:30:31Z",
+  "platform": [
+    {
+      "service": "caddy",
+      "health": "unhealthy"
+    },
+    {
+      "service": "keycloak",
+      "health": "healthy"
+    },
+    {
+      "service": "keycloak-db",
+      "health": "healthy"
+    }
+  ],
+  "sign_in_certificate_ends": null,
+  "instances": [
+    {
+      "codename": "birch",
+      "kind": "canary",
+      "health": "healthy",
+      "image": null,
+      "certificate_ends": null,
+      "summary": null
+    },
+    {
+      "codename": "amber",
+      "kind": "tenant",
+      "health": "unhealthy",
+      "image": "101e7c5e1ea3",
+      "certificate_ends": null,
+      "summary": null
+    },
+    {
+      "codename": "cedar",
+      "kind": "canary",
+      "health": "healthy",
+      "image": null,
+      "certificate_ends": null,
+      "summary": null
+    }
+  ],
+  "newest_backup": null,
+  "host": {
+    "reboot_required": true,
+    "failed_units": 0,
+    "disk_used_percent": 81,
+    "renewal_timer": false,
+    "backup_timer": false
+  }
+}
