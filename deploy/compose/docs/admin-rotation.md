@@ -50,10 +50,10 @@ it's a **shared, static, single-factor** credential whose password sits in plain
 replace it with a **named admin that has TOTP**, then **delete the bootstrap
 account**.
 
-Keycloak only reads `KC_BOOTSTRAP_ADMIN_*` **on the first start of an empty
-instance** — once any admin exists it is ignored, and deleting the bootstrap
-user does **not** bring it back. So this rotation is permanent, and the leftover
-`.env` values become inert (a dead credential mapping to no account).
+Keycloak reads `KC_BOOTSTRAP_ADMIN_*` **on its first start only, while there is
+no master realm yet**. After that it ignores them, and deleting the bootstrap
+user does **not** bring it back. So this rotation is permanent, and the values
+left in `.env` belong to no account.
 
 ### Steps
 
@@ -79,25 +79,20 @@ Do these in the admin console (see above for reaching it), signed in to the
    the original bootstrap `admin` → **Delete**. From here on there is exactly one
    admin, and it has a second factor.
 
-### Clean up the dead credential (optional but tidy)
+### The password that is left in `.env`
 
-After step 6 the `.env` bootstrap values map to nothing and are never re-read, so
-this is hygiene, not security-critical. To remove them:
-
-```bash
-# in .env — delete or blank these two lines:
-#   KC_ADMIN_USER=...
-#   KC_ADMIN_PASS=...
-```
-
-Because `platform.compose.yml` marks them required (`:?`) to catch a *first*-boot
-that forgot them, also drop the two `KC_BOOTSTRAP_ADMIN_*` lines from the
-`keycloak` service, then recreate it (Keycloak already has your named admin, so
-nothing is lost):
+After step 6 the two values in `.env` belong to no account and are not read
+again. The lines stay, because `platform.compose.yml` asks for them, which is
+what stops a first start that forgot them. Put a long random value that nobody
+keeps in the place of the password, so that the former one is no longer on the
+server:
 
 ```bash
-podman compose -f platform.compose.yml up -d keycloak   # or: docker compose ...
+sed -i "s|^KC_ADMIN_PASS=.*|KC_ADMIN_PASS=$(openssl rand -hex 32)|" .env
 ```
+
+Nothing has to be restarted for it. Do this after `castlectl keycloak-setup`
+(above): until then `castlectl` signs in with that password.
 
 ### Prefer the CLI?
 

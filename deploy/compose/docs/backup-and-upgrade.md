@@ -71,57 +71,86 @@ staging box.
 ## Migrating a Postgres major
 
 A pg major rewrites the on-disk format, so the move is: dump the logical data on
-the old major, recreate the DB container on the new major with a **fresh** volume,
-and load the dump back. Do it in a maintenance window. keycloak-db is always
-present; tenant DBs exist only for promoted codenames (canaries have no DB):
+the old major, start the database on the new major with an empty data
+directory, and load the dump back. Do it in a maintenance window: people are
+signed out and the portals are down for some minutes. keycloak-db is always
+present; tenant DBs exist only for promoted codenames (canaries have no DB).
+
+The old major's files are not deleted. They are moved aside inside their
+volume, and stay there until the new major is proven.
 
 ```bash
 cd /opt/castle/deploy/compose
+./castlectl backup                # as before any upgrade
 
-# 1. Dump each live DB WHILE STILL ON THE OLD MAJOR (logical dump = portable).
+# 1. Dump every database while it still runs on the old major.
 podman exec compose_keycloak-db_1 pg_dump --clean --if-exists -U keycloak -d keycloak \
   | gzip > /root/kc-pre-migration.sql.gz
-for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
+tenants="$(./castlectl list | awk '$2=="tenant"{print $1}')"
+for cn in $tenants; do
   podman exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle \
     | gzip > "/root/tenant-$cn-pre-migration.sql.gz"
 done
+ls -l /root/*-pre-migration.sql.gz        # one file per database, none of them empty
 
-# 2. Pull the new pins (postgres:NN-alpine bumped in the compose files).
+# 2. The new pins.
 git pull
 
-# 3. Recreate keycloak-db on the new major with an empty volume, then load the dump.
-#    A stopped container still holds its volume, so the two containers go first.
-podman compose -f platform.compose.yml stop keycloak keycloak-db
+# 3. Keycloak's database. Its two containers go, the old major's files are
+#    moved aside inside the volume, and the database starts alone on the new
+#    major to take the dump.
+podman stop compose_keycloak_1 compose_keycloak-db_1
 podman rm compose_keycloak_1 compose_keycloak-db_1
-podman volume rm compose_keycloak_db          # the OLD-major data dir (confirm: podman volume ls)
+kc_vol="$(podman volume inspect -f '{{.Mountpoint}}' compose_keycloak_db)"
+mv "$kc_vol/pgdata" "$kc_vol/pgdata.old-major"
 podman compose -f platform.compose.yml up -d keycloak-db
-until podman exec compose_keycloak-db_1 pg_isready -U keycloak >/dev/null 2>&1; do sleep 2; done
+until podman exec compose_keycloak-db_1 pg_isready -h 127.0.0.1 -U keycloak -d keycloak >/dev/null 2>&1; do sleep 2; done
 gunzip -c /root/kc-pre-migration.sql.gz \
   | podman exec -i compose_keycloak-db_1 psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak >/dev/null
 
-# 4. Bring Keycloak back on the migrated database.
-podman compose -f platform.compose.yml up -d keycloak
-podman ps --filter name=compose_keycloak_1    # wait until it says healthy
+# 4. The platform, as in any upgrade.
+podman compose -f platform.compose.yml --profile self-dns pull
+podman compose -f platform.compose.yml --profile self-dns up -d --force-recreate
 
-# 5. Per tenant (skip if all-canary): the same for its database. castlectl
-#    recreates the tenant from the new pins, with an empty database, and the
-#    dump is loaded while castle is stopped.
-for cn in $(./castlectl list | awk '$2=="tenant"{print $1}'); do
+# 5. Each tenant's database, the same way. `upgrade` recreates the tenant on
+#    the new pin with an empty database, and the dump is loaded while castle
+#    is stopped.
+for cn in $tenants; do
   podman stop "castle-$cn" "postgres-$cn"
-  podman rm "postgres-$cn"
-  podman volume rm "castle-${cn}_castle_db"
+  vol="$(podman volume inspect -f '{{.Mountpoint}}' "castle-${cn}_castle_db")"
+  mv "$vol/pgdata" "$vol/pgdata.old-major"
   ./castlectl upgrade "$cn"
   podman stop "castle-$cn"
   gunzip -c "/root/tenant-$cn-pre-migration.sql.gz" \
     | podman exec -i "postgres-$cn" psql -v ON_ERROR_STOP=1 -U castle -d castle >/dev/null
   podman start "castle-$cn"
 done
+
+# 6. The canaries, and the summary.
+./castlectl upgrade
 ./castlectl list
 ```
 
-Keep the `/root/*-pre-migration.sql.gz` dumps until the new major is proven
-healthy — they're the rollback (recreate on the old tag, load the dump). Delete
-them once verified.
+Then sign in at every tenant and look at a project. (Leave out
+`--profile self-dns` if you do not run the bundled nameserver.)
+
+Two things in these steps are there for a reason. Keycloak's container is
+removed before its database's, because podman does not remove a container
+that another one depends on. And a tenant's containers are left for
+`castlectl upgrade` to replace: it only upgrades what it finds running.
+
+Until the new major is proven, each volume holds both: the new `pgdata` and
+the old major's `pgdata.old-major`, and the dumps are in `/root`. Going back is
+the previous commit's pins with `pgdata.old-major` under its old name again.
+Once it is proven:
+
+```bash
+rm -rf "$kc_vol/pgdata.old-major"
+for cn in $tenants; do
+  rm -rf "$(podman volume inspect -f '{{.Mountpoint}}' "castle-${cn}_castle_db")/pgdata.old-major"
+done
+rm /root/*-pre-migration.sql.gz
+```
 
 ## Backups
 
