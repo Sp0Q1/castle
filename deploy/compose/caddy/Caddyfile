@@ -7,7 +7,7 @@
 	# ever issued; disable_redirects keeps Caddy off :80 except for the ACME
 	# HTTP-01 challenge itself.
 	auto_https disable_redirects
-	email {$ACME_EMAIL}
+	email {$SSO_ACME_EMAIL}
 
 	# No-SNI / unknown-SNI probes (someone scanning the raw IP on :443, or sending
 	# an SNI that matches no vhost) must NOT be handed a pool or IdP hostname's
