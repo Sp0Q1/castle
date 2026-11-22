@@ -52,16 +52,18 @@ services:
     # instead makes aardvark fail with "address already in use".
     network_mode: host
     environment:
-      BASE_DOMAIN: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
-      PUBLIC_IP: ${PUBLIC_IP:?set PUBLIC_IP in .env for self-hosted DNS}
-      DDNS_TSIG_SECRET: ${DDNS_TSIG_SECRET:?run 'castlectl dns-init' and put the value in .env}
-      # Nameserver name the zone advertises. Defaults to ns1.<apex>; override in
-      # .env with a name in the PARENT zone (e.g. ns1.example.com) to delegate
-      # glue-free — see docs/self-hosted-dns.md.
-      # Forward NS_NAME verbatim from .env — NO nested ${…${…}} default here:
-      # podman-compose mis-parses nested substitution and would pass a broken
-      # literal into the zone file. The entrypoint supplies the default instead.
-      NS_NAME: ${NS_NAME:-}
+      # What dns/entrypoint.sh reads. The address and the update secret are
+      # asked for there, where the nameserver starts, and it stops with a
+      # message without them: a "required" check in this file would also stop
+      # a platform that does not run this profile. The names differ from the
+      # variables for the reason given at caddy, below.
+      DNS_ZONE: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
+      DNS_ADDRESS: ${PUBLIC_IP:-}
+      DNS_UPDATE_SECRET: ${DDNS_TSIG_SECRET:-}
+      # The nameserver's name in the zone. Empty means ns1.<BASE_DOMAIN>; a
+      # name in the parent zone (e.g. ns1.example.com) delegates without glue:
+      # docs/self-hosted-dns.md.
+      DNS_NS: ${NS_NAME:-}
     volumes:
       - ./dns/entrypoint.sh:/entrypoint.sh:ro,z
       - ./dns/named.conf.template:/templates/named.conf.template:ro,z

@@ -5,14 +5,12 @@
 # (its A records and the ACME journal live in the dns_data volume).
 set -eu
 
-: "${BASE_DOMAIN:?BASE_DOMAIN required}"
-: "${PUBLIC_IP:?PUBLIC_IP required}"
-: "${DDNS_TSIG_SECRET:?DDNS_TSIG_SECRET required}"
-NS_NAME="${NS_NAME:-ns1.${BASE_DOMAIN}}"
-# Defensive: if NS_NAME arrives empty or as an unexpanded compose literal (podman
-# -compose's variable substitution is unreliable), fall back to the in-zone default
-# so a broken value can never reach the zone file and SERVFAIL the whole zone.
-case "$NS_NAME" in ''|*'${'*|*'}'*) NS_NAME="ns1.${BASE_DOMAIN}" ;; esac
+# The compose file hands the settings over under names of their own, and what
+# a nameserver cannot do without is asked for here.
+BASE_DOMAIN="${DNS_ZONE:?set BASE_DOMAIN in .env}"
+PUBLIC_IP="${DNS_ADDRESS:?set PUBLIC_IP in .env}"
+DDNS_TSIG_SECRET="${DNS_UPDATE_SECRET:?run 'castlectl dns-init' and put DDNS_TSIG_SECRET in .env}"
+NS_NAME="${DNS_NS:-ns1.${BASE_DOMAIN}}"
 TSIG_NAME="${TSIG_NAME:-castle-ddns}"
 
 DATA=/var/lib/bind
