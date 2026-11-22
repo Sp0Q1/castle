@@ -44,7 +44,7 @@ set -euo pipefail
 # TLS verification is on by default and must stay that way: this script sends
 # admin credentials and a client secret, so an unverified connection would hand
 # both to anyone able to intercept it. KC_INSECURE=1 disables verification for
-# local labs only, where the ingress serves a self-signed certificate — it is
+# local labs only, where the edge serves a self-signed certificate — it is
 # deliberately opt-in and noisy rather than a silent `-k` in the curl calls.
 CURL_TLS=()
 if [[ "${KC_INSECURE:-0}" == "1" ]]; then

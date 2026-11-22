@@ -14,7 +14,9 @@ server:
   port: <%= get_env(name="PORT", default="5150") %>
   # Bind to all interfaces so the service is reachable inside a container.
   binding: 0.0.0.0
-  # The public URL mailers and links should point to.
+  # The portal's public origin, exactly as a browser names it. Mails link to
+  # it, and in proxy mode the `Origin` of a request that changes something is
+  # compared with it when the browser sends no `Sec-Fetch-Site`.
   host: <%= get_env(name="HOST", default="http://localhost") %>
   # No `X-Powered-By`: a response does not say what it was built with.
   ident: ""
@@ -120,7 +122,7 @@ settings:
   logo: <%= get_env(name="CASTLE_LOGO", default="") %>
   proxy:
     # Identity headers injected by oauth2-proxy. Full reverse-proxy mode sets the
-    # x-forwarded-* variants; an nginx/ingress auth_request setup with
+    # x-forwarded-* variants; an nginx auth_request setup with
     # --set-xauthrequest sets x-auth-request-* instead.
     # The identity provider's own id for the person, which an account is bound
     # to: Keycloak's `sub`, sent by oauth2-proxy as x-forwarded-user.

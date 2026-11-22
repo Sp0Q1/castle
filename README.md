@@ -153,7 +153,7 @@ shown as its caption, and nothing is requested for it.
 | `CASTLE_PROXY_SECRET` | required in `proxy` mode: the secret castle shares with its proxy, which sends it with every request |
 | `CASTLE_LOGOUT_URL` | where sign-out sends the browser |
 | `CASTLE_LOGO` | path of an image shown instead of the built-in brand: PNG, JPEG, GIF, WebP or SVG, at most 1 MiB. One that cannot be served stops the server from starting |
-| `HOST`, `PORT` | the portal's public origin, exactly as a browser names it (`https://portal.example.com`), and the listening port. In `proxy` mode a request that changes something is compared with `HOST` when the browser sends no `Sec-Fetch-Site` |
+| `HOST`, `PORT` | the portal's public origin, exactly as a browser names it (`https://portal.example.com`), and the listening port. In `proxy` mode a request that changes something has its `Origin` compared with `HOST` when the browser sends no `Sec-Fetch-Site` |
 | `MAILER_HOST`, `MAILER_PORT`, `MAILER_SECURE` | the SMTP server for the mails of `jwt` mode; `proxy` mode sends none |
 
 Accounts are managed from the command line of the instance. A user is never
