@@ -134,8 +134,9 @@ podman compose -f platform.compose.yml --profile self-dns up -d
 (`--profile self-dns` starts the bundled nameserver; omit it if you manage DNS
 elsewhere. Use `docker compose` instead of `podman compose` if `ENGINE=docker`.)
 
-Before a client's data arrives: replace the first-boot Keycloak admin
-(`docs/admin-rotation.md`), set up backups and try a restore
+Before a client's data arrives: give `castlectl` its own Keycloak account and
+replace the first-boot admin (`docs/admin-rotation.md`, which also says how to
+reach the admin console: the sign-in host serves it to the server itself only), set up backups and try a restore
 (`docs/backup-and-upgrade.md`), and enable start on boot
 (`docs/host-setup.md`).
 
