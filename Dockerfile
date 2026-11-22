@@ -27,13 +27,16 @@ RUN apt-get update \
 # The stubs must be real enough for cargo to resolve the workspace: the binary
 # target and both lib targets have to exist, or cargo refuses before it gets as
 # far as building dependencies.
+#
+# `--locked`: both builds take Cargo.lock as it is, and stop when it does not
+# agree with the manifests.
 COPY Cargo.toml Cargo.lock ./
 COPY migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin migration/src \
  && echo 'fn main() {}' > src/bin/main.rs \
  && : > src/lib.rs \
  && : > migration/src/lib.rs \
- && cargo build --release --bin castle-cli
+ && cargo build --release --locked --bin castle-cli
 
 # Now the real sources. Their own crates are rebuilt; the dependency layer above
 # is reused untouched unless Cargo.lock changed.
@@ -43,7 +46,7 @@ COPY migration/ migration/
 # can be older than the stub artifacts just built. Without this the stub .rlib is
 # considered current and the real code never gets compiled into the binary.
 RUN touch src/lib.rs src/bin/main.rs migration/src/lib.rs \
- && cargo build --release --bin castle-cli
+ && cargo build --release --locked --bin castle-cli
 
 # 3) Runtime.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
