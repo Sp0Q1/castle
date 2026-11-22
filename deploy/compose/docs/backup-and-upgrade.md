@@ -240,6 +240,12 @@ backups. `restore` needs the identity via `BACKUP_AGE_IDENTITY`.
 ./castlectl backup                     # -> ./backups/castle-backup-<ts>.tar.age
 ```
 
+A bundle has its name once it is written to the end and is on the disk. Until
+then it is a `.part` file beside it, which a run that fails removes, as does
+the next backup or export: a file named `.tar.age` is a whole bundle. One
+`backup` or `export` writes at a time; a second one started meanwhile says so
+and stops.
+
 Run it from the timer below, and copy the `.age` files off-box. This is a
 *complement* to VPS snapshots: snapshots are your whole-box disaster recovery;
 these bundles add portability and off-provider safety. They carry the pool's
