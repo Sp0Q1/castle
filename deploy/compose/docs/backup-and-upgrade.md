@@ -36,10 +36,12 @@ instances' proxies are attached to it, and they stay up.
 templates, rewrites its vhost, pulls, and recreates what changed. It then
 brings the attributes of the client in the instance's realm (the PKCE
 requirement among them) to what `keycloak-realm.sh create` sets today, so
-realms made at different times do not differ in them. **Data
-volumes are kept**, and castle applies pending schema migrations when it starts
-(`auto_migrate: true`). One instance that fails does not stop the others; the
-summary at the end names it and the exit status is non-zero.
+realms made at different times do not differ in them. For that it needs
+Keycloak, which the platform step has just recreated, so it first waits until
+Keycloak answers, two minutes at most. **Data volumes are kept**, and castle
+applies pending schema migrations when it starts (`auto_migrate: true`). One
+instance that fails does not stop the others; the summary at the end names it
+and the exit status is non-zero.
 
 `CASTLE_IMAGE` in `.env` names the castle image. `ghcr.io/sp0q1/castle:main`
 follows the `main` branch. `upgrade` resolves it to a digest once, so every
