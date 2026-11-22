@@ -136,6 +136,19 @@ BACKUP_PUSH_CMD="${BACKUP_PUSH_CMD:-}"             # optional off-box copy per b
 UTIL_IMAGE="${UTIL_IMAGE:-docker.io/library/postgres:18-alpine}"
 
 need(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+# One writer of bundles at a time: `backup` and `export` hold this lock for as
+# long as they run, and a second one says so and stops. Whoever holds it is the
+# only writer, so a `.part` it finds was left by a run that did not end, and
+# goes. The lock is the kernel's, on an open file: it ends with the process.
+BUNDLE_LOCK=""
+bundle_lock(){
+  [[ -z "$BUNDLE_LOCK" ]] || return 0
+  need flock
+  mkdir -p "$BACKUP_DIR" || die "cannot make $BACKUP_DIR"
+  exec {BUNDLE_LOCK}> "$BACKUP_DIR/.lock" || die "cannot write in $BACKUP_DIR"
+  flock -n "$BUNDLE_LOCK" || die "another backup or export is writing to $BACKUP_DIR: let it end first"
+  rm -f "$BACKUP_DIR"/*.tar.age.part
+}
 # A directory for what must not outlive the command: database dumps, an opened
 # bundle. It is removed when the shell that asked for it ends, whichever way
 # that is: on a return, on `die`, on a signal. The trap is set here and not
@@ -724,6 +737,7 @@ push_bundle(){ # <bundle>
 backup(){
   [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted backup of secrets + client data"
   need age; need "$ENGINE"; need tar
+  bundle_lock
   local ts work out cn
   ts="$(date +%Y%m%d-%H%M%S)"
   workdir work
@@ -758,9 +772,13 @@ backup(){
     fi
     echo "  tenant $cn: db + uploads"
   done
-  mkdir -p "$BACKUP_DIR"
   out="$BACKUP_DIR/castle-backup-$ts.tar.age"
-  ( cd "$work" && tar cf - . ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
+  # A bundle has its name once it is complete and on the disk. Until then it
+  # is a `.part` beside it, which nothing takes for a bundle, and which goes
+  # when writing fails or the next backup or export starts.
+  ( cd "$work" && tar cf - . ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out.part" && sync "$out.part" && mv "$out.part" "$out" \
+    || { rm -f "$out.part"; die "encrypt failed"; }
+  sync "$BACKUP_DIR" 2>/dev/null || true
   echo "wrote $out ($(du -h "$out" | cut -f1)) — decrypt needs your offline age identity."
 
   push_bundle "$out"
@@ -864,6 +882,7 @@ export_tenant(){ # <codename>
   [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
   [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted export"
   need age; need jq; need "$ENGINE"; need tar
+  bundle_lock
   ts="$(date +%Y%m%d-%H%M%S)"
   workdir work
   err="$($ENGINE exec "postgres-$cn" pg_dump --clean --if-exists -U castle -d castle 2>&1 > "$work/db.sql")" \
@@ -871,9 +890,10 @@ export_tenant(){ # <codename>
   err="$($ENGINE run --rm -v "$(proj_of "$cn")_castle_uploads:/data:ro" "$UTIL_IMAGE" tar cf - -C /data . 2>&1 > "$work/uploads.tar")" \
     || die "uploads tar failed for $cn — ${err##*"$NL"}"
   realm_sh people "$cn" > "$work/people.json" || die "could not list the people of '$cn'"
-  mkdir -p "$BACKUP_DIR"
   out="$BACKUP_DIR/castle-tenant-$cn-$ts.tar.age"
-  ( cd "$work" && tar cf - db.sql uploads.tar people.json ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out" || die "encrypt failed"
+  ( cd "$work" && tar cf - db.sql uploads.tar people.json ) | age -r "$BACKUP_AGE_RECIPIENT" > "$out.part" && sync "$out.part" && mv "$out.part" "$out" \
+    || { rm -f "$out.part"; die "encrypt failed"; }
+  sync "$BACKUP_DIR" 2>/dev/null || true
   echo "exported '$cn' ($(jq length "$work/people.json") people) -> $out ($(du -h "$out" | cut -f1))"
   push_bundle "$out"
 }
