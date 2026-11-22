@@ -26,6 +26,17 @@ __HOST__ {
 		-Via
 		-X-Powered-By
 	}
+	# Signing out is something a person does by going there. A request a page
+	# makes for an image, a font or a stylesheet is not that, whichever address
+	# it names, so it is refused here, and nothing that someone wrote in a
+	# finding signs its readers out. A browser that does not say what a request
+	# is for is let through.
+	@sign_out_for_a_page {
+		path /oauth2/sign_out
+		header Sec-Fetch-Dest *
+		not header Sec-Fetch-Dest document
+	}
+	respond @sign_out_for_a_page 403
 	reverse_proxy oauth2-proxy-__CODENAME__:4180 {
 		# oauth2-proxy runs with --reverse-proxy and believes these two. Caddy
 		# sets Host, Proto and For itself; these it would pass on as the

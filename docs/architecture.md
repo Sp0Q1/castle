@@ -123,7 +123,9 @@ images; which codenames belong to clients; credentials and sessions.
    the pool's certificates, which were issued in advance, and forwards a
    request to its codename's proxy. It removes the header a visitor could use
    to tell the proxy which path is being asked for, and sets the visitor's
-   address itself. Every answer of every codename leaves with the same
+   address itself. It answers the sign-out address to a browser that goes
+   there, and not to a request a page makes for an image, a font or a
+   stylesheet. Every answer of every codename leaves with the same
    security headers, and none that names the software behind it.
 2. **Edge to proxy.** oauth2-proxy lets a request through only with a valid
    session for that codename's realm. Every codename has its own realm, client
