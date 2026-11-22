@@ -122,7 +122,7 @@ jobs:
       # zero `#[allow]`s outside the loco-generated entities, and should stay
       # there. If a lint is genuinely wrong, waive it with a comment saying why.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Test
         env:
@@ -131,7 +131,7 @@ jobs:
           # of on a promote. The suite's auto_migrate + dangerously_recreate build
           # the schema on this DB. Local `cargo test` still defaults to SQLite.
           DATABASE_URL: postgres://castle:castle@localhost:5432/castle_test
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
 
   frontend:
     name: Frontend (biome, tsc, build)
