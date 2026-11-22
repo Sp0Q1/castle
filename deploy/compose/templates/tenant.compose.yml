@@ -110,7 +110,7 @@ services:
       - __BRANDING__:/app/branding:ro,z
     healthcheck:
       # Liveness so a boot can be told apart from a crash-loop (up -d returns at
-      # container-create, long before loco is serving): /api/auth/mode is the one
+      # container-create, long before loco is serving): /api/auth/mode is a
       # route castle answers without an identity and it 200s with {"mode":...},
       # so a 200 here proves the app is actually up, not just that the port opened.
       # The runtime image is debian-slim — no curl/wget, and its /bin/sh is dash
