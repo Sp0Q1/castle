@@ -98,9 +98,10 @@ capacity from the manager.
 Someone who leaves for good is anonymized, not deleted, so the findings and
 comments they wrote stay in place. The account stays bound to them: should
 Keycloak still know the person, they are that disabled account and not a new
-one. Delete them in Keycloak as well. An account that nobody ever signed in to
-is bound to nobody, so after it is anonymized its former address would start a
-new account.
+one. Delete them in Keycloak as well. An account is bound at its owner's next
+request, so one that nobody ever signed in to, or that has not been used since
+accounts are bound, is bound to nobody: after it is anonymized its former
+address would start a new account.
 
 **An account is a person's, not an address's.** Castle binds an account to the
 id Keycloak has for the person (`sub`, which the proxy sends as
