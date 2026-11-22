@@ -445,6 +445,9 @@ provision_pool(){
   for cn in $(pool_codenames); do
     has_cert "$cn" || continue
     [[ -n "$(kind_of "$cn")" ]] && continue      # already running (asked the engine)
+    # A canary starts with its realm, and Keycloak takes a minute to answer
+    # after the platform is started.
+    [[ "$done_any" == 1 ]] || realm_sh await || die "Keycloak does not answer at $KC_ADMIN_URL: is the platform up?"
     provision_canary "$cn"; done_any=1
   done
   [[ "$done_any" == 1 ]] && reload_caddy
