@@ -25,8 +25,11 @@ do all three:
    so everything it forwards carries that password in a Basic `Authorization`
    header, in place of whatever the browser sent under that name. Castle gets
    the same value as `CASTLE_PROXY_SECRET`. It reads the identity headers only
-   from a request that carries it, answers any other with 401, and does not
-   start in proxy mode without one. `castlectl` generates one per codename.
+   from a request that carries it, and does not start in proxy mode without
+   one. Without it, every address that needs to know who is asking answers
+   401; what needs no identity is answered as before: the auth mode, the logo,
+   the pages' own files and the three health addresses. `castlectl` generates
+   one secret per codename.
 2. **Castle's network is closed.** No published port, and a network marked
    `internal` that only its proxy and its database join. podman routes between
    ordinary bridge networks, so the mark is what keeps the rest of the host

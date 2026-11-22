@@ -73,8 +73,9 @@ sized ≤ 50 (10 is plenty for a pilot).
 
 Each real tenant's `castle` + `postgres` sit on their **own internal network**:
 only that tenant's oauth2-proxy joins it, no other network is routed to it, and
-the two reach nothing outside it. Castle also asks every request for the secret
-it shares with that proxy, which `castlectl` generates per codename. Keycloak's
+the two reach nothing outside it. Castle also reads who is asking only from a
+request that carries the secret it shares with that proxy, which `castlectl`
+generates per codename. Keycloak's
 database is on an internal network of its own, with Keycloak alone. Nothing
 crosses between tenants. This is shared-kernel container isolation — equivalent to the k8s NetworkPolicy model;
 add gVisor/Kata or VM-per-tenant if a client's threat model demands a kernel

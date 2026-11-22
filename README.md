@@ -78,9 +78,10 @@ Compose deployment do not use it; they run no castle at all.
 
 ## API
 
-Apart from signing in itself, `/api/auth/mode` and the logo, everything
-requires an authenticated user (a `Bearer` JWT in `jwt` mode, the proxy headers
-in `proxy` mode).
+Apart from signing in itself, `/api/auth/mode`, the logo and the three health
+addresses, everything requires an authenticated user (a `Bearer` JWT in `jwt`
+mode, the proxy headers in `proxy` mode). The pages' own files are served to
+anyone who reaches castle.
 
 ```
 GET    /api/auth/mode                              # the auth mode, and the logo if one is set
@@ -117,6 +118,8 @@ POST   /api/uploads                                # multipart image -> { url }
 GET    /api/uploads/{name}                         # authenticated, like the rest
 
 GET    /api/brand/logo                             # the deployment's logo, when configured
+
+GET    /_ping | /_health | /_readiness             # loco's own: alive, and whether the database answers
 ```
 
 The long fields and comment bodies are markdown; images pasted into the editor
