@@ -5,8 +5,9 @@
 # has no users, so the only thing an attacker can do is trip a LOGIN_ERROR that
 # Keycloak records. ~30 MB per canary.
 #
-# castlectl substitutes __CODENAME__, __REALM__, __HOST__ and the secrets, then
-# runs this as its own compose project (`castle-<codename>`).
+# castlectl substitutes the __NAME__ placeholders (codename, realm, host,
+# sign-in URL), hands the secrets over in the environment, and runs this as a
+# compose project of its own (`castle-<codename>`).
 
 networks:
   edge:

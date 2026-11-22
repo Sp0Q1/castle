@@ -46,7 +46,7 @@ A fresh deployment boots Keycloak with a **first-boot admin** created from
 `KC_BOOTSTRAP_ADMIN_USERNAME`/`_PASSWORD` (set in `.env` as `KC_ADMIN_USER` /
 `KC_ADMIN_PASS`). That account is fine for setup but is the wrong thing to keep:
 it's a **shared, static, single-factor** credential whose password sits in plain
-`.env` on the box. Before any client's findings live in Keycloak's realms,
+`.env` on the box. Before any client's people are in Keycloak's realms,
 replace it with a **named admin that has TOTP**, then **delete the bootstrap
 account**.
 

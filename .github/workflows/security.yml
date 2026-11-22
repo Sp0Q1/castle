@@ -5,7 +5,7 @@ name: Security
 # Two rules of thumb encoded below:
 #   * anything with a *verifiable* answer (a leaked live credential, a known
 #     CVE, a Semgrep rule match) fails the build;
-#   * anything heuristic (Kubernetes/Dockerfile misconfiguration opinions)
+#   * anything heuristic (misconfiguration opinions on the Dockerfile)
 #     reports to the Security tab but does not block, because this repo
 #     deliberately diverges from some defaults and a noisy gate gets ignored.
 #
@@ -250,10 +250,9 @@ jobs:
               --ignore-unfixed \
               --exit-code 1
 
-      # Non-blocking: Dockerfile and Kubernetes hardening opinions. Reported to
-      # the Security tab for triage; see docs/production-readiness.md for the
-      # divergences that are intentional.
-      - name: Scan Dockerfile and manifests for misconfiguration
+      # Non-blocking: hardening opinions on the Dockerfile. Reported to the
+      # Security tab for triage.
+      - name: Scan the Dockerfile for misconfiguration
         run: |
           docker run --rm \
             -v "$PWD:/src" \

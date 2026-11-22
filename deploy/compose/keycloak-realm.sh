@@ -27,6 +27,8 @@
 #   KC_ADMIN_PASS   admin password           (without a service account)
 #   KC_RESOLVE      <host>:<port>:<address>: ask that host at that address. The
 #                   name, and the certificate for it, stay the ones checked.
+#   SERVICE_SECRET  the secret `service-account` gives castlectl's account
+#   KC_INSECURE     1 accepts a certificate that cannot be verified: labs only
 #   KC_REALM_PREFIX realm name prefix                    (default: castle-)
 #   KC_WAIT         how many seconds `await` waits for Keycloak (default: 120)
 #   EXTERNAL_PORT   port in browser-facing URLs          (default: none = 443)
@@ -95,8 +97,10 @@ render() {
   #   redirectUris          — exactly one callback, no wildcard. webOrigins is
   #                           the single origin rather than "+" so CORS cannot be
   #                           widened by a stray redirect entry.
-  #   post.logout.redirect  — MUST cover the app root or RP-initiated logout dies
-  #                           on Keycloak's "We are sorry..." page.
+  #   post.logout.redirect  — covers the app root, for a sign-out that goes
+  #                           through Keycloak's own end-session page; without
+  #                           it that page says "We are sorry...". The proxy's
+  #                           back-channel sign-out does not use it.
   #   pkce.code.challenge   — S256 required: Keycloak starts no sign-in for this
   #     .method               client without a challenge, and redeems a code only
   #                           for the verifier that goes with it. The proxy sends

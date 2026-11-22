@@ -1,8 +1,8 @@
 # Host setup (do this once on a fresh VPS)
 
 The bring-up in the README assumes the host is prepared. On a fresh Debian 13
-box these are the prerequisites — a couple of them are non-obvious and cost real
-debugging time, so the *why* is spelled out where it matters.
+box these are the prerequisites. A couple of them are not obvious, so the *why*
+is spelled out where it matters.
 
 Run everything below as root.
 
@@ -10,14 +10,15 @@ Run everything below as root.
 
 ```bash
 apt update && apt -y upgrade
-apt -y install git age jq podman podman-compose bind9-dnsutils curl ca-certificates runc
+apt -y install git age jq podman podman-compose dehydrated bind9-dnsutils curl ca-certificates runc
 ```
 
 `podman` + `podman-compose` are the container engine (this deployment is
 validated on podman 5.x / podman-compose 1.3.x — the versions Debian 13 ships).
-`age` is for `castlectl backup`, `jq` for the commands that read a realm's
-people, `bind9-dnsutils` gives `dig` + `nsupdate` (the self-hosted-DNS path uses
-them), and `runc` is the container runtime — see next.
+`age` is for `castlectl backup`, `jq` for the commands that talk to Keycloak,
+`dehydrated` issues and renews the pool's certificates, `bind9-dnsutils` gives
+`dig` + `nsupdate` (the self-hosted-DNS path uses them), and `runc` is the
+container runtime — see next.
 
 ## 2. Container runtime: runc, not crun (REQUIRED)
 
@@ -43,18 +44,30 @@ The alternative — `security_opt: apparmor=unconfined` on just the Postgres
 services — also works but drops AppArmor for those containers. runc keeps every
 container confined, so it's the one we use.
 
-## 3. Free port 53 (only if you self-host DNS — Option 3)
+## 3. Free port 53 (only if you self-host DNS)
 
-If you're running castle's own authoritative nameserver (`SELF_HOSTED_DNS=1`,
-the `--profile self-dns` service), the box's own `systemd-resolved` sits on port
-53 and will collide with it. Turn off just its stub listener — resolved still does
-the host's *own* name resolution, it just stops squatting on `:53`:
+Castle's own authoritative nameserver (`SELF_HOSTED_DNS=1`, the
+`--profile self-dns` service) needs port 53 of the host. Where
+`systemd-resolved` runs, its stub listener holds that port. See whether it
+does:
 
 ```bash
+systemctl is-active systemd-resolved     # "active": do the next block; anything else: skip it
+```
+
+If it is active, turn off just the stub listener. resolved still does the
+host's *own* name resolution:
+
+```bash
+mkdir -p /etc/systemd/resolved.conf.d
 printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/no-stub.conf
 ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf     # host resolves via the real upstreams
 systemctl restart systemd-resolved
-# verify: :53 free, and the host still resolves names
+```
+
+Either way, check that the port is free and the host still resolves names:
+
+```bash
 ss -ulnp 'sport = :53' | grep -q ':53' && echo "still occupied" || echo ":53 free"
 getent hosts github.com >/dev/null && echo "host DNS ok"
 ```
@@ -72,7 +85,7 @@ it). Keep 22 for SSH.
 | 22   | TCP   | SSH |
 | 80   | TCP   | ACME HTTP-01 (the IdP cert) + Caddy |
 | 443  | TCP   | Caddy (all tenant/canary/IdP HTTPS) |
-| 53   | UDP+TCP | self-hosted authoritative DNS (Option 3 only) |
+| 53   | UDP+TCP | self-hosted authoritative DNS only |
 
 On TransIP this is the control-panel firewall; on the box itself a fresh Debian
 has no local firewall by default.
@@ -107,5 +120,6 @@ command -v runc                  # present
 From here:
 - **Config:** `cp .env.example .env` and fill it (see `.env.example`).
 - **Self-hosted DNS:** `docs/self-hosted-dns.md` (delegation, `dns-init`).
-- **Certificates + bring-up:** the README's *Usage* section.
+- **Certificates + bring-up:** the README's *Bring-up* section.
+- **Keycloak's administrators:** `docs/admin-rotation.md`.
 - **Backups + upgrades:** `docs/backup-and-upgrade.md`.

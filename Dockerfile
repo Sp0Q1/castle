@@ -67,7 +67,8 @@ COPY --from=backend /app/target/release/castle-cli /usr/local/bin/castle-cli
 COPY config/ config/
 COPY assets/ assets/
 COPY --from=frontend /app/frontend/dist/ frontend/dist/
-# Numeric UID (not the name) so Kubernetes runAsNonRoot can verify it.
+# A numeric UID, so a runtime told to refuse root can tell without the image's
+# passwd file.
 USER 10001
 EXPOSE 5150
 ENTRYPOINT ["castle-cli"]

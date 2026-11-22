@@ -82,15 +82,12 @@ updates:
   # The images the VPS actually runs: Keycloak, Postgres, oauth2-proxy, Caddy,
   # BIND. These need their own ecosystem because `docker` above parses only
   # Dockerfiles and Kubernetes YAML (apiVersion + kind) — never compose files.
-  # A "/deploy/**" entry on `docker` therefore matched only the k8s manifests,
-  # so the September 26.7.3 Keycloak bump landed on a kind-test file while the
-  # live pin stayed on 26.7.2. security.yml's platform-images job scans these
-  # same pins weekly for CVEs; this is the other half, a PR when a newer tag
-  # ships.
+  # security.yml's platform-images job scans these same pins weekly for CVEs;
+  # this is the other half, a PR when a newer tag ships.
   #
   # Both directories are named because Dependabot does not descend into
   # subdirectories: the per-codename templates, which carry the oauth2-proxy
-  # pin, sit one level down and were never read.
+  # pin, sit one level down.
   - package-ecosystem: docker-compose
     directories:
       - "/deploy/compose"

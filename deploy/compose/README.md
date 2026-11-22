@@ -5,12 +5,6 @@ pieces talk to each other, and what the design defends against, is in
 [`docs/architecture.md`](../../docs/architecture.md); this page is about
 running it.
 
-## Why this exists
-
-For a pilot (one client + a handful of decoys) Kubernetes is over-engineered:
-its control-plane tax costs real money and real ops for orchestration you don't
-yet need. This runs the same castle image with a fraction of the machinery.
-
 ## Topology
 
 ```
@@ -77,17 +71,21 @@ needs that one running.
 The sign-in host is the exception: it is always on and no decoy, so Caddy
 obtains and renews that one certificate itself.
 
-Issuance is done with **dehydrated** — a pure-bash ACME client, so no extra
-binary beyond the `curl`/`openssl` castlectl already uses. Its model is a natural
-fit: `castlectl` maintains a `domains.txt` (the pool) and a single `dehydrated -c`
-run issues what's missing and renews what's due, all together. Your dehydrated
-config owns the challenge (DNS-01 recommended for the pre-issue, since it needs
-no port 80 or running server; HTTP-01 also works) and where certs land;
-`castlectl` copies them into Caddy's cert dir. See `dehydrated/config.example`.
-The lab path (`KC_INSECURE=1`) self-signs instead of touching a CA.
+Issuance is done with **dehydrated**, an ACME client written in shell (a
+package of its own: `docs/host-setup.md`). `castlectl` maintains a
+`domains.txt` (the pool), and a single `dehydrated -c` run issues what is
+missing and renews what is due, all together. `dehydrated/config` says how the
+challenge is answered and where certificates land, and `castlectl` copies them
+to where Caddy reads them. The example config answers DNS-01 through the
+bundled nameserver (`docs/self-hosted-dns.md`), which needs no key of a DNS
+provider. With DNS elsewhere, give dehydrated a DNS-01 hook for your provider
+there; the codenames' address records are then yours to publish as well.
+HTTP-01 is not set up: Caddy holds port 80 and serves no challenge for the
+pool's hosts. The lab path (`KC_INSECURE=1`) self-signs instead of touching a
+CA.
 
-Let's Encrypt caps 50 certs/registered-domain/week, which is why the pool is
-sized ≤ 50 (10 is plenty for a pilot).
+Let's Encrypt caps 50 certs/registered-domain/week, so one batch is at most 50
+(10 is plenty for a pilot). `codenames.txt` holds the names to draw from.
 
 ## Isolation
 
@@ -95,11 +93,10 @@ Each real tenant's `castle` + `postgres` sit on their **own internal network**:
 only that tenant's oauth2-proxy joins it, no other network is routed to it, and
 the two reach nothing outside it. Castle also reads who is asking only from a
 request that carries the secret it shares with that proxy, which `castlectl`
-generates per codename. Keycloak's
-database is on an internal network of its own, with Keycloak alone. Nothing
-crosses between tenants. This is shared-kernel container isolation — equivalent to the k8s NetworkPolicy model;
-add gVisor/Kata or VM-per-tenant if a client's threat model demands a kernel
-boundary.
+generates per codename. Keycloak's database is on an internal network of its
+own, with Keycloak alone. Nothing crosses between tenants. This is
+shared-kernel container isolation: add gVisor/Kata or a VM per tenant if a
+client's threat model demands a kernel boundary.
 
 ## Layout
 
@@ -114,14 +111,17 @@ caddy/
   sites/                  generated per-codename vhosts + sso
   certs/                  pre-issued certs (git-ignored)
 castlectl                 certificates, pool, promote/demote, upgrade, backup/restore, DNS
-keycloak-realm.sh         creates a tenant's (or an empty canary's) Keycloak realm
-codenames.txt             the pool every tenant and decoy is named from
+keycloak-realm.sh         a codename's Keycloak realm, its people, castlectl's own account
+codenames.txt             the names every tenant and decoy is drawn from
 branding/                 a file named `logo` here replaces the built-in brand (git-ignored)
 dehydrated/               ACME client config and the DNS-01 hook
 dns/                      the bundled nameserver's templates
 systemd/                  the backup and the renewal timer
 docs/                     host setup, DNS, upgrades and backups, moving and retiring a tenant, Keycloak's administrators
 .env.example              configuration
+.env                      yours, from the example (git-ignored)
+.instances/               what castlectl generates: per-codename secrets and rendered files (git-ignored)
+backups/                  encrypted bundles (git-ignored)
 ```
 
 ## Host setup (once, before anything else)
@@ -139,26 +139,48 @@ printf '[engine]\nruntime = "runc"\n' > /etc/containers/containers.conf.d/runtim
 
 ## Bring-up
 
-Host prepared (`docs/host-setup.md`) and, if self-hosting DNS, delegation done
-(`docs/self-hosted-dns.md`). Then:
+With the host prepared (`docs/host-setup.md`), the configuration comes first,
+because every `castlectl` command reads it:
 
 ```bash
 cp .env.example .env && $EDITOR .env                 # domain, Keycloak admin, etc.
 cp dehydrated/config.example dehydrated/config && $EDITOR dehydrated/config
-./castlectl issue-certs 10                            # one bulk cert batch for the pool
+```
+
+Then the order depends on who answers DNS for the pool.
+
+**With the bundled nameserver** it has to be running before a certificate can
+be issued, so the platform starts first. `docs/self-hosted-dns.md` has the DNS
+steps (`dns-init`, its values into `.env`, the delegation); then:
+
+```bash
 podman compose -f platform.compose.yml --profile self-dns up -d
+./castlectl issue-certs 10                            # one bulk cert batch for the pool
 ./castlectl provision-pool                            # stand up the 10 canaries
 ./castlectl list
 ```
 
-(`--profile self-dns` starts the bundled nameserver; omit it if you manage DNS
-elsewhere. Use `docker compose` instead of `podman compose` if `ENGINE=docker`.)
+**With DNS elsewhere** (a DNS-01 hook of your own in `dehydrated/config`, and
+address records for the codenames) the certificates need nothing of the
+platform and can come first:
+
+```bash
+./castlectl issue-certs 10
+podman compose -f platform.compose.yml up -d
+./castlectl provision-pool
+./castlectl list
+```
+
+`provision-pool` creates a realm per codename, so it needs Keycloak, which
+takes a minute or so to answer on its first start: wait until
+`podman ps` shows it healthy. (With `ENGINE=docker` it is `docker compose` in
+place of `podman compose`. Podman is what this deployment is validated on.)
 
 Before a client's data arrives: give `castlectl` its own Keycloak account and
 replace the first-boot admin (`docs/admin-rotation.md`, which also says how to
-reach the admin console: the sign-in host serves it to the server itself only), set up backups and try a restore
-(`docs/backup-and-upgrade.md`), and enable start on boot
-(`docs/host-setup.md`).
+reach the admin console: the sign-in host serves it to the server itself
+only), set up backups and try a restore (`docs/backup-and-upgrade.md`), enable
+the renewal timer (above), and enable start on boot (`docs/host-setup.md`).
 
 ## Day to day
 
@@ -166,7 +188,8 @@ reach the admin console: the sign-in host serves it to the server itself only), 
 |----|-----|
 | see every codename and whether it is a tenant, a canary or only has a cert | `./castlectl list` |
 | take a client on | `./castlectl promote <codename>`, then add their people (below) |
-| see who is in a codename's realm, and with which role | `./castlectl users <codename>` |
+| see who is in a codename's realm, and with which role (`none` for someone in no castle group, whom castle refuses) | `./castlectl users <codename>` |
+| give `castlectl` an account of its own at Keycloak | `./castlectl keycloak-setup` (`docs/admin-rotation.md`) |
 | move a tenant to another codename or host | `./castlectl export <codename>`, `./castlectl import <bundle> <codename>` (`docs/moving-and-retiring-a-tenant.md`) |
 | end a tenant: export it, then destroy its data, people and secrets and leave a canary | `./castlectl demote <codename> --yes` |
 | remove a canary and its realm, keeping the cert for reuse | `./castlectl deprovision <codename>` |
@@ -183,4 +206,12 @@ in the portal. Adding and removing people, sessions and what ends them are in
 
 **Your own logo.** Put an image file named `logo` in `branding/` (PNG, JPEG,
 GIF, WebP or SVG, at most 1 MiB) and run `./castlectl upgrade`. The file is
-git-ignored and is not part of a backup bundle, so keep a copy.
+git-ignored and is not part of a backup bundle, so keep a copy. To go back to
+the built-in brand, delete the file and run `./castlectl upgrade` again: a
+tenant that was started with a logo does not start without it.
+
+**What a decoy records.** Nobody has an account at a canary, so anything that
+arrives there is worth a look. Caddy logs every request as JSON on its standard
+output (`podman logs compose_caddy_1`), and Keycloak keeps the sign-in attempts
+at each codename's realm as events for seven days (admin console, the realm,
+*Events*).
