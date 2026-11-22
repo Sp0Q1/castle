@@ -142,16 +142,39 @@ are left for `castlectl upgrade` to replace: it only upgrades what it finds
 running.
 
 Until the new major is proven, each volume holds both: the new `pgdata` and
-the old major's `pgdata.old-major`, and the dumps are in `/root`. Going back is
-the previous commit's pins with `pgdata.old-major` under its old name again.
-Once it is proven:
+the old major's `pgdata.old-major`, and the dumps are in `/root`.
+
+**Once it is proven**, the old files and the dumps go:
 
 ```bash
-rm -rf "$kc_vol/pgdata.old-major"
-for cn in $tenants; do
-  rm -rf "$(podman volume inspect -f '{{.Mountpoint}}' "castle-${cn}_castle_db")/pgdata.old-major"
+for v in compose_keycloak_db $(podman volume ls --format '{{.Name}}' | grep '_castle_db$'); do
+  rm -rf "$(podman volume inspect -f '{{.Mountpoint}}' "$v")/pgdata.old-major"
 done
 rm /root/*-pre-migration.sql.gz
+```
+
+**Going back**, while the old files are still there: check out the commit you
+came from, so that the pins are the old major's again, and give every database
+its old files back. What was written since the migration stays behind in
+`pgdata.new-major`.
+
+```bash
+tenants="$(./castlectl list | awk '$2=="tenant"{print $1}')"
+
+podman stop compose_keycloak_1 compose_keycloak-db_1
+podman rm compose_keycloak_1
+podman rm compose_keycloak-db_1
+kc_vol="$(podman volume inspect -f '{{.Mountpoint}}' compose_keycloak_db)"
+mv "$kc_vol/pgdata" "$kc_vol/pgdata.new-major" && mv "$kc_vol/pgdata.old-major" "$kc_vol/pgdata"
+podman compose -f platform.compose.yml --profile self-dns up -d --force-recreate
+for cn in $tenants; do
+  podman stop "castle-$cn" "postgres-$cn"
+  vol="$(podman volume inspect -f '{{.Mountpoint}}' "castle-${cn}_castle_db")"
+  mv "$vol/pgdata" "$vol/pgdata.new-major" && mv "$vol/pgdata.old-major" "$vol/pgdata"
+  ./castlectl upgrade "$cn"
+done
+./castlectl upgrade
+./castlectl list
 ```
 
 ## Backups
