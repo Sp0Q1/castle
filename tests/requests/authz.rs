@@ -93,11 +93,11 @@ pub(super) async fn make_finding(
 /// The files live under `target/`, which is already ignored, and each is deleted
 /// before it is reused so a crashed run cannot poison the next one.
 pub(super) fn fresh_db() {
-    // Only sqlite needs this. CI points DATABASE_URL at a real Postgres so that
-    // loose sqlite typing cannot hide an INT4/INT8 mismatch again (PR #65);
-    // overwriting it here unconditionally sent those runs back to sqlite and
-    // quietly retired the guarantee. Postgres has no shared write-lock to dodge,
-    // and `dangerously_recreate` rebuilds the schema on each serial boot.
+    // Only sqlite needs this. CI points DATABASE_URL at a real Postgres, where
+    // an INT4/INT8 mismatch that sqlite's loose typing lets through fails, so a
+    // DATABASE_URL that is set is left alone. Postgres has no shared write-lock
+    // to dodge, and `dangerously_recreate` rebuilds the schema on each serial
+    // boot.
     if std::env::var("DATABASE_URL").is_ok_and(|url| !url.starts_with("sqlite:")) {
         return;
     }

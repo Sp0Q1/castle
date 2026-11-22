@@ -1,26 +1,21 @@
 //! Throttling for the credential endpoints.
 //!
-//! This closes the last open item from the security review. It targets the
-//! attack the app is actually exposed to in `jwt` mode: online password
+//! It targets what the app is exposed to in `jwt` mode: online password
 //! guessing against `/api/auth/login`, and mass account probing through
 //! register / forgot-password / magic-link.
 //!
-//! ## Scope and honest limitations
+//! ## Scope and limits
 //!
-//! State is process-local, deliberately. Castle deploys one pod per tenant with
-//! a single replica, so a process is the whole instance and an in-memory
-//! counter sees every attempt — no Redis, no shared store, no extra failure
-//! domain. **If a tenant is ever scaled past one replica this becomes
-//! per-replica**, and the effective limit multiplies by the replica count; at
-//! that point this needs to move to a shared store or to the ingress.
+//! State is process-local, deliberately. A castle is one process, so an
+//! in-memory counter sees every attempt: no shared store, no extra failure
+//! domain. Run as several processes behind one address, each would count for
+//! itself and the effective limit would multiply.
 //!
-//! It is also not a defence against distributed flooding: an attacker with many
-//! source addresses can still exhaust connections upstream of the app. That is
-//! the ingress's job (`rateLimit` in the tenant chart sets nginx's
-//! `limit-rps`/`limit-connections` per source address), and the two layers are
-//! complementary — this one protects *accounts*, that one protects *capacity*.
+//! It is not a defence against flooding: someone with many source addresses
+//! can still exhaust connections before a request gets here. This protects
+//! *accounts*, not *capacity*.
 //!
-//! ## The lockout trade-off, stated plainly
+//! ## The lockout trade-off
 //!
 //! Login is keyed on the submitted email and checked *before* the password is
 //! verified. That is what keeps an attacker from spending our CPU on argon2 for
@@ -36,8 +31,8 @@
 //! verify beyond the soft cap, refuse outright at a hard one — not removing the
 //! check.
 //!
-//! In `proxy` mode (production) Keycloak performs authentication and its own
-//! brute-force detection applies, and castle serves no sign-in of its own.
+//! In `proxy` mode (every deployment) Keycloak performs authentication and its
+//! own brute-force detection applies, and castle serves no sign-in of its own.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
