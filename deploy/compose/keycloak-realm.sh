@@ -197,6 +197,16 @@ kc_token() {
   fi | jq -er '.access_token'
 }
 
+# Said when there is no token: who asked for one, and for castlectl's own
+# account what brings it back.
+no_token() {
+  if [[ -n "${KC_CLIENT_SECRET:-}" ]]; then
+    echo "keycloak-realm.sh: no admin token for the service account '${KC_CLIENT_ID:-castlectl}'. If Keycloak refused it, 'castlectl keycloak-setup' makes the account again" >&2
+  else
+    echo "keycloak-realm.sh: no admin token for the administrator '${KC_ADMIN_USER:-}' (KC_ADMIN_USER and KC_ADMIN_PASS)" >&2
+  fi
+}
+
 # The token as a header file for curl (`-H @<(bearer "$token")`), for the same
 # reason: not an argument.
 bearer() { printf 'Authorization: Bearer %s\n' "$1"; }
@@ -217,7 +227,7 @@ realm_exists() {
 
 create() {
   local url="${KC_URL:?KC_URL required}" token; token="$(kc_token)"
-  [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; exit 1; }
+  [[ -n "$token" ]] || { no_token; exit 1; }
 
   if realm_exists "$url" "$token"; then
     # Idempotent on purpose: provisioning is re-run after partial failures, and
@@ -237,7 +247,7 @@ create() {
 
 delete() {
   local url="${KC_URL:?KC_URL required}" token; token="$(kc_token)"
-  [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; exit 1; }
+  [[ -n "$token" ]] || { no_token; exit 1; }
   if ! realm_exists "$url" "$token"; then
     echo "realm ${realm} does not exist — nothing to delete" >&2
     return 0
@@ -252,7 +262,7 @@ delete() {
 kc() { # <path under the realm> [curl args...]
   local url="${KC_URL:?KC_URL required}" path="$1" token; shift
   token="$(kc_token)"
-  [[ -n "$token" ]] || { echo "keycloak-realm.sh: could not obtain admin token" >&2; return 1; }
+  [[ -n "$token" ]] || { no_token; return 1; }
   curl -sSf "${CURL_TLS[@]}" -H @<(bearer "$token") "$@" "${url}/admin/realms/${realm}${path}"
 }
 
