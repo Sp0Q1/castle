@@ -68,6 +68,37 @@ Two things an upgrade does **not** paper over:
 Always `./castlectl backup` before a schema-changing release, and test it on a
 staging box.
 
+## Going back after an upgrade
+
+An upgrade changes the files in this directory, the images and the databases:
+a newer castle migrates its database when it starts, and an older castle does
+not start on a database with migrations it does not know. Going back therefore
+takes the bundle that `castlectl backup` wrote before the upgrade. What was
+entered since then is gone, and people may have to sign in again.
+
+```bash
+cd /opt/castle/deploy/compose
+export BACKUP_AGE_IDENTITY=/path/to/castle-backup.key
+git checkout <the commit you came from>
+$EDITOR .env                      # CASTLE_IMAGE=ghcr.io/sp0q1/castle@sha256:<the build you came from>
+
+podman compose -f platform.compose.yml --profile self-dns up -d --force-recreate
+./castlectl upgrade               # reports every tenant as not healthy: its database is still the newer one
+rm -f .instances/_keycloak.secret # castlectl's account goes back with Keycloak's database
+./castlectl restore backups/castle-backup-<from before the upgrade>.tar.age --yes
+./castlectl list
+```
+
+`upgrade` printed the first twelve characters of the build each tenant came
+from, and `podman images --digests` has it in full. Here `upgrade` puts every
+instance back on the old templates and the old image, waits for each tenant in
+vain, and ends non-zero. `restore` then loads Keycloak's database and each
+tenant's from the bundle and starts the tenants. The account that
+`castlectl keycloak-setup` made lives in Keycloak's database, so its secret is
+removed first: a bundle that was written with the account brings both back,
+and after one from before it `castlectl` asks as the administrator in `.env`
+until `keycloak-setup` is run again.
+
 ## Migrating a Postgres major
 
 A pg major rewrites the on-disk format, so the move is: dump the logical data on
