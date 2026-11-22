@@ -15,6 +15,7 @@
 #   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
 #   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
 #   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
+#   ./keycloak-realm.sh await                         # wait until Keycloak answers
 #
 # Env:
 #   BASE_DOMAIN     hostname suffix for the tenant       (required for create, update and render)
@@ -22,6 +23,7 @@
 #   KC_ADMIN_USER   admin username           (create/delete only)
 #   KC_ADMIN_PASS   admin password           (create/delete only)
 #   KC_REALM_PREFIX realm name prefix                    (default: castle-)
+#   KC_WAIT         how many seconds `await` waits for Keycloak (default: 120)
 #   EXTERNAL_PORT   port in browser-facing URLs          (default: none = 443)
 #   CLIENT_SECRET   the confidential client's secret; generated if unset. The
 #                   SAME value must reach the tenant as OAUTH2_PROXY_CLIENT_SECRET
@@ -43,11 +45,21 @@ if [[ "${KC_INSECURE:-0}" == "1" ]]; then
   echo "keycloak-realm.sh: WARNING - TLS verification disabled (KC_INSECURE=1)" >&2
 fi
 
+usage() {
+  echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2
+  echo "       keycloak-realm.sh await" >&2
+  exit 1
+}
 cmd="${1:-}"; codename="${2:-}"
-[[ -n "$cmd" && -n "$codename" ]] || {
-  echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2; exit 1; }
-[[ "$codename" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || {
-  echo "keycloak-realm.sh: invalid codename '$codename'" >&2; exit 1; }
+case "$cmd" in
+  # About Keycloak itself, not about a codename's realm.
+  await) [[ -z "$codename" ]] || usage ;;
+  *)
+    [[ -n "$cmd" && -n "$codename" ]] || usage
+    [[ "$codename" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || {
+      echo "keycloak-realm.sh: invalid codename '$codename'" >&2; exit 1; }
+    ;;
+esac
 
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 realm="${KC_REALM_PREFIX}${codename}"
@@ -282,6 +294,16 @@ update() {
   echo "realm ${realm}: the client was brought up to date" >&2
 }
 
+# Keycloak takes a minute to answer after it is started. Waits until it does,
+# for KC_WAIT seconds at most.
+await() {
+  local url="${KC_URL:?KC_URL required}" waited=0
+  until curl -sSf "${CURL_TLS[@]}" -m 5 -o /dev/null "${url}/realms/master/.well-known/openid-configuration" 2>/dev/null; do
+    (( waited < ${KC_WAIT:-120} )) || { echo "keycloak-realm.sh: Keycloak does not answer at ${url}" >&2; exit 1; }
+    sleep 3; waited=$((waited + 3))
+  done
+}
+
 case "$cmd" in
   render) render ;;
   create) create ;;
@@ -289,5 +311,6 @@ case "$cmd" in
   delete) delete ;;
   people) people ;;
   add-people) add_people ;;
-  *) echo "usage: keycloak-realm.sh {render|create|update|delete|people|add-people} <codename>" >&2; exit 1 ;;
+  await) await ;;
+  *) usage ;;
 esac

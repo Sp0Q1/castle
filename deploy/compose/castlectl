@@ -578,6 +578,11 @@ upgrade(){ # [<codename>]  (default: every running codename)
     fi
   fi
 
+  # Each instance's realm is brought up to date in its turn, and Keycloak takes
+  # a minute to answer after the platform's own upgrade recreated it. Without
+  # Keycloak the instances are still upgraded, and the summary names the realms.
+  realm_sh await || echo "  Keycloak does not answer at $KC_ADMIN_URL: the realms' clients stay as they are" >&2
+
   # One bad instance must NOT abort the fleet or skip reload_caddy: collect the
   # failures, keep going, then summarize and exit nonzero at the end if any failed.
   local -a fails=()
