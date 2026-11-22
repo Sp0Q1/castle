@@ -8,7 +8,7 @@ impl Task for AnonymizeUser {
     fn task(&self) -> TaskInfo {
         TaskInfo {
             name: "user:anonymize".to_string(),
-            detail: "Replace a person's name and address with a placeholder, disable the account and take it off every project. What they wrote stays. Remove them from the IdP as well, or their next sign-in starts a new account.\nUsage:\ncargo run task user:anonymize email:user@example.com".to_string(),
+            detail: "Replace a person's name and address with a placeholder, disable the account and take it off every project. What they wrote stays. The account stays bound to the person, who is then this disabled account and not a new one; remove them from the IdP as well.\nUsage:\ncargo run task user:anonymize email:user@example.com".to_string(),
         }
     }
     async fn run(&self, app_context: &AppContext, vars: &task::Vars) -> Result<()> {

@@ -35,8 +35,8 @@ function RegisterPage() {
       <div className="auth-card card">
         <h1>Account created</h1>
         <p className="muted">
-          New accounts start with the <strong>staff</strong> role. A manager (or
-          an administrator) grants management access.
+          A new account is a <strong>client</strong> on no project. A manager
+          puts it on projects.
         </p>
         <Link to="/login" className="btn btn-primary">
           Continue to sign in
