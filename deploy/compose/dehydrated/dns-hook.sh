@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dehydrated DNS-01 hook for castle's self-hosted authoritative DNS (Option 3).
+# dehydrated DNS-01 hook for castle's self-hosted authoritative DNS.
 #
 # It publishes the _acme-challenge TXT record by sending an RFC 2136 dynamic
 # update (nsupdate) to the nameserver castle runs itself — authenticated with a

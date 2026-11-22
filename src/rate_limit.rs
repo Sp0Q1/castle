@@ -125,8 +125,8 @@ impl RateLimiter {
         }
         buckets.retain(|_, b| b.expires_at > now);
         // Still full of live entries: the instance is under a rotating-key
-        // flood. Drop everything rather than grow without bound — the limits
-        // reset, but memory stays fixed and the ingress limiter still applies.
+        // flood. Drop everything rather than grow without bound: the limits
+        // reset, and memory stays fixed.
         if buckets.len() >= MAX_TRACKED_KEYS {
             buckets.clear();
         }

@@ -38,8 +38,8 @@ can't be abused as an open resolver or amplifier — but it must stay reachable 
    The same secret is read by the `dns` service and by castlectl — one key, two
    consumers. `.instances/ddns.key` (the nsupdate key file) is written from it
    once and is git-ignored. After changing the secret, delete that file, which
-   castlectl then writes again, and start the platform again with `up -d`,
-   which recreates the nameserver with the new one.
+   castlectl then writes again, and recreate the nameserver with the new one:
+   `podman compose -f platform.compose.yml --profile self-dns up -d dns`.
 
    The zone names its nameserver `ns1.$BASE_DOMAIN`. `NS_NAME` in `.env` names
    another one, for instance a name in the parent zone, so that the delegation

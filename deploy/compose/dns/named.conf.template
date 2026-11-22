@@ -1,4 +1,4 @@
-// castle self-hosted authoritative DNS (Option 3): this box is the primary
+// castle self-hosted authoritative DNS: this box is the primary
 // nameserver for $BASE_DOMAIN. Rendered from the environment by entrypoint.sh.
 //
 // Authoritative-only, on purpose:

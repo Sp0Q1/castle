@@ -96,11 +96,12 @@ ls -l /root/*-pre-migration.sql.gz        # one file per database, none of them 
 # 2. The new pins.
 git pull
 
-# 3. Keycloak's database. Its two containers go, the old major's files are
-#    moved aside inside the volume, and the database starts alone on the new
-#    major to take the dump.
+# 3. Keycloak's database. Its two containers go, Keycloak's first, the old
+#    major's files are moved aside inside the volume, and the database starts
+#    alone on the new major to take the dump.
 podman stop compose_keycloak_1 compose_keycloak-db_1
-podman rm compose_keycloak_1 compose_keycloak-db_1
+podman rm compose_keycloak_1
+podman rm compose_keycloak-db_1
 kc_vol="$(podman volume inspect -f '{{.Mountpoint}}' compose_keycloak_db)"
 mv "$kc_vol/pgdata" "$kc_vol/pgdata.old-major"
 podman compose -f platform.compose.yml up -d keycloak-db
@@ -135,9 +136,10 @@ Then sign in at every tenant and look at a project. (Leave out
 `--profile self-dns` if you do not run the bundled nameserver.)
 
 Two things in these steps are there for a reason. Keycloak's container is
-removed before its database's, because podman does not remove a container
-that another one depends on. And a tenant's containers are left for
-`castlectl upgrade` to replace: it only upgrades what it finds running.
+removed before its database's, in a command of its own, because podman does
+not remove a container that another one depends on. And a tenant's containers
+are left for `castlectl upgrade` to replace: it only upgrades what it finds
+running.
 
 Until the new major is proven, each volume holds both: the new `pgdata` and
 the old major's `pgdata.old-major`, and the dumps are in `/root`. Going back is

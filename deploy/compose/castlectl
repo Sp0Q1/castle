@@ -98,9 +98,9 @@ KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 CASTLE_IMAGE="${CASTLE_IMAGE:?set CASTLE_IMAGE in .env}"
 ENGINE="${ENGINE:-podman}"
 COMPOSE="${COMPOSE:-$ENGINE compose}"
-# Cert issuance is dehydrated (pure-bash ACME, matches this script). castlectl
-# maintains DOMAINS_TXT (the pool) and collects results; your dehydrated config
-# owns the challenge (http-01 webroot / dns-01 hook) and CERTDIR.
+# Cert issuance is dehydrated's. castlectl maintains DOMAINS_TXT (the pool) and
+# collects the results; dehydrated's config says how the challenge is answered
+# (a DNS-01 hook) and where certificates land.
 DEHYDRATED="${DEHYDRATED:-dehydrated}"
 DEHYDRATED_CONFIG="${DEHYDRATED_CONFIG:-$HERE/dehydrated/config}"
 DEHYDRATED_CERTDIR="${DEHYDRATED_CERTDIR:-$CERTS/_dehydrated}"
