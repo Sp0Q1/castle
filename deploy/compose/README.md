@@ -172,9 +172,9 @@ podman compose -f platform.compose.yml up -d
 ```
 
 `provision-pool` creates a realm per codename, so it needs Keycloak, which
-takes a minute or so to answer on its first start: wait until
-`podman ps` shows it healthy. (With `ENGINE=docker` it is `docker compose` in
-place of `podman compose`. Podman is what this deployment is validated on.)
+takes a minute or so to answer on its first start. The command waits for it,
+two minutes at most. (With `ENGINE=docker` it is `docker compose` in place of
+`podman compose`. Podman is what this deployment is validated on.)
 
 Before a client's data arrives: give `castlectl` its own Keycloak account and
 replace the first-boot admin (`docs/admin-rotation.md`, which also says how to
