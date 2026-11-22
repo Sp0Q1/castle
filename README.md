@@ -168,7 +168,13 @@ castle-cli task user:status email:someone@example.com status:disabled   # or sta
 castle-cli task user:anonymize email:someone@example.com                # for someone who left
 castle-cli task user:unbind email:someone@example.com                   # or all:yes, after a move to another Keycloak realm
 castle-cli task user:create email:… name:… password:…                   # jwt mode
+castle-cli task summary                                                 # what the instance holds, as ids, counts and times
 ```
+
+`summary` prints one line of JSON for the host the instance runs on: for each
+project its id, the findings by status and severity and the comments of the
+last seven days, and no name, title or text
+([`deploy/compose/docs/status.md`](deploy/compose/docs/status.md)).
 
 In a deployment a task runs inside the tenant's container and names the
 environment, or it reads the development configuration:
