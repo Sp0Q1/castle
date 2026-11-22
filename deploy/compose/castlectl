@@ -899,7 +899,8 @@ users(){ # <codename>
     (sort_by(.email)[] | [
       (.email // .username),
       ([.firstName, .lastName] | map(select(. != null)) | join(" ")),
-      (if (.groups | index("castle-managers")) then "manager" elif (.groups | index("castle-staff")) then "staff" else "client" end),
+      (if (.groups | index("castle-managers")) then "manager" elif (.groups | index("castle-staff")) then "staff"
+       elif (.groups | index("castle-clients")) then "client" else "none" end),
       (if .enabled then "yes" else "no" end)
     ]) | @tsv' | awk -F '\t' '{ printf "%-36s %-24s %-8s %s\n", $1, $2, $3, $4 }'
 }
