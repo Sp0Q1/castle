@@ -110,14 +110,16 @@ caddy/
   Caddyfile               global config + imports sites/*
   sites/                  generated per-codename vhosts + sso
   certs/                  pre-issued certs (git-ignored)
-castlectl                 certificates, pool, promote/demote, upgrade, backup/restore, DNS
+castlectl                 certificates, pool, promote/demote, upgrade, backup/restore, DNS, status
+summary.jq                what a tenant's castle may say about itself, for `castlectl status`
+status.jq                 the document `castlectl status` prints, made from what it gathers
 keycloak-realm.sh         a codename's Keycloak realm, its people, castlectl's own account
 codenames.txt             the names every tenant and decoy is drawn from
 branding/                 a file named `logo` here replaces the built-in brand (git-ignored)
 dehydrated/               ACME client config and the DNS-01 hook
 dns/                      the bundled nameserver's templates
-systemd/                  the backup and the renewal timer
-docs/                     host setup, DNS, upgrades and backups, moving and retiring a tenant, Keycloak's administrators
+systemd/                  the backup, the renewal and the status timer
+docs/                     host setup, DNS, upgrades and backups, moving and retiring a tenant, Keycloak's administrators, the status
 .env.example              configuration
 .env                      yours, from the example (git-ignored)
 .instances/               what castlectl generates: per-codename secrets and rendered files (git-ignored)
@@ -188,6 +190,7 @@ the renewal timer (above), and enable start on boot (`docs/host-setup.md`).
 |----|-----|
 | see every codename and whether it is a tenant, a canary or only has a cert | `./castlectl list` |
 | take a client on | `./castlectl promote <codename>`, then add their people (below) |
+| see how the server and every instance on it are, as JSON for the overview | `./castlectl status` (`docs/status.md`, [`../overview/`](../overview/README.md)) |
 | see who is in a codename's realm, and with which role (`none` for someone in no castle group, whom castle refuses) | `./castlectl users <codename>` |
 | give `castlectl` an account of its own at Keycloak | `./castlectl keycloak-setup` (`docs/admin-rotation.md`) |
 | move a tenant to another codename or host | `./castlectl export <codename>`, `./castlectl import <bundle> <codename>` (`docs/moving-and-retiring-a-tenant.md`) |
