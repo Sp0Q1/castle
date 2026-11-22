@@ -31,16 +31,18 @@ never leak credentials).
 
 ## Access control
 
-Enforced in the controllers. A caller who is not a member of a project gets
-**404**, not 401 or 403, so the existence of a project cannot be probed; a
-member without the right role gets 403.
+Enforced in the controllers. Someone who cannot open a project gets **404**
+for it and for everything in it, not 401 or 403, so the existence of a project
+cannot be probed; someone who can open it and lacks the right for an action
+gets 403. Changing a project's members is management's alone and answers 403 to
+everyone else, whichever project is named.
 
 | Action | Who |
 |--------|-----|
 | Create a project; onboard, change or remove a member | `manager` |
 | Write, edit, publish, unpublish, delete a finding | a `manager`, or a `staff` user onboarded to the project as staff |
 | Read findings | those who may write them: all; **every other member: only `published`** |
-| Comment | any project member who can see the finding |
+| Comment | anyone who can see the finding |
 | View a project | managers; otherwise members of that project |
 | See everyone with an account, their role and their projects | `manager` |
 
@@ -69,8 +71,9 @@ default.
   headers. Castle handles no credentials: a user is provisioned on first
   sign-in and bound to the id Keycloak has for that person, so an account
   follows the person and not an address. The role is read from their Keycloak
-  groups on every request, so a change there takes effect at once, and someone
-  in none of the three groups is refused. Only `/api/auth/current` and
+  groups on every request, so a change there reaches castle when the proxy
+  next renews the session with Keycloak, within four minutes. Someone in none
+  of the three groups is refused. Only `/api/auth/current` and
   `/api/auth/mode` are mounted. Castle reads those headers only from a request
   that carries the secret it shares with its proxy, and does not start in this
   mode without one. They are read strictly (one value each, a group by its
@@ -80,9 +83,9 @@ default.
 
 Both modes resolve the request's user through one `CurrentUser` extractor in
 `src/security.rs`, so controllers are identical across modes. Onboarding
-someone who has not signed in yet creates an `invited` user that becomes
-`active` on first sign-in. A `disabled` user is refused on every request, in
-both modes, whatever session they still hold.
+someone who has not signed in yet creates an `invited` user, which in `proxy`
+mode becomes `active` the first time that person arrives. A `disabled` user is
+refused on every request, in both modes, whatever session they still hold.
 
 ## API
 
@@ -144,12 +147,14 @@ shown as its caption, and nothing is requested for it.
 
 | Variable | Meaning |
 |----------|---------|
-| `DATABASE_URL`, `JWT_SECRET` | required; without them castle does not start |
+| `DATABASE_URL`, `JWT_SECRET` | required; without them castle does not start. `JWT_SECRET` is base64 |
+| `DB_CONNECT_TIMEOUT`, `DB_IDLE_TIMEOUT`, `DB_MIN_CONNECTIONS`, `DB_MAX_CONNECTIONS` | the database pool: milliseconds and counts, with defaults of 5000, 30000, 1 and 10 |
 | `CASTLE_AUTH_MODE` | `proxy` (the production default) or `jwt` |
 | `CASTLE_PROXY_SECRET` | required in `proxy` mode: the secret castle shares with its proxy, which sends it with every request |
 | `CASTLE_LOGOUT_URL` | where sign-out sends the browser |
 | `CASTLE_LOGO` | path of an image shown instead of the built-in brand: PNG, JPEG, GIF, WebP or SVG, at most 1 MiB. One that cannot be served stops the server from starting |
-| `HOST`, `PORT` | public URL and listening port |
+| `HOST`, `PORT` | the portal's public origin, exactly as a browser names it (`https://portal.example.com`), and the listening port. In `proxy` mode a request that changes something is compared with `HOST` when the browser sends no `Sec-Fetch-Site` |
+| `MAILER_HOST`, `MAILER_PORT`, `MAILER_SECURE` | the SMTP server for the mails of `jwt` mode; `proxy` mode sends none |
 
 Accounts are managed from the command line of the instance. A user is never
 deleted: `user:anonymize` replaces the name and address with a placeholder,
@@ -164,6 +169,10 @@ castle-cli task user:anonymize email:someone@example.com                # for so
 castle-cli task user:unbind email:someone@example.com                   # or all:yes, after a move to another Keycloak realm
 castle-cli task user:create email:… name:… password:…                   # jwt mode
 ```
+
+In a deployment a task runs inside the tenant's container and names the
+environment, or it reads the development configuration:
+`podman exec castle-<codename> castle-cli task --environment production user:status …`.
 
 ## Running it locally
 
@@ -194,7 +203,8 @@ One VPS, Podman Compose, Caddy at the edge, one Keycloak realm per tenant, and
 a pool of indistinguishable codename instances with certificates issued in
 bulk. Start at [`deploy/compose/README.md`](deploy/compose/README.md); the
 `castlectl` script there provisions, upgrades, backs up and restores. Host
-preparation, DNS, upgrades and backups, and admin rotation each have a page in
+preparation, DNS, upgrades and backups, moving and retiring a tenant, and
+Keycloak's administrators each have a page in
 [`deploy/compose/docs/`](deploy/compose/docs/). Sign-in, roles and sessions are
 in [`deploy/oauth2-proxy-keycloak.md`](deploy/oauth2-proxy-keycloak.md).
 

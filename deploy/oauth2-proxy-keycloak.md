@@ -8,8 +8,9 @@ their Keycloak groups on every request.
 
 ```
    browser ──▶ Caddy ──▶ oauth2-proxy ──(OIDC)──▶ Keycloak
-                             │  (sets X-Forwarded-Email / -Groups / -Preferred-Username,
-                             │   and the secret it shares with its castle)
+                             │  (sets X-Forwarded-User / -Email / -Groups /
+                             │   -Preferred-Username, and the secret it shares
+                             │   with its castle)
                              ▼
                            castle  (its tenant's internal network, no published port)
 ```
@@ -42,8 +43,8 @@ do all three:
 ## The realm
 
 `keycloak-realm.sh` creates one realm per codename, and
-`./keycloak-realm.sh render <codename>` prints exactly what it will create. In
-short:
+`BASE_DOMAIN=<your domain> ./keycloak-realm.sh render <codename>` prints
+exactly what it will create. In short:
 
 - TLS required for everything; no self-registration; no self-service password
   reset; email must be verified.
@@ -65,14 +66,14 @@ short:
 | `castle-clients` | client: reads the published findings of their projects and comments |
 
 Someone in none of the three has no role: Keycloak signs them in, and castle
-refuses them without making an account. Roles are Keycloak's to give. Castle reads them on every request and has no
-way to edit them. A group counts by its exact name: castle reads the
-comma-separated list the proxy sends, and a name that is only nearly one of the
-three gives nothing.
+refuses them without making an account. Roles are Keycloak's to give. Castle
+reads them on every request and has no way to edit them. A group counts by its
+exact name: castle reads the comma-separated list the proxy sends, and a name
+that is only nearly one of the three gives nothing.
 
 **Adding a person.** In Keycloak's admin console (reached through an SSH
-tunnel: [`compose/docs/admin-rotation.md`](compose/docs/admin-rotation.md)), in the realm
-`castle-<codename>`: *Users → Add user* with their email and *Email verified*
+tunnel: [`compose/docs/admin-rotation.md`](compose/docs/admin-rotation.md)),
+in the realm `castle-<codename>`: *Users → Add user* with their email and *Email verified*
 on; *Credentials → Set password*, temporary, so they choose their own at first
 sign-in; *Groups → Join* one of the three. To make them enrol an authenticator
 app at first sign-in, add *Configure OTP* to their required actions.
@@ -80,9 +81,10 @@ app at first sign-in, add *Configure OTP* to their required actions.
 **Putting them on a project.** A manager opens the project in the portal and
 onboards the person by email, as staff or as client. This works before their
 first sign-in: castle keeps an `invited` placeholder that becomes the real
-account when the person Keycloak vouches for with that address arrives. A manager can later change that capacity or remove
-the person from the project. What someone may do on a project takes both: the
-role from Keycloak and the capacity from the manager.
+account when the person Keycloak vouches for with that address arrives. A
+manager can later change that capacity or remove the person from the project.
+What someone may do on a project takes both: the role from Keycloak and the
+capacity from the manager.
 
 **Taking access away.**
 
@@ -96,7 +98,9 @@ role from Keycloak and the capacity from the manager.
 Someone who leaves for good is anonymized, not deleted, so the findings and
 comments they wrote stay in place. The account stays bound to them: should
 Keycloak still know the person, they are that disabled account and not a new
-one. Delete them in Keycloak as well.
+one. Delete them in Keycloak as well. An account that nobody ever signed in to
+is bound to nobody, so after it is anonymized its former address would start a
+new account.
 
 **An account is a person's, not an address's.** Castle binds an account to the
 id Keycloak has for the person (`sub`, which the proxy sends as
@@ -109,12 +113,17 @@ id Keycloak has for the person (`sub`, which the proxy sends as
 - disabling or anonymizing the account holds whatever address the person comes
   with.
 
-An address finds an account only once: for an invitation, and for an account
-from before castle bound them. When a person's Keycloak account was deleted and
-made anew, they have a new id; `castle-cli task user:unbind email:<email>` lets
-their account go to whoever next arrives with its address. After moving a
-tenant to another realm, where everybody has a new id, it is
-`user:unbind all:yes`.
+An address finds an account only once, while the account is bound to nobody:
+an invitation, or an account that has no id yet. When a person's Keycloak
+account was deleted and made anew, they have a new id, and castle refuses them
+until their account is let go to whoever next arrives with its address:
+
+```bash
+podman exec castle-<codename> castle-cli task --environment production user:unbind email:<email>
+```
+
+After moving a tenant to another realm, where everybody has a new id, it is
+`user:unbind all:yes`, which `castlectl import` runs by itself.
 
 Managers see everyone with an account, with role, status and projects, under
 "People" in the portal; `./castlectl users <codename>` prints what the realm
@@ -164,7 +173,7 @@ settings:
 ```
 
 If your proxy sends `X-Auth-Request-*` instead of `X-Forwarded-*`, point the
-three header names at those. Each is read when it is sent once. The groups
+four header names at those. Each is read when it is sent once. The groups
 header is a comma-separated list of the groups' names, without paths, which is
 what Keycloak's group mapper sends with *Full group path* off.
 
@@ -173,9 +182,10 @@ what Keycloak's group mapper sends with *Full group path* off.
 [`compose/templates/tenant.compose.yml`](compose/templates/tenant.compose.yml)
 is the reference for the proxy's flags, and
 [`compose/templates/site.caddy`](compose/templates/site.caddy) for what the edge
-must do. Whatever replaces them has to keep the three points above, a
-`--cookie-refresh` shorter than the access token's lifetime, and a Keycloak
-client whose post-logout redirect URI covers the portal's root.
+must do. Whatever replaces them has to keep the three points above, the
+challenge and the nonce at sign-in, a `--cookie-refresh` shorter than the
+access token's lifetime, and `--backend-logout-url`, so that signing out of
+the portal ends the Keycloak session as well.
 
 ## Local development
 

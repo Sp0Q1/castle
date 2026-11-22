@@ -17,7 +17,7 @@ is role-aware (managers, staff, clients see different actions).
 
 - `MarkdownField` — the editor, with drag-and-drop / paste image upload (`POST /api/uploads`)
 - `FindingFields` — the finding form fields, shared by the new-finding and edit forms
-- `Markdown` — read-only renderer (GFM + mermaid via a custom `code` component)
+- `Markdown` — read-only renderer (GFM + mermaid via a custom `code` component); an image is shown only when it is an upload
 - `Mermaid` — renders one diagram (lazy-imports mermaid, initializes once)
 - `PieChart` — inline-SVG pie for the type/severity breakdowns
 - `TypeInput` — one-line type field with a datalist of the project's existing types
@@ -34,7 +34,7 @@ src/
   api/
     types.ts             TS types mirroring the API responses
     client.ts            fetch wrapper (attaches the JWT) + typed endpoints
-  auth/session.ts        auth mode + token storage + the root loader + who is project staff
+  auth/session.ts        auth mode + logo, token storage, sign-in and sign-out, the root loader
   App.tsx                route tree, header, error element
   pages/                 each exports Component + loader/action
     LoginPage.tsx  RegisterPage.tsx   (jwt mode only)

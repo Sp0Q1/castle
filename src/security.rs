@@ -114,9 +114,10 @@ pub struct ProxySettings {
     pub staff_group: String,
     #[serde(deserialize_with = "group_name")]
     pub client_group: String,
-    /// Where the SPA sends the browser on sign-out. For a full RP-initiated
-    /// logout point this at oauth2-proxy's sign-out chained to the IdP's
-    /// end-session endpoint, e.g.
+    /// Where the SPA sends the browser on sign-out. oauth2-proxy's own
+    /// sign-out ends the Keycloak session too when the proxy runs with
+    /// `--backend-logout-url`. A chain to the IdP's end-session endpoint goes
+    /// through its page instead, e.g.
     /// `/oauth2/sign_out?rd=<url-encoded Keycloak .../logout?post_logout_redirect_uri=…&client_id=castle>`.
     pub logout_url: Option<String>,
 }

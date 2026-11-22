@@ -54,8 +54,8 @@ export function signOut(user: CurrentUser, navigate: NavigateFunction): void {
     navigate("/login");
     return;
   }
-  // Sign out at oauth2-proxy, chaining to the IdP's end-session endpoint when one
-  // is configured (logout_url), for a full RP-initiated logout.
+  // Sign out where this deployment says (logout_url), which is oauth2-proxy's
+  // sign-out unless set otherwise. The proxy ends the session at the IdP too.
   window.location.href = user.logout_url || "/oauth2/sign_out?rd=/";
 }
 

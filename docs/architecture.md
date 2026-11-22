@@ -93,7 +93,7 @@ sequenceDiagram
   B->>K: sign in
   K-->>B: redirect back with a one-time code
   B->>P: the code
-  P->>K: code, client secret and the challenge's verifier, over the internal network
+  P->>K: code, client secret and the challenge's verifier, inside the host
   K-->>P: tokens
   P-->>B: session cookie, encrypted, for this codename only
   loop every 4 minutes while the portal is used
@@ -152,7 +152,7 @@ images; which codenames belong to clients; credentials and sessions.
 | A page that says one thing while the server does another | a manager is on no project and is listed for each one as a manager; only memberships can be changed or removed, with a confirmation; a membership that gives less than it reads is marked |
 | Losing what someone wrote when they leave | a user is never deleted: they are anonymized, and the database refuses to delete a user that anything points at |
 | Guessed passwords | temporary lockout in Keycloak, no self-registration, no self-service password reset; the built-in login of `jwt` mode is throttled |
-| Keycloak's administration reached from outside | to the world the sign-in host serves the pool's realms and Keycloak's static files; the master realm, the admin console and the admin API answer only a request that starts on the server; `castlectl` signs in as a service account with a secret and no password; the master realm locks out after failed sign-ins |
+| Keycloak's administration reached from outside | to the world the sign-in host serves the pool's realms and Keycloak's static files; the master realm, the admin console and the admin API answer only a request that starts on the server; once `castlectl keycloak-setup` has run, `castlectl` signs in as a service account with a secret and no password, and the master realm locks out after failed sign-ins |
 | Script in a finding or comment | Markdown goes through a sanitizer, diagrams render in mermaid's strict mode, and the Content-Security-Policy denies everything by default: scripts come from the portal's own files only, with no inline script or handler. The text itself is stored as written, since a finding may quote a payload |
 | A hostile upload | the type is decided by the file's first bytes (PNG, JPEG, GIF, WebP), 10 MiB at most, stored under a random name, served to signed-in users with `nosniff` and a policy of its own under which it loads and runs nothing; a text can show an upload as an image and nothing else |
 | Finding out which codenames are in use | tenants and canaries answer alike at the edge; certificates for the whole pool are issued and renewed in one batch; promoting a canary changes neither certificate nor DNS; a request by address or unknown name gets a neutral certificate; the bundled DNS allows no zone transfer |
