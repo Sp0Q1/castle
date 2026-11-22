@@ -145,7 +145,10 @@ holds.
   the session, and so does anything an administrator does to the user or
   their session in Keycloak.
 - Sign-out (`/oauth2/sign_out`) ends the Keycloak session as well
-  (`--backend-logout-url`).
+  (`--backend-logout-url`). The edge answers that address to a browser that
+  goes there and to no request a page makes for an image, a font or a
+  stylesheet (`Sec-Fetch-Dest`), so nothing written in a finding or a comment
+  signs its readers out.
 - The cookie is `SameSite=Lax`, and castle refuses a request that changes
   something unless the browser marks it as coming from the portal's own pages
   (`Sec-Fetch-Site: same-origin`, or the portal's own `Origin` from a browser
