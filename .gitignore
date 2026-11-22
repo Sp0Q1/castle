@@ -25,3 +25,5 @@ uploads/
 
 # Claude Code scratch/worktrees — never commit
 .claude/
+# Python bytecode (the overview and its tests)
+__pycache__/

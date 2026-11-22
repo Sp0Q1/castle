@@ -160,6 +160,27 @@ jobs:
       - name: Build
         run: npm run build
 
+  overview:
+    name: Overview (python, jq)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The overview is the standard library and nothing else, so the runner's
+      # own python3 runs it. The tests put every summary in the fixtures to
+      # deploy/compose/summary.jq as well, with the runner's jq: the host's
+      # recognizer and the overview's have to make the same of each. And they
+      # put lines as castlectl gathers them to deploy/compose/status.jq, and
+      # run `castlectl status` itself with stand-ins for the engine and for
+      # systemd on its path: what comes of either has to be a status the
+      # overview takes.
+      - name: Test
+        run: |
+          python3 --version
+          jq --version
+          bash --version | head -n 1
+          openssl version
+          python3 -m unittest discover -s deploy/overview
+
   actionlint:
     name: Workflow lint
     runs-on: ubuntu-latest

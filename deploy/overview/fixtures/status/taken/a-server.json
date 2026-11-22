@@ -1,0 +1,103 @@
+{
+  "status_version": 1,
+  "generated_at": "2026-11-22T17:44:57Z",
+  "platform": [
+    {
+      "service": "caddy",
+      "health": "healthy"
+    },
+    {
+      "service": "keycloak",
+      "health": "healthy"
+    },
+    {
+      "service": "keycloak-db",
+      "health": "healthy"
+    },
+    {
+      "service": "dns",
+      "health": "healthy"
+    }
+  ],
+  "sign_in_certificate_ends": "2026-11-23T05:36:19Z",
+  "instances": [
+    {
+      "codename": "amber",
+      "kind": "tenant",
+      "health": "healthy",
+      "image": "95bf92f77c9e",
+      "certificate_ends": "2027-02-20T17:36:45Z",
+      "summary": {
+        "summary_version": 1,
+        "generated_at": "2026-11-22T17:44:54Z",
+        "window_days": 7,
+        "projects": [
+          {
+            "id": 1,
+            "drafts": 1,
+            "published": 1,
+            "by_severity": {
+              "low": 0,
+              "medium": 0,
+              "elevated": 0,
+              "high": 1,
+              "extreme": 0
+            },
+            "comments": {
+              "manager": 1,
+              "staff": 0,
+              "client": 1
+            },
+            "last_activity": "2026-11-22T17:37:02Z"
+          }
+        ],
+        "activity": [
+          {
+            "at": "2026-11-22T17:37:02Z",
+            "project_id": 1,
+            "finding_id": 2,
+            "by": "manager"
+          },
+          {
+            "at": "2026-11-22T17:37:02Z",
+            "project_id": 1,
+            "finding_id": 1,
+            "by": "client"
+          }
+        ]
+      }
+    },
+    {
+      "codename": "birch",
+      "kind": "canary",
+      "health": "healthy",
+      "image": null,
+      "certificate_ends": "2027-02-20T17:36:45Z",
+      "summary": null
+    },
+    {
+      "codename": "cedar",
+      "kind": "canary",
+      "health": "healthy",
+      "image": null,
+      "certificate_ends": "2027-02-20T17:36:45Z",
+      "summary": null
+    },
+    {
+      "codename": "dune",
+      "kind": "cert-only",
+      "health": null,
+      "image": null,
+      "certificate_ends": null,
+      "summary": null
+    }
+  ],
+  "newest_backup": "2026-11-22T17:37:05Z",
+  "host": {
+    "reboot_required": null,
+    "failed_units": null,
+    "disk_used_percent": 86,
+    "renewal_timer": null,
+    "backup_timer": null
+  }
+}
