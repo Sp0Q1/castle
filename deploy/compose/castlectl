@@ -436,17 +436,26 @@ provision_canary(){ # <codename>
 secret_for(){ ensure_secret "$1" client 32; }
 cookie_for(){ ensure_secret "$1" cookie 16 hex; }
 ensure_secret(){ # <codename> <name> <bytes> [hex]
-  local f="$RUN/$1.$2"; [[ -f "$f" ]] && { cat "$f"; return; }
+  local f="$RUN/$1.$2"; [[ -s "$f" ]] && { cat "$f"; return; }
   local v; if [[ "${4:-}" == hex ]]; then v="$(openssl rand -hex "$3")"; else v="$(rand "$3")"; fi
+  [[ -n "$v" ]] || die "openssl made no $2 secret for '$1'"
   printf '%s' "$v" > "$f"; printf '%s' "$v"
 }
 
 # --- commands -------------------------------------------------------------
+# What the steps of a command run with. A command asks at its top for the
+# steps it reaches, and so names a missing tool before it has changed anything.
+need_keycloak(){ need jq; need curl; }                        # keycloak-realm.sh, which asks for both itself
+need_dns(){ [[ -z "$SELF_HOSTED_DNS" ]] || need nsupdate; }   # dns_set_a, dns_del_a
+# sync_certs: dehydrated, and with the bundled nameserver what its hook runs.
+need_issuer(){ [[ "${KC_INSECURE:-0}" == "1" ]] || { need "$DEHYDRATED"; need_dns; [[ -z "$SELF_HOSTED_DNS" ]] || need dig; }; }
+need_export(){ need age; need_keycloak; need "$ENGINE"; need tar; need flock; }   # export_tenant
+
 # The single controlled CA interaction: issue the IdP cert + N codename certs in
 # one batch. No Keycloak or platform required — this runs first, so the certs
 # exist before Caddy starts. CT shows them appearing together.
 issue_certs(){ # [N]
-  need openssl
+  need openssl; need_issuer
   local n="${1:-10}" cn picked=()
   # The pool only. The sign-in host's certificate is Caddy's to obtain and
   # renew, over its own listeners (caddy/sites/sso.caddy).
@@ -463,6 +472,7 @@ issue_certs(){ # [N]
 # Stand up a canary for every codename that has a cert but isn't provisioned yet.
 # Idempotent — safe to re-run. Platform (Keycloak) must be up.
 provision_pool(){
+  need_keycloak; need openssl; need_dns
   local done_any=0 cn
   # Every codename that has a cert but isn't running yet -> stand up a canary.
   for cn in $(pool_codenames); do
@@ -478,6 +488,7 @@ provision_pool(){
 }
 
 renew_pool(){
+  need_issuer
   echo "renewing what is due in the pool (one dehydrated run)"
   touch "$DOMAINS_TXT"
   local before failed=0
@@ -497,6 +508,7 @@ renew_pool(){
 promote(){ # <codename>
   local cn="${1:?promote needs a <codename>}"
   [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary"
+  need openssl
   check_logo
   echo "promoting canary '$cn' -> real tenant (cert + subdomain + realm unchanged)"
   compose_instance "$cn" down >/dev/null 2>&1
@@ -517,6 +529,8 @@ demote(){ # <codename> --yes [--no-export]
   done
   [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
   [[ -n "$yes" ]] || die "demote destroys the data, the people and the secrets of '$cn' — re-run with --yes to confirm"
+  need_keycloak; need openssl; need_dns
+  [[ -z "$keep" ]] || need_export
   compose_instance "$cn" stop castle >/dev/null 2>&1      # nobody writes from here on
   if [[ -n "$keep" ]] && ! (export_tenant "$cn"); then
     compose_instance "$cn" start castle >/dev/null 2>&1
@@ -543,6 +557,7 @@ deprovision(){ # <codename>
   # an unchecked codename with a slash or glob could delete outside its own files.
   [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
   [[ "$(kind_of "$cn")" != tenant ]] || die "'$cn' is a tenant — demote it first"
+  need_keycloak; need_dns
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
@@ -767,6 +782,7 @@ status(){
 
 # allocate = issue one cert + provision it as a canary (platform must be up).
 allocate(){
+  need_issuer; need_keycloak; need openssl; need_dns
   local cn; cn="$(next_codename)"; add_domain "$(host_of "$cn")"
   sync_certs; has_cert "$cn" || die "no certificate for '$cn': dehydrated failed"
   provision_canary "$cn"; reload_caddy
@@ -837,6 +853,7 @@ wait_healthy(){ # <container> <mode: health|running> [<timeout-seconds>]
 # schema migrations on boot (auto_migrate), so an app upgrade is: bump
 # CASTLE_IMAGE in .env, then this.
 upgrade(){ # [<codename>]  (default: every running codename)
+  need_keycloak; need openssl
   local one="${1:-}" targets=() cn
   if [[ -n "$one" ]]; then
     [[ -n "$(kind_of "$one")" ]] || die "'$one' is not running"
@@ -1085,7 +1102,7 @@ export_tenant(){ # <codename>
   local cn="${1:?export needs a <codename>}" ts work out err
   [[ "$(kind_of "$cn")" == tenant ]] || die "'$cn' is not a tenant"
   [[ -n "$BACKUP_AGE_RECIPIENT" ]] || die "set BACKUP_AGE_RECIPIENT (age public key) in .env — refusing to write an unencrypted export"
-  need age; need jq; need "$ENGINE"; need tar
+  need_export
   bundle_lock
   ts="$(date +%Y%m%d-%H%M%S)"
   workdir work
@@ -1114,7 +1131,7 @@ import_tenant(){ # <tenant-bundle> <codename>
   [[ -n "$file" && -f "$file" && -n "$cn" ]] || die "usage: castlectl import <tenant-bundle> <codename>"
   [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
   [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary — a tenant bundle goes into a codename that is not in use"
-  need age; need jq; need "$ENGINE"; need tar
+  need age; need_keycloak; need openssl; need "$ENGINE"; need tar
   workdir work
   age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
   [[ -f "$work/db.sql" && -f "$work/uploads.tar" ]] && jq -e 'type == "array"' "$work/people.json" >/dev/null 2>&1 \
@@ -1145,7 +1162,7 @@ import_tenant(){ # <tenant-bundle> <codename>
 users(){ # <codename>
   local cn="${1:?users needs a <codename>}"
   [[ -n "$(kind_of "$cn")" ]] || die "'$cn' is not running"
-  need jq
+  need_keycloak
   realm_sh people "$cn" | jq -r '
     ["EMAIL", "NAME", "ROLE", "ENABLED"],
     (sort_by(.email)[] | [
@@ -1163,7 +1180,7 @@ users(){ # <codename>
 # KC_ADMIN_PASS, from .env or the environment of this one run. Running it again
 # brings the account back to this state with the secret it has.
 keycloak_setup(){
-  need jq; need openssl
+  need_keycloak; need openssl
   local secret out
   [[ -n "${KC_ADMIN_USER:-}" && -n "${KC_ADMIN_PASS:-}" ]] \
     || die "keycloak-setup signs in as an administrator once: give KC_ADMIN_USER and KC_ADMIN_PASS for this run"

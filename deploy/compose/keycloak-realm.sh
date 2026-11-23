@@ -70,6 +70,23 @@ case "$cmd" in
     ;;
 esac
 
+# A command asks for its tools, by name, before it does anything.
+needs() {
+  local tool
+  for tool; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "keycloak-realm.sh: $tool is required but not on PATH" >&2; exit 1; }
+  done
+}
+case "$cmd" in
+  render) ;;
+  await) needs curl ;;
+  *) needs jq curl ;;
+esac
+# `render` makes the client secret where none is given, and these three render.
+case "$cmd" in
+  render|create|update) [[ -n "${CLIENT_SECRET:-}" ]] || needs openssl ;;
+esac
+
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
 realm="${KC_REALM_PREFIX}${codename}"
 
@@ -77,7 +94,9 @@ render() {
   local base="${BASE_DOMAIN:?BASE_DOMAIN required}"
   local port="${EXTERNAL_PORT:-}"
   local host="${codename}.${base}${port:+:$port}"
-  local secret="${CLIENT_SECRET:-$(openssl rand -base64 32 | tr -d '\n')}"
+  local secret="${CLIENT_SECRET:-}"
+  [[ -n "$secret" ]] || secret="$(openssl rand -base64 32 | tr -d '\n')"
+  [[ -n "$secret" ]] || { echo "keycloak-realm.sh: openssl made no client secret" >&2; exit 1; }
 
   # Hardening notes, since these are the settings a console-built realm gets
   # wrong:
