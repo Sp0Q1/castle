@@ -97,6 +97,7 @@ if [[ -s "$KC_SERVICE" ]]; then
   export KC_CLIENT_ID=castlectl KC_CLIENT_SECRET
 fi
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
+[[ "$KC_REALM_PREFIX" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || die "KC_REALM_PREFIX in .env is lower-case letters, digits and hyphens, a letter first"
 CASTLE_IMAGE="${CASTLE_IMAGE:?set CASTLE_IMAGE in .env}"
 ENGINE="${ENGINE:-podman}"
 COMPOSE="${COMPOSE:-$ENGINE compose}"
