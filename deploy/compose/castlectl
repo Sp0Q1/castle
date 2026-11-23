@@ -559,12 +559,14 @@ deprovision(){ # <codename>
   [[ "$cn" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "invalid codename '$cn'"
   [[ "$(kind_of "$cn")" != tenant ]] || die "'$cn' is a tenant — demote it first"
   need_keycloak; need_dns
+  local out left=""
   echo "deprovisioning '$cn'"
   [[ -f "$RUN/$cn.compose.yml" ]] && compose_instance "$cn" down -v >/dev/null 2>&1
   dns_del_a "$cn"     # withdraw the A record (no-op unless SELF_HOSTED_DNS)
-  KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" "$REALM_SH" delete "$cn" >/dev/null 2>&1 || true
+  out="$(realm_sh delete "$cn" 2>&1)" || left="${out##*"$NL"}"
   rm -f "$SITES/$cn.caddy" "$RUN/$cn".{compose.yml,client,cookie,jwt,db,upstream}
   reload_caddy
+  [[ -z "$left" ]] || die "'$cn' is removed here, and its realm is still in Keycloak — $left. Run this again when Keycloak answers"
   echo "  removed (cert left in place for reuse)"
 }
 
