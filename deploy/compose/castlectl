@@ -921,13 +921,13 @@ upgrade(){ # [<codename>]  (default: every running codename)
       else
         echo "  $cn ($kind) recreated with current image (data kept)"
       fi
-      # The proxy now runs as the templates have it. Its realm's client is
-      # brought to what `keycloak-realm.sh create` makes today, after the proxy
-      # and never before it, so a requirement only ever reaches a realm whose
-      # proxy already meets it. Tenant and canary alike.
+      # The proxy now runs as the templates have it. Its realm's clients are
+      # brought to what `keycloak-realm.sh create` leaves today, after the
+      # proxy and never before it, so a requirement only ever reaches a realm
+      # whose proxy already meets it. Tenant and canary alike.
       out="$(KC_URL="$KC_ADMIN_URL" KC_REALM_PREFIX="$KC_REALM_PREFIX" BASE_DOMAIN="$BASE_DOMAIN" EXTERNAL_PORT="$EXTERNAL_PORT" \
         "$REALM_SH" update "$cn" 2>&1)" \
-        || fails+=("$cn ($kind): its realm's client could not be brought up to date — ${out##*"$NL"}")
+        || fails+=("$cn ($kind): its realm could not be brought up to date — ${out##*"$NL"}")
     else
       fails+=("$cn ($kind): $target not healthy after up -d (see: $ENGINE logs $target)")
     fi
@@ -1029,7 +1029,7 @@ restore(){ # <backup-file> [--yes]
   need age; need "$ENGINE"; need tar
   local work cn
   local -a rfails=()
-  local attempted=0 kerr terr uerr
+  local attempted=0 realms="" kerr terr uerr
   workdir work
   echo "restore: decrypting $file"
   age -d -i "$BACKUP_AGE_IDENTITY" < "$file" | ( cd "$work" && tar xf - ) || die "decrypt/extract failed"
@@ -1052,7 +1052,7 @@ restore(){ # <backup-file> [--yes]
     # --clean --if-exists, so re-loading over an existing DB drops cleanly first.
     # `2>&1 >/dev/null` keeps stderr (the cause) and drops psql's normal chatter.
     if kerr="$(platform_exec keycloak-db psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak < "$work/platform/keycloak.sql" 2>&1 >/dev/null)"; then
-      echo "  loaded keycloak realms/users"
+      echo "  loaded keycloak realms/users"; realms=1
     else
       rfails+=("keycloak: load failed — ${kerr##*"$NL"}")
     fi
@@ -1090,6 +1090,7 @@ restore(){ # <backup-file> [--yes]
   # expects it. Fail only when something we DID try to load errored.
   batch_result restore "$attempted" "${rfails[@]}" || return 1
   echo "restore pass complete."
+  [[ -z "$realms" ]] || echo "Keycloak's realms are as the bundle has them: 'castlectl upgrade' brings their clients to this release."
 }
 
 # --- one tenant, portable --------------------------------------------------

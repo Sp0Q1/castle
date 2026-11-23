@@ -11,7 +11,7 @@
 #
 #   ./keycloak-realm.sh render  <codename>            # print the realm JSON
 #   ./keycloak-realm.sh create  <codename>            # create it (idempotent)
-#   ./keycloak-realm.sh update  <codename>            # the attributes of an existing realm's client, as `create` sets them
+#   ./keycloak-realm.sh update  <codename>            # an existing realm: the castle client's attributes as `create` sets them, no password grant on any client
 #   ./keycloak-realm.sh delete  <codename>            # with everyone in it (idempotent)
 #   ./keycloak-realm.sh people  <codename>            # print who is in it, as JSON
 #   ./keycloak-realm.sh add-people <codename> < json  # create them, without credentials
@@ -251,7 +251,7 @@ create() {
   if realm_exists "$url" "$token"; then
     # Idempotent on purpose: provisioning is re-run after partial failures, and
     # re-creating a live realm would invalidate every existing session.
-    echo "realm ${realm} already exists — leaving it untouched" >&2
+    echo "realm ${realm} already exists — not made again" >&2
     return 0
   fi
 
@@ -332,10 +332,10 @@ add_people() {
 
 # Brings the `castle` client of an existing realm in line with what `render`
 # makes today: its attributes, which is where a setting lives that came after
-# the realm did (the PKCE requirement). `create` leaves an existing realm
-# alone, so this is how every realm of a pool gets the same client, and a realm
-# cannot be told from another by its age. Nothing else of the realm is touched,
-# and a client that is already as it should be is not written to.
+# the realm did (the PKCE requirement). `create` does not make an existing
+# realm again, so this is how every realm of a pool gets the same client, and a
+# realm cannot be told from another by its age. Nothing else of that client is
+# touched, and a client that is already as it should be is not written to.
 update() {
   local found id wanted current
   found="$(kc "/clients" -G --data-urlencode "clientId=castle")" \
@@ -353,6 +353,28 @@ update() {
   jq -c --argjson wanted "$wanted" 'del(.secret) | .attributes += $wanted' <<<"$current" \
     | kc "/clients/${id}" -o /dev/null -X PUT -H "Content-Type: application/json" --data-binary @-
   echo "realm ${realm}: the client was brought up to date" >&2
+}
+
+# No client of the realm takes a username and password at the token endpoint:
+# a person signs in at Keycloak's own pages, in a browser. Keycloak gives a
+# new realm clients of its own, so the grant is switched off wherever it is
+# on. What counts is what Keycloak holds afterwards: the realm's list of
+# clients, the castle client among them, with `false` on every one. An id goes
+# into a path, and a name onto the terminal, only in a plain shape.
+no_direct_grants() {
+  local id current clients left
+  while read -r id; do
+    current="$(kc "/clients/${id}")" || continue
+    jq -c 'del(.secret) | .directAccessGrantsEnabled = false' <<<"$current" \
+      | kc "/clients/${id}" -o /dev/null -X PUT -H "Content-Type: application/json" --data-binary @- || true
+  done < <(kc "/clients" | jq -r '.[] | select(.directAccessGrantsEnabled != false) | .id | strings | select(test("\\A[0-9a-f-]{36}\\z"))')
+  if ! clients="$(kc "/clients")" \
+      || ! jq -e 'type == "array" and all(.[]; type == "object") and any(.[]; .clientId == "castle")' <<<"$clients" >/dev/null 2>&1; then
+    echo "keycloak-realm.sh: Keycloak did not give the clients of realm ${realm}" >&2; exit 1
+  fi
+  left="$(jq -r '[.[] | select(.directAccessGrantsEnabled != false) | .clientId
+      | if type == "string" and test("\\A[A-Za-z0-9._:/-]{1,80}\\z") then . else "one whose name is not shown" end] | join(", ")' <<<"$clients")"
+  [[ -z "$left" ]] || { echo "keycloak-realm.sh: realm ${realm}: still takes a password at the token endpoint: ${left}" >&2; exit 1; }
 }
 
 # The account castlectl signs in to Keycloak with: a client of the master
@@ -403,8 +425,8 @@ await() {
 
 case "$cmd" in
   render) render ;;
-  create) create ;;
-  update) update ;;
+  create) create; no_direct_grants ;;
+  update) update; no_direct_grants ;;
   service-account) service_account ;;
   delete) delete ;;
   people) people ;;

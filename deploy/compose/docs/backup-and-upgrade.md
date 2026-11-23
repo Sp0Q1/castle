@@ -38,8 +38,9 @@ instances' proxies are attached to it, and they stay up.
 **`castlectl upgrade`** renders every running instance again from the
 templates, rewrites its vhost, pulls, and recreates what changed. It then
 brings the attributes of the client in the instance's realm (the PKCE
-requirement among them) to what `keycloak-realm.sh create` sets today, so
-realms made at different times do not differ in them. For that it needs
+requirement among them) to what `keycloak-realm.sh create` sets today, and
+switches off the password grant on every client of the realm, as `create`
+does: realms made at different times differ in neither. For that it needs
 Keycloak, which the platform step has just recreated, so it first waits until
 Keycloak answers, two minutes at most. **Data volumes are kept**, and castle
 applies pending schema migrations when it starts (`auto_migrate: true`). One
@@ -309,6 +310,7 @@ podman compose -f platform.compose.yml --profile self-dns up -d
 ./castlectl provision-pool                                     # every codename comes up as a canary
 ./castlectl promote <codename>                                 # once per tenant, on its restored secrets
 ./castlectl restore backups/castle-backup-<ts>.tar.age --yes   # loads each tenant DB + uploads
+./castlectl upgrade                                            # every realm's clients as this release sets them
 ```
 
 On a server with another address than the one the bundle came from, change
@@ -320,6 +322,11 @@ nameserver each codename's record is published as it is provisioned.
 Re-running is harmless: each pass loads whatever is now reachable and names
 the tenants it could not reach yet. The `--yes` flag is required because a
 restore overwrites secrets/certs and reloads databases.
+
+Keycloak's realms come back as the bundle has them. `./castlectl upgrade`
+brings their clients to what this release sets, on a fresh box and after a
+restore into a deployment that is running alike; `restore` says so when it has
+loaded the realms.
 
 Try this on a spare machine before you depend on it, and again after a change
 to the backup or the templates.

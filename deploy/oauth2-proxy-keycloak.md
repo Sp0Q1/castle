@@ -57,6 +57,13 @@ exactly what it will create. In short:
   the user's groups into the token.
 - Three groups: `castle-managers`, `castle-staff`, `castle-clients`.
 
+Keycloak adds clients of its own to every realm. When the script has made a
+realm, and again at every `castlectl upgrade`, it switches the password grant
+off on each client that has it and reads back that none is left: no client of
+a codename's realm takes a username and password at the token endpoint, and a
+person signs in at Keycloak's pages, in a browser. A client added by hand
+afterwards is looked at again at the next upgrade.
+
 ## People and roles
 
 | Group in the realm | Role in the portal |
