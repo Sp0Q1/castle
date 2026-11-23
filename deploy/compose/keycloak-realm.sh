@@ -87,8 +87,15 @@ case "$cmd" in
   render|create|update) [[ -n "${CLIENT_SECRET:-}" ]] || needs openssl ;;
 esac
 
+# A realm's name goes into a path as it is, so its two parts are of a shape
+# that stands for nothing but itself there. Keycloak's own realm is nobody's
+# codename.
 KC_REALM_PREFIX="${KC_REALM_PREFIX:-castle-}"
+[[ "$KC_REALM_PREFIX" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || {
+  echo "keycloak-realm.sh: KC_REALM_PREFIX is lower-case letters, digits and hyphens, a letter first" >&2; exit 1; }
 realm="${KC_REALM_PREFIX}${codename}"
+[[ -z "$codename" || "$realm" != master ]] || {
+  echo "keycloak-realm.sh: prefix and codename together name the master realm" >&2; exit 1; }
 
 render() {
   local base="${BASE_DOMAIN:?BASE_DOMAIN required}"
