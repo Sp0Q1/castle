@@ -24,6 +24,9 @@ podman compose -f platform.compose.yml --profile self-dns up -d --force-recreate
 Then sign in once. (Leave out `--profile self-dns` if you do not run the
 bundled nameserver.)
 
+The package list in [`host-setup.md`](host-setup.md) grows with releases:
+after `git pull`, install what it lists now before going on.
+
 **The platform needs `--force-recreate`.** podman-compose replaces a container
 only when its definition changed. A change to `caddy/Caddyfile` needs it too:
 the file is mounted on its own, so the running Caddy keeps the one it started
