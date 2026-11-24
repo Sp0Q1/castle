@@ -84,8 +84,8 @@ the overview says so after fifteen minutes.
 
 ## The account that reads it
 
-The block below needs OpenSSH 9.2 or newer (Debian 12 and later). It can be
-run again: it makes what is not there yet and writes the rest anew.
+The block below needs OpenSSH 9.2 or newer, which Debian 13 has. It can be run
+again: it makes what is not there yet and writes the rest anew.
 
 ```bash
 getent group castle-status >/dev/null || groupadd --system castle-status
@@ -111,18 +111,28 @@ Match User castle-status
     MaxSessions 1
     UnusedConnectionTimeout 30
 EOF
-if sshd -t; then systemctl reload ssh; else rm /etc/ssh/sshd_config.d/00-castle-status.conf; fi
+mkdir -p /run/sshd
+sshd -t || rm /etc/ssh/sshd_config.d/00-castle-status.conf
+if systemctl -q is-active ssh.service && sshd -t; then systemctl reload ssh 2>/dev/null || systemctl restart ssh; fi
 uid="$(id -u castle-status)" && [ -n "$uid" ] \
   && mkdir -p "/etc/systemd/system/user-$uid.slice.d" \
   && printf '[Slice]\nTasksMax=12\n' > "/etc/systemd/system/user-$uid.slice.d/castle-status.conf" \
   && systemctl daemon-reload
 ```
 
+sshd tests its configuration with the block in it (the test needs
+`/run/sshd`, which goes away when sshd is stopped), and a block that fails the
+test is taken out again. A sshd that runs is then told to read its
+configuration anew; where its socket starts it (`ssh.socket`) that takes a
+restart, which the line does by itself. One that does not run reads the block
+when it starts. Sessions that are open stay open; all the same, see that a
+second one gets in before you close the one you are in.
+
 Then see that sshd gives the account what the block says, and nothing that
 another block set before it:
 
 ```bash
-diff <(sshd -T -C user=castle-status,host=x,addr=127.0.0.1 | grep -E '^(authenticationmethods|passwordauthentication|kbdinteractiveauthentication|authorizedkeysfile|forcecommand|permittty|disableforwarding|allowtcpforwarding|allowstreamlocalforwarding|allowagentforwarding|x11forwarding|permittunnel|permituserrc|acceptenv|maxsessions|unusedconnectiontimeout) ' | sort) - <<'EOF' && echo "the block is in effect"
+diff <(sshd -T -C user=castle-status,host=x,addr=127.0.0.1 | grep -E '^(authenticationmethods|passwordauthentication|kbdinteractiveauthentication|authorizedkeysfile|forcecommand|permittty|disableforwarding|allowtcpforwarding|allowstreamlocalforwarding|allowagentforwarding|x11forwarding|permittunnel|permituserrc|acceptenv|maxsessions|unusedconnectiontimeout) ' | LC_ALL=C sort) - <<'EOF' && echo "the block is in effect"
 acceptenv CASTLE_STATUS_TAKES_NONE
 allowagentforwarding no
 allowstreamlocalforwarding no
@@ -207,7 +217,7 @@ for d in /etc/systemd/system/user-*.slice.d; do
 done
 systemctl daemon-reload
 rm -f /etc/ssh/sshd_config.d/00-castle-status.conf /etc/ssh/castle-status.keys
-sshd -t && systemctl reload ssh
+if systemctl -q is-active ssh.service && sshd -t; then systemctl reload ssh 2>/dev/null || systemctl restart ssh; fi
 loginctl terminate-user castle-status 2>/dev/null || true   # what is left of its sessions
 sleep 2
 getent passwd castle-status >/dev/null && userdel castle-status   # takes its group with it
