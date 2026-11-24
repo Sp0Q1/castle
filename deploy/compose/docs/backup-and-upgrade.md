@@ -285,6 +285,10 @@ BACKUP_PUSH_CMD='rclone copy {} b2:castle-backups/'       # any rclone remote
 BACKUP_PUSH_CMD='rsync -a {} backups@vault:/srv/castle/'  # another host over ssh
 ```
 
+The command's standard input is empty and, from the timer, it has no terminal:
+set it up so that it asks nothing (for ssh, a key without a passphrase and a
+host that is already known).
+
 The bundles are already age-encrypted to your offline key, so the destination
 never sees plaintext — object storage, another VPS, or a NAS are all fine. If the
 push fails, the bundle is kept locally and the run exits non-zero (so the timer's
