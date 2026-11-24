@@ -125,3 +125,4 @@ From here:
 - **Certificates + bring-up:** the README's *Bring-up* section.
 - **Keycloak's administrators:** `docs/admin-rotation.md`.
 - **Backups + upgrades:** `docs/backup-and-upgrade.md`.
+- **Status for the overview:** `docs/status.md`.

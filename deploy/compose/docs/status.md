@@ -79,8 +79,8 @@ The last line shows `status.json`: root's, readable by the group
 `castle-status` and by nobody else. The directory's mode gives every file in
 it that group. Each run writes a new file and puts it in the old one's place in
 one step. A run that fails, or has not ended after four minutes, leaves the
-file as it was; its `generated_at` then grows old, and the overview says so
-after fifteen minutes.
+file as it was and nothing beside it; its `generated_at` then grows old, and
+the overview says so after fifteen minutes.
 
 ## The account that reads it
 
