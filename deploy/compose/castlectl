@@ -60,6 +60,11 @@ if [[ "${1:-}" == restore && ! -f .env && -f "${2:-}" && "${3:-}" == --yes ]]; t
   echo "restore: took .env from the bundle"
 fi
 [[ -f .env ]] && set -a && . ./.env && set +a
+# In every shape below a letter is one of a to z and a digit one of 0 to 9, and
+# the tools called from here sort and print alike, whatever locale and shell
+# options the caller brought along.
+export LC_ALL=C
+shopt -u nocasematch
 
 POOL="${POOL:-$HERE/codenames.txt}"
 REALM_SH="${REALM_SH:-$HERE/keycloak-realm.sh}"

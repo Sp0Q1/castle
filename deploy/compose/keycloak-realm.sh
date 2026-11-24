@@ -40,6 +40,10 @@
 # object that will be created can be reviewed, diffed and tested offline.
 # ---------------------------------------------------------------------------
 set -euo pipefail
+# In every shape below a letter is one of a to z and a digit one of 0 to 9,
+# whatever locale and shell options the caller brought along.
+export LC_ALL=C
+shopt -u nocasematch
 
 # TLS verification is on by default and must stay that way: this script sends
 # admin credentials and a client secret, so an unverified connection would hand
