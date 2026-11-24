@@ -1147,7 +1147,7 @@ castle_task(){ # <codename> [<task> [args...]]
 }
 
 import_tenant(){ # <tenant-bundle> <codename>
-  local file="${1:-}" cn="${2:-}" work err
+  local file="${1:-}" cn="${2:-}" work err tasks
   [[ -n "$file" && -f "$file" && -n "$cn" ]] || die "usage: castlectl import <tenant-bundle> <codename>"
   [[ -n "$BACKUP_AGE_IDENTITY" ]] || die "set BACKUP_AGE_IDENTITY (age identity file) to decrypt"
   [[ "$(kind_of "$cn")" == canary ]] || die "'$cn' is not a canary — a tenant bundle goes into a codename that is not in use"
@@ -1169,8 +1169,13 @@ import_tenant(){ # <tenant-bundle> <codename>
   # The accounts came bound to the people of the realm they left. Here everyone
   # is made anew and has a new id, so each account is let go, to be taken by
   # whoever this realm vouches for with its address. A castle from before
-  # accounts were bound has no such task, and nothing to let go.
-  if castle_task "$cn" 2>/dev/null | grep -q '^user:unbind'; then
+  # accounts were bound has no such task, and nothing to let go; every castle
+  # has tasks for its users, so an answer that names none is no answer.
+  if ! tasks="$(castle_task "$cn" 2>&1)" || ! grep -q '^user:' <<<"$tasks"; then
+    tasks="${tasks##*"$NL"}"
+    die "castle-$cn did not list its tasks (${tasks:-it said nothing}), so the accounts may still be bound to the people of the old realm ('$cn' is left half-loaded: demote it with --no-export and import again)"
+  fi
+  if grep -q '^user:unbind' <<<"$tasks"; then
     err="$(castle_task "$cn" user:unbind all:yes 2>&1)" \
       || die "the data is in place but the accounts are still bound to the people of the old realm — ${err##*"$NL"}"
   fi
