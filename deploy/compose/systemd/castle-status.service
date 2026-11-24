@@ -12,8 +12,12 @@ WorkingDirectory=/opt/castle/deploy/compose
 # file that is read as it was, and its age shows.
 ExecStart=/bin/sh -c 'exec ./castlectl status > /var/lib/castle-status/status.json.new'
 ExecStartPost=/bin/mv /var/lib/castle-status/status.json.new /var/lib/castle-status/status.json
+# What a run that failed had written goes with it.
+ExecStopPost=/bin/rm -f /var/lib/castle-status/status.json.new
 User=root
 # For root and the directory's group (docs/status.md), and nobody else.
 UMask=0027
-# A run that has not ended by then is ended, and the next one starts on time.
+# A run that has not ended after four minutes is told to end, and is killed if
+# it has not half a minute later: the next one starts on time.
 TimeoutStartSec=4min
+TimeoutStopSec=30s
