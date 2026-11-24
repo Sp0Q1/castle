@@ -188,11 +188,16 @@ that gives no status.
 
 The machine that runs the overview makes a key
 ([`../../overview/README.md`](../../overview/README.md)). Its public half goes
-on one line of the keys file, with `restrict` in front:
+on one line of the keys file, behind `restrict` and the one command the key is
+for:
 
 ```bash
-echo 'restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexamplekeyexamplekeyexamplekeyexamplekeyex overview' >> /etc/ssh/castle-status.keys
+echo 'restrict,command="/usr/bin/cat /var/lib/castle-status/status.json" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexamplekeyexamplekeyexamplekeyexamplekeyex overview' >> /etc/ssh/castle-status.keys
 ```
+
+The line says of this key what the block says of the account. Where the block
+is what sshd reads, the block decides; should it ever not be, the key still
+prints the status and does nothing else.
 
 That machine also needs this server's host key, to know that it is asking the
 right server. Read it here, where it cannot have been swapped on the way:
