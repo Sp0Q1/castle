@@ -42,15 +42,26 @@
 # CODENAME-ONLY: no client name is ever taken or stored. You record which client
 # a codename belongs to in your own store, off this host.
 # ---------------------------------------------------------------------------
+# castlectl is run. Read into a shell with `source`, it would leave that shell
+# with what is set below.
+(return 0 2>/dev/null) && { echo "castlectl: run it as ./castlectl <command>" >&2; return 1; }
 set -uo pipefail
 # What this writes is secrets, rendered files that name them, and bundles:
 # for the user who runs it and nobody else.
 umask 077
-# Defined first so the startup cd below can use it: a function isn't callable
-# before the line that defines it runs, and this is the earliest thing that can fail.
+# A cd goes where it is told and prints nothing, whatever the caller's CDPATH.
+unset CDPATH
+# Defined first so that the lines below can use it: a function isn't callable
+# before the line that defines it runs.
 die(){ echo "castlectl: $*" >&2; exit 1; }
-HERE="$(cd "$(dirname "$0")" && pwd)"
+# The deployment is the directory this file lies in, by whatever path or link
+# it was called. Text handed to bash without a file has no such place.
+SELF="$(realpath -e -- "${BASH_SOURCE[0]:-}" 2>&1)" || die "run it as ./castlectl <command>"
+HERE="$(dirname -- "$SELF")"
 cd "$HERE" || die "cannot cd to $HERE"
+# The caller's standard input is not castlectl's: what is started below is
+# handed a file, or reads an empty one.
+exec </dev/null || die "cannot open /dev/null"
 # A fresh host has no .env: it is in the bundle being restored. Take it from
 # there first, so that everything below finds its configuration.
 if [[ "${1:-}" == restore && ! -f .env && -f "${2:-}" && "${3:-}" == --yes ]]; then

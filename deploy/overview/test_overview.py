@@ -415,9 +415,10 @@ class Assembling(unittest.TestCase):
 
 # Stand-ins that `castlectl status` finds on its path in place of the engine and
 # of what it asks the host. They answer from files under engine/, which a test
-# arranges.
+# arranges. The engine's notes down what it was given as its standard input.
 ENGINE = r"""#!/bin/bash
 E="$(dirname "$0")/../engine"
+readlink /proc/self/fd/0 >> "$E/input" 2>/dev/null
 [[ -e "$E/down" ]] && { echo "Error: the engine does not answer" >&2; exit 125; }
 case "$1 $2" in
   "container exists") [[ -e "$E/containers/$3" ]] ;;
@@ -511,14 +512,19 @@ class Gathering(unittest.TestCase):
             self.runs(container)
         (self.engine / "summary" / codename).write_text(json.dumps(summary) + "\n")
 
-    def status(self, **settings):
-        """Runs `castlectl status`: its exit status, the status it printed (or None) and what it said beside."""
-        done = subprocess.run(
-            ["bash", str(self.here / "castlectl"), "status"],
-            env={"PATH": f"{self.here / 'bin'}:{os.environ['PATH']}", "HOME": str(self.here)} | settings,
+    def started(self, command, path="", **how):
+        """Runs a command with the stand-ins first on its path, and `path` after everything else."""
+        return subprocess.run(
+            command,
+            env={"PATH": f"{self.here / 'bin'}:{os.environ['PATH']}:{path}", "HOME": str(self.here)} | how.pop("settings", {}),
             capture_output=True,
             timeout=120,
+            **how,
         )
+
+    def status(self, **settings):
+        """Runs `castlectl status`: its exit status, the status it printed (or None) and what it said beside."""
+        done = self.started(["bash", str(self.here / "castlectl"), "status"], settings=settings)
         said = overview.document(done.stdout) if done.stdout else None
         return done.returncode, said, done.stderr.decode()
 
@@ -539,6 +545,41 @@ class Gathering(unittest.TestCase):
         self.assertEqual(plain(said["newest_backup"])[:4], "20" + plain(said["generated_at"])[2:4])
         self.assertEqual((said["host"]["disk_used_percent"], said["host"]["failed_units"]), (41, 0))
         self.assertEqual((said["host"]["renewal_timer"], said["host"]["backup_timer"]), (True, True))
+
+    def test_by_a_link_or_found_on_the_path_it_is_the_same_server(self):
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        linked, empty = pathlib.Path(elsewhere.name) / "linked", pathlib.Path(elsewhere.name) / "empty"
+        linked.mkdir()
+        empty.mkdir()
+        (linked / "castlectl").symlink_to(self.here / "castlectl")
+        for name, command, directory in (
+            ("a link in another directory", ["./castlectl", "status"], linked),
+            ("the file, found on the path", ["bash", "castlectl", "status"], empty),
+            ("a path from the directory above, where CDPATH finds it too", [f"{self.here.name}/castlectl", "status"], self.here.parent),
+        ):
+            with self.subTest(name):
+                done = self.started(command, path=str(self.here), cwd=directory, settings={"CDPATH": "."})
+                self.assertEqual((done.returncode, done.stderr), (0, b""))
+                self.assertEqual([one["codename"] for one in overview.document(done.stdout)["instances"]], ["amber", "birch", "dune"])
+        self.assertEqual((os.listdir(linked), os.listdir(empty)), (["castlectl"], []))
+
+    def test_its_text_without_the_file_is_refused(self):
+        with open(self.here / "castlectl", "rb") as text:
+            done = self.started(["bash", "-s", "status"], stdin=text, cwd=self.here)
+        self.assertEqual((done.returncode, done.stdout), (1, b""))
+        self.assertIn("run it as ./castlectl <command>", done.stderr.decode())
+
+    def test_read_into_a_shell_it_is_refused_and_that_shell_is_as_it_was(self):
+        done = self.started(["bash", "-c", 'umask 022; . ./castlectl status; echo "$? $(umask) ${BASE_DOMAIN:-not set}"'], cwd=self.here)
+        self.assertEqual(done.stdout.decode(), "1 0022 not set\n")
+        self.assertIn("run it as ./castlectl <command>", done.stderr.decode())
+
+    @unittest.skipUnless(os.path.exists("/proc/self/fd/0"), "needs /proc to see what a command was given as its input")
+    def test_what_it_starts_is_given_nothing_of_the_callers_input(self):
+        done = self.started(["bash", "-c", "./castlectl status > /dev/null; cat"], input=b"a line for the caller\n", cwd=self.here)
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, b"a line for the caller\n", b""))
+        self.assertEqual(set((self.engine / "input").read_text().split()), {"/dev/null"})
 
     def test_an_engine_that_does_not_answer_gives_no_status(self):
         (self.engine / "down").touch()

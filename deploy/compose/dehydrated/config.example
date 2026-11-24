@@ -27,8 +27,9 @@ CHALLENGETYPE="dns-01"
 HOOK="/opt/castle/deploy/compose/dehydrated/dns-hook.sh"
 
 # With DNS at a provider, point HOOK at a dehydrated DNS-01 hook for that
-# provider instead. HTTP-01 is not set up in this deployment: Caddy holds port
-# 80 and serves no challenge for the pool's hosts.
+# provider instead: one that asks nothing, for its standard input is empty
+# and, from the timer, it has no terminal. HTTP-01 is not set up in this
+# deployment: Caddy holds port 80 and serves no challenge for the pool's hosts.
 
 # A certificate is renewed once it has fewer days left than this (dehydrated's
 # own default). castle-renew.timer asks every week.
