@@ -149,6 +149,11 @@ cp .env.example .env && $EDITOR .env                 # domain, Keycloak admin, e
 cp dehydrated/config.example dehydrated/config && $EDITOR dehydrated/config
 ```
 
+For `castlectl`, a setting in `.env` counts whatever the shell has. `podman
+compose`, where a page has you run it yourself, is the other way round: a
+variable of your shell takes the place of the one of that name in `.env`. Keep
+castle's settings out of the shell's environment.
+
 Then the order depends on who answers DNS for the pool.
 
 **With the bundled nameserver** it has to be running before a certificate can
